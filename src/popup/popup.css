@@ -37,6 +37,7 @@ body { background: var(--bg); color: var(--fg); font-size: 13px; }
 .panel-state { font-size: 11px; }
 .panel-state.streaming { color: #06c; }
 .panel-state.finished { color: var(--ok); }
+.panel-state.paused { color: #b85c00; }
 .panel-state.error { color: var(--error); }
 
 .messages { flex: 1; overflow-y: auto; padding: 8px 10px; }

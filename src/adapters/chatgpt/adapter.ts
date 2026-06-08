@@ -9,6 +9,8 @@ export function createChatGPTAdapter(): AIAdapter {
   let observer: MutationObserver | null = null
   let dirty = false
   let pollTimer: ReturnType<typeof setInterval> | null = null
+  let continuePollTimer: ReturnType<typeof setInterval> | null = null
+  let lastContinueButtonState = false
 
   function q<T extends Element = Element>(sel: string): T | null {
     return document.querySelector<T>(sel)
@@ -23,6 +25,19 @@ export function createChatGPTAdapter(): AIAdapter {
       const text = q(S.lastResponse)?.textContent ?? ''
       lastEventHandler({ type: 'token', platform: 'chatgpt', text, timestamp: Date.now() })
     }, 150)
+  }
+
+  function startContinuePolling() {
+    continuePollTimer = setInterval(() => {
+      const btn = q(selectorsJson.selectors.continueButton)
+      const hasButton = !!btn
+      if (hasButton && !lastContinueButtonState) {
+        lastContinueButtonState = true
+        lastEventHandler?.({ type: 'paused', platform: 'chatgpt', timestamp: Date.now() })
+      } else if (!hasButton) {
+        lastContinueButtonState = false
+      }
+    }, 1000)
   }
 
   return {
@@ -67,11 +82,14 @@ export function createChatGPTAdapter(): AIAdapter {
     onStreamEvent(handler) {
       lastEventHandler = handler
       startObserver()
+      startContinuePolling()
       return () => {
         observer?.disconnect()
         observer = null
         if (pollTimer) clearInterval(pollTimer)
         pollTimer = null
+        if (continuePollTimer) clearInterval(continuePollTimer)
+        continuePollTimer = null
         lastEventHandler = null
       }
     },

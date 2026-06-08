@@ -59,6 +59,9 @@ function setPlatformStatus(p: AIPlatform, s: StreamStatus) {
   } else if (s === 'finished') {
     el.classList.add('finished')
     el.textContent = '已回答'
+  } else if (s === 'paused') {
+    el.classList.add('paused')
+    el.textContent = `⏸ ${p === 'chatgpt' ? 'ChatGPT' : 'Gemini'} 暂停`
   } else if (s === 'error') {
     el.classList.add('error')
     el.textContent = '出错'
@@ -234,6 +237,25 @@ chrome.runtime.onMessage.addListener((msg: SwToPopup) => {
 })
 
 // ---------- Boot ----------
+async function recoverFromSwSleep() {
+  for (const p of ['chatgpt', 'gemini'] as AIPlatform[]) {
+    try {
+      const result = await sendToSw<{ ok: boolean; state?: { type: 'state'; platform: AIPlatform; state: import('../types').ConversationState } }>({
+        type: 'get-conversation-state',
+        platform: p,
+      })
+      if (result.ok && result.state?.state) {
+        setPlatformStatus(p, result.state.state.status)
+        if (result.state.state.lastResponse) {
+          state.lastResponses[p] = result.state.state.lastResponse
+        }
+      }
+    } catch {
+      // tab not found or SW cold-start: fine
+    }
+  }
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   console.log('[AIChatRoom popup] ready')
   sendBtn.addEventListener('click', onSend)
@@ -253,6 +275,7 @@ window.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('keydown', onKeydown)
   updateQuoteButton()
   updateTransferButtons()
+  void recoverFromSwSleep()
 })
 
 function onKeydown(e: KeyboardEvent) {
