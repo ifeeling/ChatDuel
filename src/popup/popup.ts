@@ -2,6 +2,7 @@ import type { AIPlatform, StreamStatus } from '../types'
 import type { SwToPopup, PopupToSw } from '../shared/messages'
 import { parseAtMentions } from '../lib/at-parser'
 import { countWords, durationMs, ttftMs } from '../lib/stats'
+import { buildDataTransferFromFile, MAX_IMAGE_BYTES, ImageTooLargeError } from '../lib/image-handler'
 
 // ---------- DOM refs ----------
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel)!
@@ -30,6 +31,9 @@ const state: UIState = {
   streamStartTime: { chatgpt: undefined, gemini: undefined },
   firstTokenTime: { chatgpt: undefined, gemini: undefined },
 }
+
+// Pending image attached to the next send (popup-only state)
+let pendingImage: File | null = null
 
 // ---------- Render ----------
 function setPlatformStatus(p: AIPlatform, s: StreamStatus) {
@@ -144,20 +148,81 @@ window.addEventListener('DOMContentLoaded', () => {
   inputEl.addEventListener('input', () => {
     state.hasUserMessage = inputEl.value.trim().length > 0
   })
+  inputEl.addEventListener('paste', onPasteImage)
+  inputEl.addEventListener('drop', onDropImage)
+  imageBtn.addEventListener('click', () => {
+    alert('直接 Ctrl+V 粘贴图片，或拖拽图片到输入框')
+  })
 })
+
+// ---------- Image input ----------
+function onPasteImage(e: ClipboardEvent) {
+  const items = e.clipboardData?.items
+  if (!items) return
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      const file = item.getAsFile()
+      if (file) {
+        e.preventDefault()
+        acceptImage(file)
+        return
+      }
+    }
+  }
+}
+
+function onDropImage(e: DragEvent) {
+  const files = e.dataTransfer?.files
+  if (!files || files.length === 0) return
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i]
+    if (file.type.startsWith('image/')) {
+      e.preventDefault()
+      acceptImage(file)
+      return
+    }
+  }
+}
+
+function acceptImage(file: File) {
+  try {
+    buildDataTransferFromFile(file)
+    pendingImage = file
+    imageBtn.textContent = '图片 ✓'
+  } catch (err) {
+    if (err instanceof ImageTooLargeError) {
+      alert(`图片太大：${(file.size / 1024 / 1024).toFixed(1)}MB（上限 ${MAX_IMAGE_BYTES / 1024 / 1024}MB）`)
+    } else {
+      alert('图片处理失败')
+    }
+  }
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
 
 async function onSend() {
   const text = inputEl.value.trim()
-  if (!text) return
-  const mentions = parseAtMentions(text)
+  if (!text && !pendingImage) return
+  const mentions = text ? parseAtMentions(text) : []
   const allPlatforms: AIPlatform[] = ['chatgpt', 'gemini']
   const targetPlatforms: AIPlatform[] = mentions.length > 0
     ? mentions.filter((m): m is AIPlatform => m === 'chatgpt' || m === 'gemini')
     : allPlatforms
   const platforms = targetPlatforms.length > 0 ? targetPlatforms : allPlatforms
   const now = Date.now()
+  const userLabel = pendingImage
+    ? `${text}${text ? '\n' : ''}[图片] ${pendingImage.name}`
+    : text
   for (const p of platforms) {
-    addBubble(p, text, 'user')
+    addBubble(p, userLabel, 'user')
     const placeholder = addBubble(p, '⏳ 等待回应...', 'placeholder')
     state.placeholder[p] = placeholder
     state.streamStartTime[p] = now
@@ -165,5 +230,20 @@ async function onSend() {
     setPlatformStatus(p, 'queued')
   }
   inputEl.value = ''
-  await sendToSw({ type: 'send-message', platforms, text })
+
+  let imageDataUrl: string | undefined
+  if (pendingImage) {
+    try {
+      imageDataUrl = await fileToDataUrl(pendingImage)
+    } catch {
+      alert('图片读取失败')
+      pendingImage = null
+      imageBtn.textContent = '图片'
+      return
+    }
+  }
+  pendingImage = null
+  imageBtn.textContent = '图片'
+
+  await sendToSw({ type: 'send-message', platforms, text, imageDataUrl })
 }
