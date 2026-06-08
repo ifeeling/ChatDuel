@@ -1,0 +1,27 @@
+{
+  "name": "aichatroom",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.0.0",
+    "@playwright/test": "^1.40.0",
+    "@types/chrome": "^0.0.268",
+    "@types/diff-match-patch": "^1.0.36",
+    "typescript": "^5.4.0",
+    "vite": "^5.2.0",
+    "vitest": "^1.4.0"
+  },
+  "dependencies": {
+    "diff-match-patch": "^1.0.5"
+  }
+}

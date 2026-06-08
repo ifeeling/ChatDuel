@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "AIChatRoom",
+  "version": "0.1.0",
+  "description": "Multi-AI comparison and transfer tool. No API keys, no data collection.",
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_title": "AIChatRoom"
+  },
+  "background": {
+    "service_worker": "src/background/service-worker.ts",
+    "type": "module"
+  },
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://gemini.google.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*"],
+      "js": ["src/content-scripts/chatgpt-content.ts"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://gemini.google.com/*"],
+      "js": ["src/content-scripts/gemini-content.ts"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "src/options/options.html",
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}
