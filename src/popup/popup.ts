@@ -130,6 +130,7 @@ chrome.runtime.onMessage.addListener((msg: SwToPopup) => {
         flashPanel('chatgpt')
         flashPanel('gemini')
       }
+      updateQuoteButton()
     } else if (e.type === 'paused') {
       setPlatformStatus(e.platform, 'paused')
     } else if (e.type === 'error') {
@@ -145,6 +146,7 @@ chrome.runtime.onMessage.addListener((msg: SwToPopup) => {
 window.addEventListener('DOMContentLoaded', () => {
   console.log('[AIChatRoom popup] ready')
   sendBtn.addEventListener('click', onSend)
+  quoteBtn.addEventListener('click', onQuote)
   inputEl.addEventListener('input', () => {
     state.hasUserMessage = inputEl.value.trim().length > 0
   })
@@ -153,7 +155,30 @@ window.addEventListener('DOMContentLoaded', () => {
   imageBtn.addEventListener('click', () => {
     alert('直接 Ctrl+V 粘贴图片，或拖拽图片到输入框')
   })
+  updateQuoteButton()
 })
+
+// ---------- Quote ----------
+function updateQuoteButton() {
+  const hasResponse = !!(state.lastResponses.chatgpt || state.lastResponses.gemini)
+  quoteBtn.disabled = !hasResponse
+}
+
+function onQuote() {
+  const source: AIPlatform | null = state.lastResponses.chatgpt
+    ? 'chatgpt'
+    : (state.lastResponses.gemini ? 'gemini' : null)
+  if (!source) return
+  const text = state.lastResponses[source]
+  const name = source === 'chatgpt' ? 'ChatGPT' : 'Gemini'
+  const insertion = `[引用 ${name} 的上一条回答]：\n${text}\n\n`
+  const start = inputEl.selectionStart ?? inputEl.value.length
+  const end = inputEl.selectionEnd ?? inputEl.value.length
+  inputEl.value = inputEl.value.slice(0, start) + insertion + inputEl.value.slice(end)
+  const newPos = start + insertion.length
+  inputEl.setSelectionRange(newPos, newPos)
+  inputEl.focus()
+}
 
 // ---------- Image input ----------
 function onPasteImage(e: ClipboardEvent) {
