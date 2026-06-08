@@ -5,7 +5,7 @@
 **Goal:** 实现 AIChatRoom v1 — Chrome MV3 扩展，对照 ChatGPT + Gemini 两个 AI 的回答。
 
 **Architecture:**
-- Manifest V3 扩展（Popup / Side Panel + Background SW + Content Scripts）
+- Manifest V3 扩展（Popup + Background SW + Content Scripts；v1 仅 Popup，Side Panel 在 v1.1+ scope）
 - AIAdapter 抽象层隔离 ChatGPT / Gemini 的 DOM 操作
 - DOM 选择器集中到 `selectors.json`（带 version + lastVerified）
 - 状态分两路：`storage.session`（10MB 运行态）+ `storage.local`（无上限，需 `unlimitedStorage` 权限，存完整 Session）
@@ -231,18 +231,18 @@ test-results/
 import { defineConfig } from 'vite'
 import { crx } from '@crxjs/vite-plugin'
 import { resolve } from 'path'
-import manifest from './manifest.json' assert { type: 'json' }
+import manifest from './manifest.json' with { type: 'json' }
 
 export default defineConfig({
   plugins: [crx({ manifest })],
   build: {
     rollupOptions: {
       input: {
-        popup: resolve(__dirname, 'src/popup/popup.html'),
-        options: resolve(__dirname, 'src/options/options.html'),
-        'service-worker': resolve(__dirname, 'src/background/service-worker.ts'),
-        'content-chatgpt': resolve(__dirname, 'src/content-scripts/chatgpt-content.ts'),
-        'content-gemini': resolve(__dirname, 'src/content-scripts/gemini-content.ts'),
+        popup: resolve(import.meta.dirname, 'src/popup/popup.html'),
+        options: resolve(import.meta.dirname, 'src/options/options.html'),
+        'service-worker': resolve(import.meta.dirname, 'src/background/service-worker.ts'),
+        'content-chatgpt': resolve(import.meta.dirname, 'src/content-scripts/chatgpt-content.ts'),
+        'content-gemini': resolve(import.meta.dirname, 'src/content-scripts/gemini-content.ts'),
       },
     },
   },
