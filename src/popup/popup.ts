@@ -4,6 +4,7 @@ import { parseAtMentions } from '../lib/at-parser'
 import { countWords, durationMs, ttftMs } from '../lib/stats'
 import { buildDataTransferFromFile, MAX_IMAGE_BYTES, ImageTooLargeError } from '../lib/image-handler'
 import { renderTemplate, getDefaultTemplates } from '../lib/prompt-template'
+import { diffResponses, type DiffChunk } from '../lib/diff'
 
 // ---------- DOM refs ----------
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel)!
@@ -27,6 +28,8 @@ interface UIState {
   streamStartTime: Record<AIPlatform, number | undefined>
   firstTokenTime: Record<AIPlatform, number | undefined>
   lastPrompt: string
+  lastAiBubble: Record<AIPlatform, HTMLDivElement | null>
+  lastStats: Record<AIPlatform, HTMLDivElement | null>
 }
 const state: UIState = {
   status: { chatgpt: 'idle', gemini: 'idle' },
@@ -36,6 +39,8 @@ const state: UIState = {
   streamStartTime: { chatgpt: undefined, gemini: undefined },
   firstTokenTime: { chatgpt: undefined, gemini: undefined },
   lastPrompt: '',
+  lastAiBubble: { chatgpt: null, gemini: null },
+  lastStats: { chatgpt: null, gemini: null },
 }
 
 // Pending image attached to the next send (popup-only state)
@@ -81,6 +86,80 @@ function flashPanel(p: AIPlatform) {
   panel.classList.add('flash')
 }
 
+function renderOrUpdateAiBubble(p: AIPlatform, text: string): void {
+  const other: AIPlatform = p === 'chatgpt' ? 'gemini' : 'chatgpt'
+  const otherText = state.lastResponses[other]
+
+  let bubble: HTMLDivElement
+  if (!otherText) {
+    bubble = document.createElement('div')
+    bubble.className = 'bubble ai'
+    bubble.textContent = text
+  } else {
+    const aText = p === 'chatgpt' ? text : otherText
+    const bText = p === 'chatgpt' ? otherText : text
+    const chunks: DiffChunk[] = diffResponses(aText, bText)
+    bubble = document.createElement('div')
+    bubble.className = 'bubble ai'
+    for (const chunk of chunks) {
+      const span = document.createElement('span')
+      if (p === 'chatgpt') {
+        if (chunk.type === 'equal') {
+          span.className = 'diff-equal'
+          span.textContent = chunk.a
+        } else if (chunk.type === 'added-on-a') {
+          span.className = 'diff-added-on-a'
+          span.textContent = chunk.a
+        } else {
+          span.className = 'diff-gap'
+          span.textContent = '（对方未提到）'
+        }
+      } else {
+        if (chunk.type === 'equal') {
+          span.className = 'diff-equal'
+          span.textContent = chunk.b
+        } else if (chunk.type === 'added-on-b') {
+          span.className = 'diff-added-on-b'
+          span.textContent = chunk.b
+        } else {
+          span.className = 'diff-gap'
+          span.textContent = '（对方未提到）'
+        }
+      }
+      bubble.appendChild(span)
+    }
+  }
+
+  const existing = state.lastAiBubble[p]
+  if (existing && existing.parentNode) {
+    existing.replaceWith(bubble)
+  } else {
+    messagesEl(p).appendChild(bubble)
+  }
+  state.lastAiBubble[p] = bubble
+  messagesEl(p).scrollTop = messagesEl(p).scrollHeight
+}
+
+function renderOrUpdateStats(p: AIPlatform, text: string): void {
+  const start = state.streamStartTime[p] ?? Date.now()
+  const ft = state.firstTokenTime[p] ?? start
+  const wc = countWords(text)
+  const dur = durationMs(start)
+  const ttft = ttftMs(start, ft)
+  const statsDiv = document.createElement('div')
+  statsDiv.className = 'stats'
+  statsDiv.textContent = `${wc} 字 · ${(dur / 1000).toFixed(1)} 秒 · 首次 Token ${(ttft / 1000).toFixed(1)} 秒`
+
+  const existing = state.lastStats[p]
+  if (existing && existing.parentNode) {
+    existing.replaceWith(statsDiv)
+  } else {
+    messagesEl(p).appendChild(statsDiv)
+  }
+  state.lastStats[p] = statsDiv
+  messagesEl(p).scrollTop = messagesEl(p).scrollHeight
+}
+
 // ---------- Messages to SW ----------
 function sendToSw<T = unknown>(msg: PopupToSw): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -117,20 +196,21 @@ chrome.runtime.onMessage.addListener((msg: SwToPopup) => {
       const ph = state.placeholder[e.platform]
       if (ph) ph.remove()
       state.placeholder[e.platform] = null
-      addBubble(e.platform, e.text, 'ai')
       state.lastResponses[e.platform] = e.text
-      setPlatformStatus(e.platform, 'finished')
 
-      const start = state.streamStartTime[e.platform] ?? Date.now()
-      const ft = state.firstTokenTime[e.platform] ?? start
-      const wc = countWords(e.text)
-      const dur = durationMs(start)
-      const ttft = ttftMs(start, ft)
-      const statsDiv = document.createElement('div')
-      statsDiv.className = 'stats'
-      statsDiv.textContent = `${wc} 字 · ${(dur / 1000).toFixed(1)} 秒 · 首次 Token ${(ttft / 1000).toFixed(1)} 秒`
-      messagesEl(e.platform).appendChild(statsDiv)
-      messagesEl(e.platform).scrollTop = messagesEl(e.platform).scrollHeight
+      const bothDone = !!(state.lastResponses.chatgpt && state.lastResponses.gemini)
+      if (bothDone) {
+        const other: AIPlatform = e.platform === 'chatgpt' ? 'gemini' : 'chatgpt'
+        renderOrUpdateAiBubble(e.platform, e.text)
+        renderOrUpdateAiBubble(other, state.lastResponses[other])
+        renderOrUpdateStats(e.platform, e.text)
+        renderOrUpdateStats(other, state.lastResponses[other])
+      } else {
+        renderOrUpdateAiBubble(e.platform, e.text)
+        renderOrUpdateStats(e.platform, e.text)
+      }
+
+      setPlatformStatus(e.platform, 'finished')
 
       if (state.status.chatgpt === 'finished' && state.status.gemini === 'finished') {
         flashPanel('chatgpt')
