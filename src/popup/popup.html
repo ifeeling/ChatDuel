@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>AIChatRoom</title>
+  <link rel="stylesheet" href="./popup.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <h1>AIChatRoom</h1>
+      <div class="status" id="status">
+        <span class="status-item" data-platform="chatgpt">ChatGPT: <span class="dot"></span> 未检测</span>
+        <span class="status-item" data-platform="gemini">Gemini: <span class="dot"></span> 未检测</span>
+      </div>
+    </header>
+
+    <main class="panels">
+      <section class="panel" data-platform="gemini">
+        <header class="panel-header">
+          <span class="panel-title">Gemini</span>
+          <span class="panel-state">空闲</span>
+        </header>
+        <div class="messages" id="messages-gemini"></div>
+      </section>
+
+      <section class="panel" data-platform="chatgpt">
+        <header class="panel-header">
+          <span class="panel-title">ChatGPT</span>
+          <span class="panel-state">空闲</span>
+        </header>
+        <div class="messages" id="messages-chatgpt"></div>
+      </section>
+    </main>
+
+    <footer class="composer">
+      <textarea id="input" rows="3" placeholder="输入问题，@AI 选择目标，例如：@chatgpt @gemini 你好"></textarea>
+      <div class="composer-actions">
+        <button id="btn-quote" disabled>引用</button>
+        <button id="btn-image" title="粘贴/拖拽图片">图片</button>
+        <button id="btn-send">发送</button>
+      </div>
+    </footer>
+  </div>
+  <script type="module" src="./popup.ts"></script>
+</body>
+</html>
