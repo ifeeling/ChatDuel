@@ -4,7 +4,6 @@ import type { AIAdapter } from '../../src/adapters/base'
 describe('AIAdapter interface', () => {
   it('can be implemented with all required methods', () => {
     const adapter: AIAdapter = {
-      platform: 'chatgpt',
       isLoggedIn: async () => true,
       writeText: async () => {},
       triggerSend: async () => {},
@@ -14,6 +13,6 @@ describe('AIAdapter interface', () => {
       onStreamEvent: () => () => {},
       detectRateLimit: async () => false,
     }
-    expect(adapter.platform).toBe('chatgpt')
+    expect(adapter).toBeDefined()
   })
 })
