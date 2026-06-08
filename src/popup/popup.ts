@@ -92,7 +92,7 @@ chrome.runtime.onMessage.addListener((msg: SwToPopup) => {
       setPlatformStatus(e.platform, 'error')
     } else if (e.type === 'rate-limit') {
       setPlatformStatus(e.platform, 'error')
-      addBubble(e.platform, '⚠️ 触发限流', 'placeholder')
+      addBubble(e.platform, `⚠️ 限流：${e.message}`, 'placeholder')
     }
   }
 })

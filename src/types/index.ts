@@ -38,7 +38,7 @@ export type StreamEvent =
   | { type: 'paused'; platform: AIPlatform; timestamp: number }
   | { type: 'finished'; platform: AIPlatform; text: string; timestamp: number }
   | { type: 'error'; platform: AIPlatform; message: string; timestamp: number }
-  | { type: 'rate-limit'; platform: AIPlatform; timestamp: number }
+  | { type: 'rate-limit'; platform: AIPlatform; message: string; timestamp: number }
 
 export interface ConversationState {
   status: StreamStatus
