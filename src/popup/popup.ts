@@ -1,10 +1,11 @@
-import type { AIPlatform, StreamStatus } from '../types'
+import type { AIPlatform, Session, StreamStatus } from '../types'
 import type { SwToPopup, PopupToSw } from '../shared/messages'
 import { parseAtMentions } from '../lib/at-parser'
 import { countWords, durationMs, ttftMs } from '../lib/stats'
 import { buildDataTransferFromFile, MAX_IMAGE_BYTES, ImageTooLargeError } from '../lib/image-handler'
 import { renderTemplate, getDefaultTemplates } from '../lib/prompt-template'
 import { diffResponses, type DiffChunk } from '../lib/diff'
+import { addSession, loadSessions, deleteSession, MAX_SESSIONS } from '../lib/session-store'
 
 // ---------- DOM refs ----------
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel)!
@@ -18,6 +19,7 @@ const imageBtn = $<HTMLButtonElement>('#btn-image')
 const btnC2G = $<HTMLButtonElement>('#btn-transfer-c2g')
 const btnG2C = $<HTMLButtonElement>('#btn-transfer-g2c')
 const btnSummary = $<HTMLButtonElement>('#btn-summary')
+const btnHistory = $<HTMLButtonElement>('#btn-history')
 
 // ---------- State ----------
 interface UIState {
@@ -215,6 +217,7 @@ chrome.runtime.onMessage.addListener((msg: SwToPopup) => {
       if (state.status.chatgpt === 'finished' && state.status.gemini === 'finished') {
         flashPanel('chatgpt')
         flashPanel('gemini')
+        void saveCurrentSession()
       }
       updateQuoteButton()
       updateTransferButtons()
@@ -238,6 +241,7 @@ window.addEventListener('DOMContentLoaded', () => {
   btnC2G.addEventListener('click', () => transferResponse('chatgpt', 'gemini'))
   btnG2C.addEventListener('click', () => transferResponse('gemini', 'chatgpt'))
   btnSummary.addEventListener('click', onSummary)
+  btnHistory.addEventListener('click', () => void onHistory())
   inputEl.addEventListener('input', () => {
     state.hasUserMessage = inputEl.value.trim().length > 0
   })
@@ -337,6 +341,48 @@ function sendToSinglePlatform(target: AIPlatform, text: string) {
   state.firstTokenTime[target] = undefined
   setPlatformStatus(target, 'queued')
   void sendToSw({ type: 'send-message', platforms: [target], text })
+}
+
+// ---------- History ----------
+async function saveCurrentSession() {
+  const session: Session = {
+    id: crypto.randomUUID(),
+    createdAt: Date.now(),
+    prompt: state.lastPrompt,
+    responses: {
+      chatgpt: state.lastResponses.chatgpt || undefined,
+      gemini: state.lastResponses.gemini || undefined,
+    },
+    followUps: [],
+  }
+  await addSession(session)
+}
+
+async function onHistory() {
+  const all = await loadSessions()
+  all.sort((a, b) => b.createdAt - a.createdAt)
+  if (all.length === 0) {
+    alert('暂无历史记录')
+    return
+  }
+  const list = all.slice(0, 20).map((s, i) => {
+    const ts = new Date(s.createdAt).toLocaleString()
+    const p = s.prompt.slice(0, 50) + (s.prompt.length > 50 ? '…' : '')
+    return `${i + 1}. [${ts}] ${p}`
+  }).join('\n')
+  const choice = prompt(`历史记录 (最近 20 条，共 ${all.length} 条，上限 ${MAX_SESSIONS}):\n\n${list}\n\n输入序号查看详情，或留空返回：`)
+  if (!choice) return
+  const idx = parseInt(choice, 10)
+  if (isNaN(idx) || idx < 1 || idx > all.length) {
+    alert('无效的序号')
+    return
+  }
+  const s = all[idx - 1]
+  const detail = `用户问题：${s.prompt}\n\nChatGPT: ${s.responses.chatgpt ?? '(无)'}\n\nGemini: ${s.responses.gemini ?? '(无)'}`
+  alert(detail)
+  if (confirm('是否删除此条历史？')) {
+    await deleteSession(s.id)
+  }
 }
 
 // ---------- Image input ----------
