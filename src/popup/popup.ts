@@ -16,11 +16,17 @@ interface UIState {
   status: Record<AIPlatform, StreamStatus>
   lastResponses: Record<AIPlatform, string>
   hasUserMessage: boolean
+  placeholder: Record<AIPlatform, HTMLDivElement | null>
+  streamStartTime: Record<AIPlatform, number | undefined>
+  firstTokenTime: Record<AIPlatform, number | undefined>
 }
 const state: UIState = {
   status: { chatgpt: 'idle', gemini: 'idle' },
   lastResponses: { chatgpt: '', gemini: '' },
   hasUserMessage: false,
+  placeholder: { chatgpt: null, gemini: null },
+  streamStartTime: { chatgpt: undefined, gemini: undefined },
+  firstTokenTime: { chatgpt: undefined, gemini: undefined },
 }
 
 // ---------- Render ----------
@@ -47,12 +53,13 @@ function setPlatformStatus(p: AIPlatform, s: StreamStatus) {
   if (s === 'error') dot.classList.add('err')
 }
 
-function addBubble(p: AIPlatform, text: string, kind: 'user' | 'ai' | 'placeholder') {
+function addBubble(p: AIPlatform, text: string, kind: 'user' | 'ai' | 'placeholder'): HTMLDivElement {
   const div = document.createElement('div')
   div.className = `bubble ${kind}`
   div.textContent = text
   messagesEl(p).appendChild(div)
   messagesEl(p).scrollTop = messagesEl(p).scrollHeight
+  return div
 }
 
 function flashPanel(p: AIPlatform) {
@@ -76,16 +83,35 @@ function sendToSw<T = unknown>(msg: PopupToSw): Promise<T> {
 chrome.runtime.onMessage.addListener((msg: SwToPopup) => {
   if (msg.type === 'stream-event') {
     const e = msg.event
-    if (e.type === 'finished') {
+    if (e.type === 'started') {
+      if (state.firstTokenTime[e.platform] === undefined && state.streamStartTime[e.platform] !== undefined) {
+        state.firstTokenTime[e.platform] = Date.now()
+      }
+      setPlatformStatus(e.platform, 'streaming')
+    } else if (e.type === 'token') {
+      if (state.firstTokenTime[e.platform] === undefined && state.streamStartTime[e.platform] !== undefined) {
+        state.firstTokenTime[e.platform] = Date.now()
+      }
+      const ph = state.placeholder[e.platform]
+      if (ph) {
+        ph.className = 'bubble ai'
+        ph.textContent = e.text
+        messagesEl(e.platform).scrollTop = messagesEl(e.platform).scrollHeight
+      } else {
+        addBubble(e.platform, e.text, 'ai')
+      }
+      setPlatformStatus(e.platform, 'streaming')
+    } else if (e.type === 'finished') {
+      const ph = state.placeholder[e.platform]
+      if (ph) ph.remove()
+      state.placeholder[e.platform] = null
+      addBubble(e.platform, e.text, 'ai')
       state.lastResponses[e.platform] = e.text
       setPlatformStatus(e.platform, 'finished')
-      // Check if both finished
       if (state.status.chatgpt === 'finished' && state.status.gemini === 'finished') {
         flashPanel('chatgpt')
         flashPanel('gemini')
       }
-    } else if (e.type === 'started' || e.type === 'token') {
-      setPlatformStatus(e.platform, 'streaming')
     } else if (e.type === 'paused') {
       setPlatformStatus(e.platform, 'paused')
     } else if (e.type === 'error') {
@@ -110,8 +136,13 @@ async function onSend() {
   const text = inputEl.value.trim()
   if (!text) return
   const platforms: AIPlatform[] = ['chatgpt', 'gemini']
+  const now = Date.now()
   for (const p of platforms) {
     addBubble(p, text, 'user')
+    const placeholder = addBubble(p, '⏳ 等待回应...', 'placeholder')
+    state.placeholder[p] = placeholder
+    state.streamStartTime[p] = now
+    state.firstTokenTime[p] = undefined
     setPlatformStatus(p, 'queued')
   }
   inputEl.value = ''
