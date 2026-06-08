@@ -3,6 +3,7 @@ import type { SwToPopup, PopupToSw } from '../shared/messages'
 import { parseAtMentions } from '../lib/at-parser'
 import { countWords, durationMs, ttftMs } from '../lib/stats'
 import { buildDataTransferFromFile, MAX_IMAGE_BYTES, ImageTooLargeError } from '../lib/image-handler'
+import { renderTemplate, getDefaultTemplates } from '../lib/prompt-template'
 
 // ---------- DOM refs ----------
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel)!
@@ -13,6 +14,8 @@ const inputEl = $<HTMLTextAreaElement>('#input')
 const sendBtn = $<HTMLButtonElement>('#btn-send')
 const quoteBtn = $<HTMLButtonElement>('#btn-quote')
 const imageBtn = $<HTMLButtonElement>('#btn-image')
+const btnC2G = $<HTMLButtonElement>('#btn-transfer-c2g')
+const btnG2C = $<HTMLButtonElement>('#btn-transfer-g2c')
 
 // ---------- State ----------
 interface UIState {
@@ -131,6 +134,7 @@ chrome.runtime.onMessage.addListener((msg: SwToPopup) => {
         flashPanel('gemini')
       }
       updateQuoteButton()
+      updateTransferButtons()
     } else if (e.type === 'paused') {
       setPlatformStatus(e.platform, 'paused')
     } else if (e.type === 'error') {
@@ -147,6 +151,8 @@ window.addEventListener('DOMContentLoaded', () => {
   console.log('[AIChatRoom popup] ready')
   sendBtn.addEventListener('click', onSend)
   quoteBtn.addEventListener('click', onQuote)
+  btnC2G.addEventListener('click', () => transferResponse('chatgpt', 'gemini'))
+  btnG2C.addEventListener('click', () => transferResponse('gemini', 'chatgpt'))
   inputEl.addEventListener('input', () => {
     state.hasUserMessage = inputEl.value.trim().length > 0
   })
@@ -156,6 +162,7 @@ window.addEventListener('DOMContentLoaded', () => {
     alert('直接 Ctrl+V 粘贴图片，或拖拽图片到输入框')
   })
   updateQuoteButton()
+  updateTransferButtons()
 })
 
 // ---------- Quote ----------
@@ -178,6 +185,26 @@ function onQuote() {
   const newPos = start + insertion.length
   inputEl.setSelectionRange(newPos, newPos)
   inputEl.focus()
+}
+
+// ---------- Transfer ----------
+function updateTransferButtons() {
+  btnC2G.disabled = !state.lastResponses.chatgpt
+  btnG2C.disabled = !state.lastResponses.gemini
+}
+
+function transferResponse(from: AIPlatform, to: AIPlatform) {
+  const sourceText = state.lastResponses[from]
+  if (!sourceText) return
+  const wrapped = renderTemplate(getDefaultTemplates().review, { response: sourceText })
+  const now = Date.now()
+  addBubble(to, wrapped, 'user')
+  const placeholder = addBubble(to, '⏳ 等待回应...', 'placeholder')
+  state.placeholder[to] = placeholder
+  state.streamStartTime[to] = now
+  state.firstTokenTime[to] = undefined
+  setPlatformStatus(to, 'queued')
+  void sendToSw({ type: 'send-message', platforms: [to], text: wrapped })
 }
 
 // ---------- Image input ----------
