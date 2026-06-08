@@ -1,6 +1,7 @@
 import type { AIPlatform, StreamStatus } from '../types'
 import type { SwToPopup, PopupToSw } from '../shared/messages'
 import { parseAtMentions } from '../lib/at-parser'
+import { countWords, durationMs, ttftMs } from '../lib/stats'
 
 // ---------- DOM refs ----------
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel)!
@@ -109,6 +110,18 @@ chrome.runtime.onMessage.addListener((msg: SwToPopup) => {
       addBubble(e.platform, e.text, 'ai')
       state.lastResponses[e.platform] = e.text
       setPlatformStatus(e.platform, 'finished')
+
+      const start = state.streamStartTime[e.platform] ?? Date.now()
+      const ft = state.firstTokenTime[e.platform] ?? start
+      const wc = countWords(e.text)
+      const dur = durationMs(start)
+      const ttft = ttftMs(start, ft)
+      const statsDiv = document.createElement('div')
+      statsDiv.className = 'stats'
+      statsDiv.textContent = `${wc} 字 · ${(dur / 1000).toFixed(1)} 秒 · 首次 Token ${(ttft / 1000).toFixed(1)} 秒`
+      messagesEl(e.platform).appendChild(statsDiv)
+      messagesEl(e.platform).scrollTop = messagesEl(e.platform).scrollHeight
+
       if (state.status.chatgpt === 'finished' && state.status.gemini === 'finished') {
         flashPanel('chatgpt')
         flashPanel('gemini')
