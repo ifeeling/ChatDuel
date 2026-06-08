@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head><title>Mock ChatGPT</title></head>
+<body>
+  <div data-testid="conversation-turns">
+    <div data-testid="conversation-turn" data-turn="user">Hello</div>
+    <div data-testid="conversation-turn" data-turn="assistant">
+      <div class="markdown">Mock response 1</div>
+    </div>
+  </div>
+  <div id="prompt-textarea" contenteditable="true"></div>
+  <button data-testid="send-button">Send</button>
+  <button data-testid="user-menu-button">Menu</button>
+
+  <script>
+    let streaming = false
+    const sendBtn = document.querySelector("[data-testid='send-button']")
+    sendBtn.addEventListener('click', () => {
+      const text = document.querySelector('#prompt-textarea').textContent
+      if (!text) return
+      const userDiv = document.createElement('div')
+      userDiv.setAttribute('data-testid', 'conversation-turn')
+      userDiv.setAttribute('data-turn', 'user')
+      userDiv.textContent = text
+      document.querySelector("[data-testid='conversation-turns']").appendChild(userDiv)
+      document.querySelector('#prompt-textarea').textContent = ''
+
+      streaming = true
+      const aiDiv = document.createElement('div')
+      aiDiv.setAttribute('data-testid', 'conversation-turn')
+      aiDiv.setAttribute('data-turn', 'assistant')
+      const md = document.createElement('div')
+      md.className = 'markdown'
+      md.textContent = ''
+      aiDiv.appendChild(md)
+      document.querySelector("[data-testid='conversation-turns']").appendChild(aiDiv)
+
+      const fullText = 'Mock AI response to: ' + text
+      let i = 0
+      const interval = setInterval(() => {
+        md.textContent = fullText.slice(0, i + 1)
+        i++
+        if (i >= fullText.length) {
+          clearInterval(interval)
+          streaming = false
+        }
+      }, 10)
+    })
+
+    window.__getStreaming = () => streaming
+  </script>
+</body>
+</html>
