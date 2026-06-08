@@ -1,0 +1,14 @@
+{
+  "version": "2026.06",
+  "lastVerified": "2026-06-08",
+  "selectors": {
+    "inputBox": "#prompt-textarea",
+    "sendButton": "button[data-testid='send-button']",
+    "messageContainer": "[data-testid='conversation-turn']",
+    "lastResponse": "[data-testid='conversation-turn']:last-of-type .markdown",
+    "userMessage": "[data-testid='conversation-turn'][data-turn='user']",
+    "rateLimitToast": "[role='alert']",
+    "continueButton": "button[data-testid='continue-generation-button']",
+    "loggedIn": "[data-testid='user-menu-button']"
+  }
+}
