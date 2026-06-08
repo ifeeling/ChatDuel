@@ -1,5 +1,6 @@
 import type { AIPlatform, StreamStatus } from '../types'
 import type { SwToPopup, PopupToSw } from '../shared/messages'
+import { parseAtMentions } from '../lib/at-parser'
 
 // ---------- DOM refs ----------
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel)!
@@ -135,7 +136,12 @@ window.addEventListener('DOMContentLoaded', () => {
 async function onSend() {
   const text = inputEl.value.trim()
   if (!text) return
-  const platforms: AIPlatform[] = ['chatgpt', 'gemini']
+  const mentions = parseAtMentions(text)
+  const allPlatforms: AIPlatform[] = ['chatgpt', 'gemini']
+  const targetPlatforms: AIPlatform[] = mentions.length > 0
+    ? mentions.filter((m): m is AIPlatform => m === 'chatgpt' || m === 'gemini')
+    : allPlatforms
+  const platforms = targetPlatforms.length > 0 ? targetPlatforms : allPlatforms
   const now = Date.now()
   for (const p of platforms) {
     addBubble(p, text, 'user')
