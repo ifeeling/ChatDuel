@@ -246,9 +246,25 @@ window.addEventListener('DOMContentLoaded', () => {
   imageBtn.addEventListener('click', () => {
     alert('直接 Ctrl+V 粘贴图片，或拖拽图片到输入框')
   })
+  window.addEventListener('keydown', onKeydown)
   updateQuoteButton()
   updateTransferButtons()
 })
+
+function onKeydown(e: KeyboardEvent) {
+  const isMod = e.metaKey || e.ctrlKey
+  if (!isMod) return
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    void onSend()
+  } else if (e.shiftKey && (e.key === '!' || e.code === 'Digit1')) {
+    e.preventDefault()
+    btnC2G.click()
+  } else if (e.shiftKey && (e.key === '@' || e.code === 'Digit2')) {
+    e.preventDefault()
+    btnG2C.click()
+  }
+}
 
 // ---------- Quote ----------
 function updateQuoteButton() {
