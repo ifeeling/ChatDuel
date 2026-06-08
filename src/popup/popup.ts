@@ -16,6 +16,7 @@ const quoteBtn = $<HTMLButtonElement>('#btn-quote')
 const imageBtn = $<HTMLButtonElement>('#btn-image')
 const btnC2G = $<HTMLButtonElement>('#btn-transfer-c2g')
 const btnG2C = $<HTMLButtonElement>('#btn-transfer-g2c')
+const btnSummary = $<HTMLButtonElement>('#btn-summary')
 
 // ---------- State ----------
 interface UIState {
@@ -25,6 +26,7 @@ interface UIState {
   placeholder: Record<AIPlatform, HTMLDivElement | null>
   streamStartTime: Record<AIPlatform, number | undefined>
   firstTokenTime: Record<AIPlatform, number | undefined>
+  lastPrompt: string
 }
 const state: UIState = {
   status: { chatgpt: 'idle', gemini: 'idle' },
@@ -33,6 +35,7 @@ const state: UIState = {
   placeholder: { chatgpt: null, gemini: null },
   streamStartTime: { chatgpt: undefined, gemini: undefined },
   firstTokenTime: { chatgpt: undefined, gemini: undefined },
+  lastPrompt: '',
 }
 
 // Pending image attached to the next send (popup-only state)
@@ -135,6 +138,7 @@ chrome.runtime.onMessage.addListener((msg: SwToPopup) => {
       }
       updateQuoteButton()
       updateTransferButtons()
+      updateSummaryButton()
     } else if (e.type === 'paused') {
       setPlatformStatus(e.platform, 'paused')
     } else if (e.type === 'error') {
@@ -153,6 +157,7 @@ window.addEventListener('DOMContentLoaded', () => {
   quoteBtn.addEventListener('click', onQuote)
   btnC2G.addEventListener('click', () => transferResponse('chatgpt', 'gemini'))
   btnG2C.addEventListener('click', () => transferResponse('gemini', 'chatgpt'))
+  btnSummary.addEventListener('click', onSummary)
   inputEl.addEventListener('input', () => {
     state.hasUserMessage = inputEl.value.trim().length > 0
   })
@@ -197,14 +202,45 @@ function transferResponse(from: AIPlatform, to: AIPlatform) {
   const sourceText = state.lastResponses[from]
   if (!sourceText) return
   const wrapped = renderTemplate(getDefaultTemplates().review, { response: sourceText })
+  sendToSinglePlatform(to, wrapped)
+}
+
+// ---------- Summary ----------
+const SUMMARY_CHAR_LIMIT = 3000
+
+function updateSummaryButton() {
+  btnSummary.disabled = !(state.lastResponses.chatgpt && state.lastResponses.gemini)
+}
+
+function onSummary() {
+  const a = state.lastResponses.chatgpt
+  const b = state.lastResponses.gemini
+  if (!a || !b) {
+    alert('需要两边都有回答才能做对比总结')
+    return
+  }
+  const tpl = getDefaultTemplates().summary
+  const fullTpl = renderTemplate(tpl, { responseA: a, responseB: b })
+  let prompt = fullTpl
+  if (fullTpl.length > SUMMARY_CHAR_LIMIT) {
+    const halfLimit = Math.max(50, Math.floor((SUMMARY_CHAR_LIMIT - tpl.length) / 2) - 50)
+    const truncatedA = a.length > halfLimit ? a.slice(0, halfLimit) + '\n\n[…回答过长已截断…]' : a
+    const truncatedB = b.length > halfLimit ? b.slice(0, halfLimit) + '\n\n[…回答过长已截断…]' : b
+    prompt = renderTemplate(tpl, { responseA: truncatedA, responseB: truncatedB })
+    alert('⚠️ 对比总结输入超过 3000 字符，已截断')
+  }
+  sendToSinglePlatform('chatgpt', prompt)
+}
+
+function sendToSinglePlatform(target: AIPlatform, text: string) {
   const now = Date.now()
-  addBubble(to, wrapped, 'user')
-  const placeholder = addBubble(to, '⏳ 等待回应...', 'placeholder')
-  state.placeholder[to] = placeholder
-  state.streamStartTime[to] = now
-  state.firstTokenTime[to] = undefined
-  setPlatformStatus(to, 'queued')
-  void sendToSw({ type: 'send-message', platforms: [to], text: wrapped })
+  addBubble(target, text, 'user')
+  const placeholder = addBubble(target, '⏳ 等待回应...', 'placeholder')
+  state.placeholder[target] = placeholder
+  state.streamStartTime[target] = now
+  state.firstTokenTime[target] = undefined
+  setPlatformStatus(target, 'queued')
+  void sendToSw({ type: 'send-message', platforms: [target], text })
 }
 
 // ---------- Image input ----------
@@ -273,6 +309,7 @@ async function onSend() {
   const userLabel = pendingImage
     ? `${text}${text ? '\n' : ''}[图片] ${pendingImage.name}`
     : text
+  state.lastPrompt = userLabel
   for (const p of platforms) {
     addBubble(p, userLabel, 'user')
     const placeholder = addBubble(p, '⏳ 等待回应...', 'placeholder')
