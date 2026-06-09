@@ -1,52 +1,68 @@
 import { createGeminiAdapter } from '../adapters/gemini/adapter'
 import type { SwToContent, ContentToSw } from '../shared/messages'
 import type { AIPlatform } from '../types'
-import { buildDataTransferFromFile, dispatchPaste, downloadImage, tryCopyImageToClipboard, MAX_IMAGE_BYTES, ImageTooLargeError } from '../lib/image-handler'
 
 const adapter = createGeminiAdapter()
 
-async function dataUrlToFile(dataUrl: string, name = 'pasted'): Promise<File> {
-  const res = await fetch(dataUrl)
-  const blob = await res.blob()
-  const ext = blob.type.split('/')[1] || 'png'
-  return new File([blob], `${name}.${ext}`, { type: blob.type })
-}
-
-async function deliverImage(text: string, imageDataUrl: string): Promise<void> {
-  const file = await dataUrlToFile(imageDataUrl)
-  if (file.size > MAX_IMAGE_BYTES) {
-    throw new ImageTooLargeError(file.size)
-  }
-  const box = document.querySelector<HTMLElement>('[contenteditable="true"], textarea')
-  if (!box) {
-    downloadImage(file, file.name)
-    return
-  }
-  const dt = buildDataTransferFromFile(file)
-  dispatchPaste(box, dt, 'paste')
-  const copied = await tryCopyImageToClipboard(file)
-  if (!copied) {
-    downloadImage(file, file.name)
-  }
-}
-
 adapter.onStreamEvent((event) => {
   const msg: ContentToSw = { type: 'stream-event', event }
-  chrome.runtime.sendMessage(msg).catch(() => {/* popup may be closed */})
+  chrome.runtime.sendMessage(msg).catch(() => {/* SW may not be ready */})
+})
+
+if (window.parent !== window) {
+  try {
+    window.parent.postMessage(
+      { source: 'aichatroom-content', event: 'ready', platform: 'gemini' },
+      { targetOrigin: '*' },
+    )
+  } catch {
+    /* ignore */
+  }
+}
+
+window.addEventListener('message', (e: MessageEvent) => {
+  const data = e.data as
+    | { source?: string; action?: string; text?: string; imageDataUrl?: string }
+    | undefined
+  if (!data || data.source !== 'aichatroom-parent') return
+  if (data.action !== 'write-and-send') return
+
+  const text = data.text ?? ''
+
+  void Promise.resolve()
+    .then(() => adapter.sendMessage(text))
+    .then(() => {
+      e.source?.postMessage(
+        { source: 'aichatroom-content', event: 'result', action: 'write-and-send', platform: 'gemini', ok: true },
+        { targetOrigin: '*' },
+      )
+    })
+    .catch((err: unknown) => {
+      e.source?.postMessage(
+        {
+          source: 'aichatroom-content',
+          event: 'result',
+          action: 'write-and-send',
+          platform: 'gemini',
+          ok: false,
+          error: String(err),
+        },
+        { targetOrigin: '*' },
+      )
+    })
 })
 
 chrome.runtime.onMessage.addListener((msg: SwToContent, _sender, sendResponse) => {
   if (msg.type === 'write-and-send') {
-    const p = msg.imageDataUrl
-      ? deliverImage(msg.text, msg.imageDataUrl).then(() => adapter.sendMessage(msg.text))
-      : adapter.sendMessage(msg.text)
-    p
+    adapter
+      .sendMessage(msg.text)
       .then(() => sendResponse({ ok: true }))
-      .catch((e) => sendResponse({ ok: false, error: String(e) }))
+      .catch((e: unknown) => sendResponse({ ok: false, error: String(e) }))
     return true
   }
   if (msg.type === 'get-state') {
-    adapter.getConversationState()
+    adapter
+      .getConversationState()
       .then((state) => {
         const reply: ContentToSw = { type: 'state', platform: 'gemini' as AIPlatform, state }
         sendResponse(reply)
@@ -54,7 +70,8 @@ chrome.runtime.onMessage.addListener((msg: SwToContent, _sender, sendResponse) =
     return true
   }
   if (msg.type === 'get-last-response') {
-    adapter.getLastResponse()
+    adapter
+      .getLastResponse()
       .then((text) => {
         const reply: ContentToSw = { type: 'last-response', text }
         sendResponse(reply)

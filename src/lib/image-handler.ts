@@ -41,6 +41,15 @@ export async function tryCopyImageToClipboard(file: File): Promise<boolean> {
   }
 }
 
+export async function tryPasteFromClipboard(target: HTMLElement): Promise<boolean> {
+  target.focus()
+  try {
+    return document.execCommand('paste')
+  } catch {
+    return false
+  }
+}
+
 export function downloadImage(file: File, filename?: string): void {
   const url = URL.createObjectURL(file)
   const a = document.createElement('a')

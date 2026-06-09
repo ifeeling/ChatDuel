@@ -4,7 +4,6 @@
   "version": "0.1.0",
   "description": "Multi-AI comparison and transfer tool. No API keys, no data collection.",
   "action": {
-    "default_popup": "src/popup/popup.html",
     "default_title": "AIChatRoom"
   },
   "background": {
@@ -15,7 +14,8 @@
     "storage",
     "unlimitedStorage",
     "tabs",
-    "scripting"
+    "scripting",
+    "declarativeNetRequest"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
@@ -25,15 +25,16 @@
     {
       "matches": ["https://chatgpt.com/*"],
       "js": ["src/content-scripts/chatgpt-content.ts"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     },
     {
       "matches": ["https://gemini.google.com/*"],
       "js": ["src/content-scripts/gemini-content.ts"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
-  "options_page": "src/options/options.html",
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"
   }

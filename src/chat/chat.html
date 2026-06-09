@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AIChatRoom</title>
+  <link rel="stylesheet" href="./chat.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <h1 class="brand">AIChatRoom</h1>
+      <div class="status" id="status">
+        <span class="status-item" data-platform="chatgpt">
+          <span class="dot"></span>ChatGPT:<span class="status-text">检测中…</span>
+        </span>
+        <span class="status-item" data-platform="gemini">
+          <span class="dot"></span>Gemini:<span class="status-text">检测中…</span>
+        </span>
+      </div>
+      <div class="topbar-actions">
+        <button id="btn-refresh" title="刷新状态">↻</button>
+      </div>
+    </header>
+
+    <main class="panels">
+      <section class="panel" data-platform="gemini">
+        <header class="panel-header">
+          <span class="panel-title">Gemini</span>
+          <button class="panel-open" data-platform="gemini" title="在新标签页打开官方页面">↗</button>
+        </header>
+        <iframe class="panel-iframe" data-platform="gemini" src="about:blank"></iframe>
+      </section>
+
+      <div class="splitter" id="splitter"></div>
+
+      <section class="panel" data-platform="chatgpt">
+        <header class="panel-header">
+          <span class="panel-title">ChatGPT</span>
+          <button class="panel-open" data-platform="chatgpt" title="在新标签页打开官方页面">↗</button>
+        </header>
+        <iframe class="panel-iframe" data-platform="chatgpt" src="about:blank"></iframe>
+      </section>
+    </main>
+
+    <footer class="composer">
+      <div class="composer-toolbar">
+        <button id="btn-image" title="粘贴/拖拽图片">图片</button>
+        <span class="at-hint">@chatgpt @gemini 选择目标</span>
+        <button id="btn-quote" disabled title="引用上一轮回答">引用</button>
+        <button id="btn-transfer-c2g" disabled title="把 ChatGPT 的回答搬到 Gemini">C→G</button>
+        <button id="btn-transfer-g2c" disabled title="把 Gemini 的回答搬到 ChatGPT">G→C</button>
+        <button id="btn-summary" disabled title="对比总结">总结</button>
+        <button id="btn-history" title="查看历史">历史</button>
+      </div>
+      <div class="composer-input">
+        <textarea id="input" rows="2"
+          placeholder="在这里输入你的问题 或 输入 @ 和指定AI对话..."></textarea>
+        <button id="btn-send" title="发送">↑</button>
+      </div>
+    </footer>
+  </div>
+  <script type="module" src="./chat.ts"></script>
+</body>
+</html>

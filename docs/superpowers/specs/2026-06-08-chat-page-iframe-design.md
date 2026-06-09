@@ -89,24 +89,24 @@ chrome-extension://ai-chat-room/
 ```ts
 import type { DeclarativeNetRequest } from '~types'
 
-const RULE_IDS = { chatgpt: 1, gemini: 2 }
+const RULE_IDS = { chatgpt: 1, gemini: 2 } as const
 
 const buildRule = (id: number, urlFilter: string) => ({
   id,
   priority: 1,
   condition: {
     urlFilter,
-    resourceTypes: ['main_frame', 'sub_frame'] as DeclarativeNetRequest.ResourceType[],
+    resourceTypes: ['main_frame', 'sub_frame'] as chrome.declarativeNetRequest.ResourceType[],
   },
   action: {
-    type: 'modifyHeaders' as const,
+    type: 'modifyHeaders' as chrome.declarativeNetRequest.RuleActionType,
     responseHeaders: [
       {
         header: 'Content-Security-Policy',
-        operation: 'set' as const,
+        operation: 'set' as chrome.declarativeNetRequest.HeaderOperation,
         value: "frame-ancestors 'self' chrome-extension://*",
       },
-      { header: 'X-Frame-Options', operation: 'remove' as const },
+      { header: 'X-Frame-Options', operation: 'remove' as chrome.declarativeNetRequest.HeaderOperation },
     ],
   },
 })
@@ -115,8 +115,13 @@ export async function enableEmbedRules(): Promise<void> {
   await chrome.declarativeNetRequest.updateDynamicRules({
     removeRuleIds: [RULE_IDS.chatgpt, RULE_IDS.gemini],
     addRules: [
-      buildRule(RULE_IDS.chatgpt, '||chatgpt.com^'),
-      buildRule(RULE_IDS.gemini, '||gemini.google.com^'),
+      // ⚠️ urlFilter 在 modifyHeaders 动作下不接受 `||...^` 这种
+      // declarativeNetRequest 专用语法,只接受"普通子串匹配"。
+      // 误用会让 updateDynamicRules 抛 `Invalid urlFilter`,规则静默失败,
+      // iframe 嵌入不进去,content script 也没法注入。
+      // 详见 docs/postmortems/2026-06-09-iframe-no-response.md
+      buildRule(RULE_IDS.chatgpt, 'chatgpt.com'),
+      buildRule(RULE_IDS.gemini, 'gemini.google.com'),
     ],
   })
 }
@@ -127,6 +132,8 @@ export async function disableEmbedRules(): Promise<void> {
   })
 }
 ```
+
+> **实现注**:`@types/chrome@0.0.268` 把 `HeaderOperation` / `RuleActionType` 定义为 TypeScript `enum`,而**不是** union 字符串。所以 `'set' as const` 在 strict 模式下不能隐式转换为 enum 类型。需用 `as chrome.declarativeNetRequest.HeaderOperation` 显式断言。运行时值仍是字符串 `"set"/"remove"`,与 spec 行为完全一致。ChatBrawl 0.7.2 的源代码用 union 字符串假设(旧 chrome types),本项目用了新版类型,所以做此调整。
 
 **与 ChatBrawl 唯一差异**:ChatBrawl 在 background SW 启动时**永久**启用规则。本项目**按需启用** —— 仅 chat 页面打开时启用,关闭后立即移除。对用户透明,Chrome Store 审核时也更容易解释("仅在用户主动打开扩展页面时短暂启用")。
 
@@ -222,6 +229,7 @@ export async function disableEmbedRules(): Promise<void> {
 | 风险 | 触发条件 | 缓解 |
 |------|---------|------|
 | ChatGPT / Gemini 改版后 iframe 内页面更新 DOM 结构,content script 选择器失效 | 官方改版 | 改 `src/adapters/{chatgpt,gemini}/selectors.json`,符合基线 §2.6 |
+| ⚠️ `urlFilter` 误用 `||...^` 专用语法,导致 `updateDynamicRules` 抛 `Invalid urlFilter` 静默失败 | 写错 | urlFilter 写普通子串(如 `"chatgpt.com"`);启用规则后用 `chrome.declarativeNetRequest.getDynamicRules()` 验证 |
 | DNR 规则被 Google 反爬虫策略检测并额外限制 | 罕见 | 退路:在 chat.ts 里检测 iframe `onerror`,提示"iframe 加载失败,请到 chatgpt.com 手动登录";仍然能用 content script 注入到用户手动打开的 tab |
 | `declarativeNetRequest` 在某些 Chrome 版本不支持 `modifyHeaders` 动作 | Chrome < 96(2021 年 12 月之前) | 在 `manifest.json` 加 `"minimum_chrome_version": "96"`(基线已要求 MV3) |
 | 用户关闭 chat 页面后规则未及时移除 | `beforeunload` 事件丢失(浏览器崩溃) | 兜底:background SW 启动时(每个浏览器会话开始)调 `disableEmbedRules` 清理 |

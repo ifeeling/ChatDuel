@@ -1,4 +1,4 @@
-# AIChatRoom
+two
 
 Chrome 扩展，对照 ChatGPT + Gemini 两个 AI 的回答。
 

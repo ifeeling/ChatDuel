@@ -8,8 +8,7 @@ export default defineConfig({
   build: {
     rollupOptions: {
       input: {
-        popup: resolve(import.meta.dirname, 'src/popup/popup.html'),
-        options: resolve(import.meta.dirname, 'src/options/options.html'),
+        chat: resolve(import.meta.dirname, 'src/chat/chat.html'),
         'service-worker': resolve(import.meta.dirname, 'src/background/service-worker.ts'),
         'content-chatgpt': resolve(import.meta.dirname, 'src/content-scripts/chatgpt-content.ts'),
         'content-gemini': resolve(import.meta.dirname, 'src/content-scripts/gemini-content.ts'),
