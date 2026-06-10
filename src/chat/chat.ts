@@ -171,18 +171,6 @@ function fileToDataUrl(file: File): Promise<string> {
   })
 }
 
-// 尝试把图片复制到剪贴板(给用户手动 Ctrl+V 用)
-async function tryCopyImageToClipboard(file: File): Promise<boolean> {
-  try {
-    if (!navigator.clipboard || !('write' in navigator.clipboard)) return false
-    // @ts-ignore - ClipboardItem 在某些 TS lib.dom 里类型不全
-    await navigator.clipboard.write([new ClipboardItem({ [file.type]: file })])
-    return true
-  } catch {
-    return false
-  }
-}
-
 // ---------- 启动 ----------
 async function bootstrap() {
   try {
@@ -313,21 +301,11 @@ async function onSend() {
     if (okCount === results.length && results.length > 0) {
       showToast('图片已发送到所有目标', 'success', 2500)
     } else if (okCount > 0) {
-      // 部分成功:把图片复制到剪贴板,让用户在失败那一侧手动 Ctrl+V
-      const copied = await tryCopyImageToClipboard(pendingImage)
-      if (copied) {
-        showToast(`部分目标未自动接收图片,已复制到剪贴板,请在失败侧 Ctrl+V`, 'warn', 6000)
-      } else {
-        showToast(`部分目标未自动接收图片,剪贴板也复制失败,请手动上传`, 'err', 6000)
-      }
+      // 部分成功:v0.5+ 不再走剪贴板兜底(跨源 iframe 写剪贴板经常失败)
+      showToast('部分目标未自动接收图片,请手动上传到失败侧', 'warn', 6000)
     } else {
-      // 全部失败:剪贴板兜底
-      const copied = await tryCopyImageToClipboard(pendingImage)
-      if (copied) {
-        showToast('图片自动发送失败,已复制到剪贴板,请在 AI 输入框 Ctrl+V', 'err', 6000)
-      } else {
-        showToast('图片自动发送失败,剪贴板也失败,请手动上传', 'err', 6000)
-      }
+      // 全部失败:v0.5+ 不再走剪贴板兜底
+      showToast('图片自动发送失败,请手动上传', 'err', 6000)
     }
   } else {
     if (okCount === 0 && results.length > 0) {

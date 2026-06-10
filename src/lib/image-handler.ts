@@ -30,17 +30,6 @@ export function dispatchPaste(target: HTMLElement, dt: DataTransfer, eventType: 
   target.dispatchEvent(event)
 }
 
-export async function tryCopyImageToClipboard(file: File): Promise<boolean> {
-  try {
-    if (!navigator.clipboard || !('write' in navigator.clipboard)) return false
-    // @ts-ignore - ClipboardItem in older TS lib.dom
-    await navigator.clipboard.write([new ClipboardItem({ [file.type]: file })])
-    return true
-  } catch {
-    return false
-  }
-}
-
 export async function tryPasteFromClipboard(target: HTMLElement): Promise<boolean> {
   target.focus()
   try {
