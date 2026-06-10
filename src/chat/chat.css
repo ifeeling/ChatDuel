@@ -158,13 +158,13 @@ body { overflow: hidden; }
 .composer-toolbar button:hover:not(:disabled) { background: #2a2a30; }
 .composer-toolbar button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-.at-hint { color: var(--muted); font-size: 11px; margin-left: auto; }
+.at-hint { color: var(--muted); font-size: 11px; }
 
 .composer-input {
   display: flex;
   gap: 8px;
   padding: 8px 12px;
-  align-items: flex-end;
+  align-items: center;
 }
 
 #input {
@@ -174,12 +174,14 @@ body { overflow: hidden; }
   color: var(--fg);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 8px 10px;
-  font: inherit;
-  line-height: 1.5;
-  min-height: 36px;
+  padding: 8px 12px;
+  font-size: 16px;       /* 跟 ChatGPT/Gemini 输入框一致 */
+  line-height: 20px;
+  min-height: 40px;
   max-height: 200px;
+  font-family: inherit;
 }
+#input::placeholder { color: var(--muted); }
 #input:focus { outline: none; border-color: var(--accent); }
 
 #btn-send {
@@ -195,6 +197,39 @@ body { overflow: hidden; }
 }
 #btn-send:hover { background: #3d75e0; }
 #btn-send:disabled { background: #555; cursor: not-allowed; }
+/* 输入框左边的 + 按钮(图片附件入口),参考 Gemini/ChatGPT */
+.input-add-btn {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.input-add-btn:hover { background: var(--bg-3); border-color: var(--accent); }
+/* 已选图片态:蓝边 + 蓝字 + 一个小圆点提示 */
+.input-add-btn.has-image {
+  border-color: var(--accent);
+  color: var(--accent);
+  position: relative;
+}
+.input-add-btn.has-image::after {
+  content: '';
+  position: absolute;
+  top: 6px; right: 6px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
 
 /* ---------- 图片预览 ---------- */
 .image-preview {
@@ -264,4 +299,94 @@ body { overflow: hidden; }
 @keyframes toast-in {
   from { transform: translateX(20px); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
+}
+
+/* ---------- @ Chips ---------- */
+.at-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+.at-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 2px 8px;
+  background: rgba(80, 140, 255, 0.18);
+  color: #9bb6ff;
+  border: 1px solid rgba(80, 140, 255, 0.35);
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 18px;
+  user-select: none;
+}
+.at-chip .at-chip-remove {
+  cursor: pointer;
+  padding: 0 2px;
+  color: rgba(155, 182, 255, 0.6);
+  font-size: 14px;
+  line-height: 1;
+}
+.at-chip .at-chip-remove:hover {
+  color: #ff7070;
+}
+
+/* ---------- @ Popup ---------- */
+.at-popup {
+  position: absolute;
+  z-index: 1000;
+  min-width: 180px;
+  max-width: 240px;
+  background: var(--panel, #1a1a1a);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.15));
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  padding: 4px 0;
+  font-size: 13px;
+}
+.at-popup-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  color: var(--fg, #e5e5e5);
+}
+.at-popup-item:hover,
+.at-popup-item.active {
+  background: rgba(80, 140, 255, 0.2);
+}
+.at-popup-item .at-popup-key {
+  display: inline-block;
+  min-width: 18px;
+  padding: 1px 5px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  text-align: center;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+  font-family: ui-monospace, monospace;
+}
+.at-popup-item.active .at-popup-key {
+  background: rgba(80, 140, 255, 0.45);
+  color: #fff;
+}
+.at-popup-item .at-popup-icon {
+  font-size: 13px;
+}
+.at-popup-item .at-popup-label {
+  flex: 1;
+}
+.at-popup-empty {
+  padding: 8px 12px;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 12px;
+  font-style: italic;
+}
+.at-popup-hint {
+  padding: 4px 12px 6px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 11px;
 }

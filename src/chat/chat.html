@@ -45,9 +45,7 @@
 
     <footer class="composer">
       <div class="composer-toolbar">
-        <button id="btn-image" title="选择图片">图片</button>
-        <input type="file" id="file-input" accept="image/*" hidden>
-        <span class="at-hint" id="at-hint">@chatgpt @gemini 选择目标</span>
+        <span class="at-chips" id="at-chips" hidden></span>
         <span class="image-preview" id="image-preview" hidden>
           <img id="preview-img" alt="预览">
           <span class="image-meta" id="image-meta"></span>
@@ -60,10 +58,14 @@
         <button id="btn-history" title="查看历史">历史</button>
       </div>
       <div class="composer-input">
-        <textarea id="input" rows="2"
+        <button id="btn-image" class="input-add-btn" title="附加图片">+</button>
+        <input type="file" id="file-input" accept="image/*" hidden>
+        <textarea id="input" rows="1"
           placeholder="在这里输入你的问题 或 输入 @ 和指定AI对话... (Ctrl+V 粘贴图片)"></textarea>
         <button id="btn-send" title="发送">↑</button>
       </div>
+      <!-- @ 候选弹层(绝对定位,由 chat.ts 算坐标) -->
+      <div class="at-popup" id="at-popup" hidden role="listbox" aria-label="选择 AI 目标"></div>
     </footer>
   </div>
 

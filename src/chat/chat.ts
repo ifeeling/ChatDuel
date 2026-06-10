@@ -8,18 +8,23 @@
 // 关键约定:所有跨窗口消息都带 `source` 字段,父页消息用 'aichatroom-parent',
 // 子 frame 消息用 'aichatroom-content',防止被官方页面自身的 postMessage 干扰。
 //
-// 图片功能 v0.2.1 (简化版):
-//   - 支持选文件 / 拖拽 / 粘贴 接收图片
-//   - 发送时:文字直接发;图片自动复制到剪贴板,弹出 toast 提示用户
-//     在两侧 iframe 的 AI 输入框内手动 Ctrl+V
-//   - 为什么不自动上传:Chrome MV3 禁止扩展往跨源 iframe 写文件 input,
-//     派发合成 paste 事件到 Quill/ProseMirror 也不可靠
-//   - 这个交互跟 ChatBrawl 0.7.2 一致
+// @ 提及功能 (v0.4+):
+//   - 输入 @ 弹候选(从 activePlatforms() 派生 = HTML 里实际打开的 panel)
+//   - 已选目标显示成 chip 在文本框上方;@ 字符不进文本框
+//   - 1-9/0 数字键 / ↑↓ / Enter / Esc / 鼠标
+//   - 文本路径 "@chatgpt" 仍兼容(parseAtMentions)
+//
+// 图片功能 (v0.3):
+//   - 文件 → dataURL → postMessage 到 iframe → adapter 接管
+//   - ChatGPT 走原生 <input type=file>,Gemini 走 paste 事件 fallback
+//   - onSend 收集各平台结果,合并 toast;全部/部分失败时复制剪贴板兜底
 
 import type { AIPlatform } from '../types'
 import { MAX_IMAGE_BYTES, ImageTooLargeError } from '../lib/image-handler'
+import { activePlatforms, getPlatformMeta, shortcutKey, type AIPlatformMeta } from '../lib/ai-platforms'
+import { detectAtInput, filterCandidates, parseAtMentions } from '../lib/at-parser'
 
-const PLATFORMS: AIPlatform[] = ['chatgpt', 'gemini']
+// PLATFORMS 不再硬编码:由 activePlatforms() 从 DOM 派生(HTML 里有几个 panel 就有几个)
 const OFFICIAL_URLS: Record<AIPlatform, string> = {
   chatgpt: 'https://chatgpt.com/',
   gemini: 'https://gemini.google.com/',
@@ -58,6 +63,19 @@ const readyWaiters: Record<AIPlatform, Array<(ok: boolean) => void>> = { chatgpt
 // 待发送的图片(仅支持 1 张,后续 attach 会替换)
 let pendingImage: File | null = null
 let pendingImageObjectUrl: string | null = null
+
+// ---------- @ 状态 ----------
+// atSelected:UI 选中的目标(空集合 = 发给所有 panel)
+const atSelected: Set<AIPlatform> = new Set()
+// atPopupOpen + atPopupIndex:键盘高亮
+let atPopupOpen = false
+let atPopupIndex = 0
+let atPopupCandidates: AIPlatformMeta[] = []
+// atPopupAnchor:输入时记下 @ 的位置,选中后把 @ + 后续输入片段删掉
+let atPopupAnchor: { start: number; length: number } | null = null
+
+const atChipsEl = $<HTMLDivElement>('#at-chips')
+const atPopupEl = $<HTMLDivElement>('#at-popup')
 
 function setStatus(p: AIPlatform, state: 'ok' | 'err' | 'warn', text: string) {
   const dot = statusDot(p)
@@ -123,7 +141,8 @@ function acceptImage(file: File) {
   previewImg.src = pendingImageObjectUrl
   imageMeta.textContent = `${file.name || 'image'} · ${(file.size / 1024).toFixed(0)}KB`
   imagePreview.hidden = false
-  btnImage.textContent = '图片 ✓'
+  btnImage.classList.add('has-image')
+  btnImage.title = `已附加图片: ${file.name || 'image'} — 点击替换`
   showToast('图片已附加', 'success', 1500)
 }
 
@@ -136,7 +155,8 @@ function clearImage() {
   previewImg.src = ''
   imageMeta.textContent = ''
   imagePreview.hidden = true
-  btnImage.textContent = '图片'
+  btnImage.classList.remove('has-image')
+  btnImage.title = '附加图片'
   if (fileInput) fileInput.value = ''
 }
 
@@ -175,7 +195,7 @@ async function bootstrap() {
 }
 
 async function refreshAllStatuses() {
-  for (const p of PLATFORMS) {
+  for (const p of activePlatforms()) {
     setStatus(p, 'warn', '检测中…')
     const iframe = panelIframe(p)
     if (iframe.src === 'about:blank' || !iframe.src) {
@@ -220,11 +240,15 @@ async function onSend() {
     showToast('请输入文字或附加图片', 'warn')
     return
   }
-  const mentioned: AIPlatform[] = []
-  for (const p of PLATFORMS) {
-    if (text.toLowerCase().includes(`@${p}`)) mentioned.push(p)
+  // 目标优先级:atSelected(UI 选) > 文本里手打 @xxx(向后兼容) > 全发
+  let targets: AIPlatform[]
+  if (atSelected.size > 0) {
+    targets = [...atSelected]
+  } else {
+    const validKeys = new Set(activePlatforms())
+    const mentioned = parseAtMentions(text, validKeys)
+    targets = mentioned.length > 0 ? mentioned : activePlatforms()
   }
-  const targets = mentioned.length > 0 ? mentioned : PLATFORMS
 
   // 1. 准备图片(若有):转 dataURL 供 iframe 内 adapter 接管
   let imageDataUrl: string | undefined
@@ -316,6 +340,203 @@ async function onSend() {
   // 4. 清空
   inputEl.value = ''
   clearImage()
+  // onSend 完顺手清掉 at 选择(避免下条消息还受上一条的影响)
+  // 不清 atSelected:如果想连发同一组目标,保留;但目前默认清掉,符合"每次明确选"的直觉
+  // 选 1:不 clear(连发场景更顺手)
+  // 选 2:clear(显式选择更可控)
+  // —— 选 1
+}
+
+// ---------- @ 弹层 / Chips ----------
+function getAllPanelMetas(): AIPlatformMeta[] {
+  return activePlatforms()
+    .map((k) => getPlatformMeta(k))
+    .filter((m): m is AIPlatformMeta => !!m)
+}
+
+function renderChips() {
+  if (atSelected.size === 0) {
+    atChipsEl.hidden = true
+    atChipsEl.innerHTML = ''
+    return
+  }
+  atChipsEl.hidden = false
+  atChipsEl.innerHTML = ''
+  for (const p of atSelected) {
+    const meta = getPlatformMeta(p)
+    if (!meta) continue
+    const chip = document.createElement('span')
+    chip.className = 'at-chip'
+    chip.dataset.platform = p
+    chip.innerHTML = `<span class="at-chip-icon">${meta.icon}</span><span>${meta.label}</span><span class="at-chip-remove" title="移除">×</span>`
+    chip.querySelector('.at-chip-remove')!.addEventListener('click', (ev) => {
+      ev.stopPropagation()
+      atSelected.delete(p)
+      renderChips()
+    })
+    atChipsEl.appendChild(chip)
+  }
+}
+
+function openAtPopup() {
+  atPopupOpen = true
+  atPopupEl.hidden = false
+  // 先渲染出来(让浏览器算好 offsetHeight),再读真实高度定位
+  atPopupEl.style.position = 'fixed'
+  atPopupEl.style.left = '-9999px'  // 先放屏外,避免闪一下
+  atPopupEl.style.zIndex = '9999'
+  // 同步读真实尺寸(此时 hidden=false,DOM 已布局)
+  // renderAtPopup 会在 openAtPopup 之后被调用,所以这里读到的还是旧的或 0。
+  // 改:在 renderAtPopup 末尾做定位。
+}
+
+function closeAtPopup() {
+  atPopupOpen = false
+  atPopupEl.hidden = true
+  atPopupAnchor = null
+  atPopupCandidates = []
+  atPopupIndex = 0
+}
+
+function renderAtPopup() {
+  atPopupEl.innerHTML = ''
+  if (atPopupCandidates.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'at-popup-empty'
+    empty.textContent = '没有可用的 AI(全部已选或前台未打开面板)'
+    atPopupEl.appendChild(empty)
+    return
+  }
+  atPopupCandidates.forEach((meta, idx) => {
+    const item = document.createElement('div')
+    item.className = 'at-popup-item' + (idx === atPopupIndex ? ' active' : '')
+    item.dataset.platform = meta.key
+    const key = shortcutKey(idx)
+    item.innerHTML =
+      `<span class="at-popup-key">${key ?? ' '}</span>` +
+      `<span class="at-popup-icon">${meta.icon}</span>` +
+      `<span class="at-popup-label">${meta.label}</span>`
+    item.addEventListener('mouseenter', () => {
+      atPopupIndex = idx
+      updateAtPopupActive()
+    })
+    item.addEventListener('click', (ev) => {
+      ev.preventDefault()
+      selectAtCandidate(meta.key)
+    })
+    atPopupEl.appendChild(item)
+  })
+  const hint = document.createElement('div')
+  hint.className = 'at-popup-hint'
+  hint.textContent = '↑↓ 选择 · Enter 确认 · Esc 取消'
+  atPopupEl.appendChild(hint)
+  // 渲染完后再做定位(用真实高度)
+  positionAtPopup()
+}
+
+/**
+ * 弹层定位:贴 textarea,下方放不下就翻到上方;用真实 offsetHeight 决定
+ */
+function positionAtPopup() {
+  const rect = inputEl.getBoundingClientRect()
+  const margin = 4
+  const popupHeight = atPopupEl.offsetHeight || 100  // 兜底,防 0
+  const belowTop = rect.bottom + margin
+  const wouldOverflow = belowTop + popupHeight > window.innerHeight
+  atPopupEl.style.left = `${Math.round(rect.left)}px`
+  if (wouldOverflow) {
+    atPopupEl.style.top = `${Math.round(rect.top - popupHeight - margin)}px`
+  } else {
+    atPopupEl.style.top = `${Math.round(belowTop)}px`
+  }
+  atPopupEl.onmousedown = (e) => e.preventDefault()
+  console.log('[AIChatRoom @] positionAtPopup', {
+    rectTop: rect.top, rectBottom: rect.bottom,
+    popupHeight, wouldOverflow,
+    popupTop: atPopupEl.style.top, innerHeight: window.innerHeight,
+  })
+}
+
+function updateAtPopupActive() {
+  const items = atPopupEl.querySelectorAll<HTMLDivElement>('.at-popup-item')
+  items.forEach((el, i) => {
+    if (i === atPopupIndex) el.classList.add('active')
+    else el.classList.remove('active')
+  })
+}
+
+function moveAtPopup(delta: number) {
+  if (atPopupCandidates.length === 0) return
+  atPopupIndex = (atPopupIndex + delta + atPopupCandidates.length) % atPopupCandidates.length
+  updateAtPopupActive()
+}
+
+function selectAtCandidate(platform: AIPlatform) {
+  atSelected.add(platform)
+  renderChips()
+  // 删掉 textarea 里的 @ + 输入片段,光标回到 anchor 起点
+  if (atPopupAnchor) {
+    const before = inputEl.value.slice(0, atPopupAnchor.start)
+    const after = inputEl.value.slice(atPopupAnchor.start + atPopupAnchor.length)
+    inputEl.value = before + after
+    const caret = atPopupAnchor.start
+    inputEl.setSelectionRange(caret, caret)
+  }
+  closeAtPopup()
+  inputEl.focus()
+}
+
+function onAtInput() {
+  const caret = inputEl.selectionStart ?? 0
+  const before = inputEl.value.slice(0, caret)
+  const state = detectAtInput(before)
+  if (!state) {
+    if (atPopupOpen) closeAtPopup()
+    return
+  }
+  // 候选:所有 panel 中、未被选中的
+  const all = getAllPanelMetas().filter((m) => !atSelected.has(m.key as AIPlatform))
+  atPopupCandidates = filterCandidates(all, state.prefix)
+  atPopupIndex = 0
+  atPopupAnchor = { start: state.startIndex, length: caret - state.startIndex }
+  if (!atPopupOpen) openAtPopup()
+  renderAtPopup()
+}
+
+function onAtKeydown(e: KeyboardEvent) {
+  if (atPopupOpen) {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      closeAtPopup()
+      return
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      moveAtPopup(1)
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      moveAtPopup(-1)
+      return
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const c = atPopupCandidates[atPopupIndex]
+      if (c) selectAtCandidate(c.key as AIPlatform)
+      return
+    }
+    // 数字键 1-9 / 0 快捷选
+    if (/^[0-9]$/.test(e.key)) {
+      const idx = e.key === '0' ? 9 : parseInt(e.key, 10) - 1
+      if (idx >= 0 && idx < atPopupCandidates.length) {
+        e.preventDefault()
+        const c = atPopupCandidates[idx]
+        if (c) selectAtCandidate(c.key as AIPlatform)
+      }
+      return
+    }
+  }
 }
 
 // ---------- 工具按钮(暂作占位) ----------
@@ -391,10 +612,11 @@ function setupSplitter() {
 
 // ---------- 打开外部 tab ----------
 function setupOpenButtons() {
-  for (const p of PLATFORMS) {
+  for (const p of activePlatforms()) {
     document.querySelector<HTMLButtonElement>(`.panel-open[data-platform="${p}"]`)!
       .addEventListener('click', () => {
-        chrome.tabs.create({ url: OFFICIAL_URLS[p] })
+        const url = OFFICIAL_URLS[p as keyof typeof OFFICIAL_URLS] ?? ''
+        chrome.tabs.create({ url })
       })
   }
 }
@@ -407,6 +629,13 @@ function bindEvents() {
       e.preventDefault()
       void onSend()
     }
+  })
+  // @ 弹层监听
+  inputEl.addEventListener('input', onAtInput)
+  inputEl.addEventListener('keydown', onAtKeydown)
+  inputEl.addEventListener('blur', () => {
+    // 失焦关弹层(等 100ms 给 click 事件先到达)
+    setTimeout(() => { if (atPopupOpen) closeAtPopup() }, 100)
   })
   // 粘贴图片到 textarea
   inputEl.addEventListener('paste', onPaste)
