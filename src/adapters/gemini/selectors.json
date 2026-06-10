@@ -1,12 +1,12 @@
 {
   "version": "2026.06",
-  "lastVerified": "2026-06-08",
+  "lastVerified": "2026-06-10",
   "selectors": {
     "inputBox": "div.ql-editor[contenteditable='true']",
     "sendButton": "button[aria-label*='Send' i]",
     "messageContainer": "message-content, [data-test-id='conversation-turn']",
-    "lastResponse": "message-content:last-of-type model-response",
-    "userMessage": "user-message",
+    "lastResponse": "model-response",
+    "userMessage": "user-query",
     "rateLimitToast": "[role='alert']",
     "continueButton": "button[aria-label*='Continue' i]",
     "loggedIn": "[aria-label*='Google Account' i], img[alt*='avatar' i]",

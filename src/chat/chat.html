@@ -27,6 +27,7 @@
       <section class="panel" data-platform="gemini">
         <header class="panel-header">
           <span class="panel-title">Gemini</span>
+          <button class="panel-transfer" data-platform="gemini" title="把这里的回答转移到其它 AI">转移 ➔</button>
           <button class="panel-open" data-platform="gemini" title="在新标签页打开官方页面">↗</button>
         </header>
         <iframe class="panel-iframe" data-platform="gemini" src="about:blank"></iframe>
@@ -37,6 +38,7 @@
       <section class="panel" data-platform="chatgpt">
         <header class="panel-header">
           <span class="panel-title">ChatGPT</span>
+          <button class="panel-transfer" data-platform="chatgpt" title="把这里的回答转移到其它 AI">转移 ➔</button>
           <button class="panel-open" data-platform="chatgpt" title="在新标签页打开官方页面">↗</button>
         </header>
         <iframe class="panel-iframe" data-platform="chatgpt" src="about:blank"></iframe>
@@ -52,8 +54,6 @@
           <button id="btn-image-remove" title="移除图片" type="button">×</button>
         </span>
         <button id="btn-quote" disabled title="引用上一轮回答">引用</button>
-        <button id="btn-transfer-c2g" disabled title="把 ChatGPT 的回答搬到 Gemini">C→G</button>
-        <button id="btn-transfer-g2c" disabled title="把 Gemini 的回答搬到 ChatGPT">G→C</button>
         <button id="btn-summary" disabled title="对比总结">总结</button>
         <button id="btn-history" title="查看历史">历史</button>
       </div>

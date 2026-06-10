@@ -25,7 +25,28 @@ window.addEventListener('message', (e: MessageEvent) => {
     | { source?: string; action?: string; text?: string; imageDataUrl?: string; imageMime?: string; imageName?: string }
     | undefined
   if (!data || data.source !== 'aichatroom-parent') return
-  if (data.action !== 'write-and-send') return
+  if (data.action !== 'write-and-send') {
+    // 父页发 get-state / get-last-response 查询(走 iframe 模式,SW 路径用不了——没有 tabId)
+    if (data.action === 'get-state') {
+      adapter.getConversationState().then((state) => {
+        e.source?.postMessage(
+          { source: 'aichatroom-content', type: 'state', state },
+          { targetOrigin: '*' },
+        )
+      })
+      return
+    }
+    if (data.action === 'get-last-response') {
+      adapter.getLastResponse().then((text) => {
+        e.source?.postMessage(
+          { source: 'aichatroom-content', type: 'last-response', text },
+          { targetOrigin: '*' },
+        )
+      })
+      return
+    }
+    return
+  }
 
   const text = data.text ?? ''
   const file = data.imageDataUrl

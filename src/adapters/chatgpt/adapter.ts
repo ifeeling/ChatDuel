@@ -123,13 +123,18 @@ export function createChatGPTAdapter(): AIAdapter {
     return document.querySelector<T>(sel)
   }
 
+  function last<T extends Element = Element>(sel: string): T | null {
+    const nodes = document.querySelectorAll<T>(sel)
+    return nodes.length > 0 ? nodes[nodes.length - 1] : null
+  }
+
   function startObserver() {
     observer = new MutationObserver(() => { dirty = true })
     observer.observe(document.body, { childList: true, subtree: true, characterData: true })
     pollTimer = setInterval(() => {
       if (!dirty || !lastEventHandler) return
       dirty = false
-      const text = q(S.lastResponse)?.textContent ?? ''
+      const text = last(S.lastResponse)?.textContent ?? ''
       lastEventHandler({ type: 'token', platform: 'chatgpt', text, timestamp: Date.now() })
     }, 150)
   }
@@ -184,13 +189,13 @@ export function createChatGPTAdapter(): AIAdapter {
     },
 
         getLastResponse() {
-      return Promise.resolve(q(S.lastResponse)?.textContent ?? '')
+      return Promise.resolve(last(S.lastResponse)?.textContent ?? '')
     },
 
     getConversationState(): Promise<ConversationState> {
-      const last = q(S.lastResponse)?.textContent ?? ''
-      if (!last) return Promise.resolve({ status: 'idle' })
-      return Promise.resolve({ status: 'finished', lastResponse: last })
+      const lastText = last(S.lastResponse)?.textContent ?? ''
+      if (!lastText) return Promise.resolve({ status: 'idle' })
+      return Promise.resolve({ status: 'finished', lastResponse: lastText })
     },
 
     onStreamEvent(handler) {

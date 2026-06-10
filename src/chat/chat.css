@@ -116,6 +116,22 @@ body { overflow: hidden; }
 }
 .panel-open:hover { color: var(--fg); }
 
+/* Panel header 转移按钮(把本 panel 的最后回答转到其它 AI) */
+.panel-transfer {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  margin-left: auto;
+  margin-right: 4px;
+}
+.panel-transfer:hover:not(:disabled) { background: var(--bg-3); border-color: var(--accent); color: var(--accent); }
+.panel-transfer:disabled { opacity: 0.4; cursor: not-allowed; }
+.panel-transfer.busy { color: var(--muted); border-color: var(--border); cursor: wait; }
+
 .panel-iframe {
   flex: 1;
   width: 100%;

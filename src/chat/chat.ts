@@ -23,6 +23,7 @@ import type { AIPlatform } from '../types'
 import { MAX_IMAGE_BYTES, ImageTooLargeError } from '../lib/image-handler'
 import { activePlatforms, getPlatformMeta, shortcutKey, type AIPlatformMeta } from '../lib/ai-platforms'
 import { detectAtInput, filterCandidates, parseAtMentions } from '../lib/at-parser'
+import { getDefaultTemplates, renderTemplate } from '../lib/prompt-template'
 
 // PLATFORMS 不再硬编码:由 activePlatforms() 从 DOM 派生(HTML 里有几个 panel 就有几个)
 const OFFICIAL_URLS: Record<AIPlatform, string> = {
@@ -42,8 +43,6 @@ const panelIframe = (p: AIPlatform): HTMLIFrameElement =>
 const inputEl = $<HTMLTextAreaElement>('#input')
 const sendBtn = $<HTMLButtonElement>('#btn-send')
 const btnQuote = $<HTMLButtonElement>('#btn-quote')
-const btnC2G = $<HTMLButtonElement>('#btn-transfer-c2g')
-const btnG2C = $<HTMLButtonElement>('#btn-transfer-g2c')
 const btnSummary = $<HTMLButtonElement>('#btn-summary')
 const btnHistory = $<HTMLButtonElement>('#btn-history')
 const btnImage = $<HTMLButtonElement>('#btn-image')
@@ -517,9 +516,261 @@ function onAtKeydown(e: KeyboardEvent) {
   }
 }
 
+// ---------- 转移(Transfer) ----------
+const MAX_TRANSFER_LENGTH = 50_000
+
+/** transfer 模板(取自 prompt-template.ts 的 getDefaultTemplates().transfer) */
+const transferTemplate = getDefaultTemplates().transfer
+
+/**
+ * 转移流程:点 panel A 的 .panel-transfer
+ *   1) 候选 = activePlatforms().filter(p => p !== sourceKey)
+ *   2) N=2 → 直接 executeTransfer(source, candidate[0])
+ *   3) N>2 → 复用 at-popup 单选模式
+ *   4) N=1 → toast 报错
+ */
+async function onTransfer(sourceKey: AIPlatform) {
+  const candidates = activePlatforms().filter((p) => p !== sourceKey)
+  if (candidates.length === 0) {
+    showToast('没有可转移的目标', 'warn')
+    return
+  }
+  if (candidates.length === 1) {
+    void executeTransfer(sourceKey, candidates[0] as AIPlatform)
+    return
+  }
+  // N>2:复用 at-popup 弹层
+  openAtPopupForTransfer(sourceKey, candidates)
+}
+
+/**
+ * Transfer 模式的弹层:直接渲染候选(绕过 atSelected 逻辑),点候选 = executeTransfer。
+ * 跟 at-popup 共用 DOM / 样式,但走独立点击处理。
+ */
+let transferSourceKey: AIPlatform | null = null
+
+function openAtPopupForTransfer(sourceKey: AIPlatform, candidates: AIPlatform[]) {
+  transferSourceKey = sourceKey
+  atPopupCandidates = candidates
+    .map((k) => getPlatformMeta(k))
+    .filter((m): m is AIPlatformMeta => !!m)
+  atPopupIndex = 0
+  atPopupAnchor = null
+  if (!atPopupOpen) openAtPopup()
+  renderTransferPopup()
+  // 弹层外部 click / Esc 关掉时清状态
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      transferSourceKey = null
+      closeAtPopup()
+      window.removeEventListener('keydown', onKey, true)
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      moveAtPopup(1)
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      moveAtPopup(-1)
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      const c = atPopupCandidates[atPopupIndex]
+      if (c) {
+        void executeTransfer(sourceKey, c.key as AIPlatform)
+        transferSourceKey = null
+        closeAtPopup()
+        window.removeEventListener('keydown', onKey, true)
+      }
+    } else if (/^[0-9]$/.test(e.key)) {
+      const idx = e.key === '0' ? 9 : parseInt(e.key, 10) - 1
+      if (idx >= 0 && idx < atPopupCandidates.length) {
+        e.preventDefault()
+        const c = atPopupCandidates[idx]
+        if (c) {
+          void executeTransfer(sourceKey, c.key as AIPlatform)
+          transferSourceKey = null
+          closeAtPopup()
+          window.removeEventListener('keydown', onKey, true)
+        }
+      }
+    }
+  }
+  window.addEventListener('keydown', onKey, true)
+}
+
+/**
+ * 渲染 transfer 模式的弹层(类似 at-popup,但每个 item 的 click 走 transfer)
+ */
+function renderTransferPopup() {
+  atPopupEl.innerHTML = ''
+  if (atPopupCandidates.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'at-popup-empty'
+    empty.textContent = '没有可转移的目标'
+    atPopupEl.appendChild(empty)
+    return
+  }
+  atPopupCandidates.forEach((meta, idx) => {
+    const item = document.createElement('div')
+    item.className = 'at-popup-item' + (idx === atPopupIndex ? ' active' : '')
+    const key = shortcutKey(idx)
+    item.innerHTML =
+      `<span class="at-popup-key">${key ?? ' '}</span>` +
+      `<span class="at-popup-icon">${meta.icon}</span>` +
+      `<span class="at-popup-label">${meta.label}</span>`
+    item.addEventListener('mouseenter', () => {
+      atPopupIndex = idx
+      updateAtPopupActive()
+    })
+    item.addEventListener('click', (ev) => {
+      ev.preventDefault()
+      if (!transferSourceKey) return
+      const target = transferSourceKey
+      transferSourceKey = null
+      void executeTransfer(target, meta.key as AIPlatform)
+      closeAtPopup()
+    })
+    // 防止 mousedown 抢焦点
+    item.addEventListener('mousedown', (e) => e.preventDefault())
+    atPopupEl.appendChild(item)
+  })
+  const hint = document.createElement('div')
+  hint.className = 'at-popup-hint'
+  hint.textContent = '↑↓ 选择 · Enter 确认 · Esc 取消'
+  atPopupEl.appendChild(hint)
+  positionAtPopup()
+}
+
+async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform) {
+  // 找到源 panel header 按钮,设 busy
+  const srcBtn = document.querySelector<HTMLButtonElement>(`.panel-transfer[data-platform="${sourceKey}"]`)
+  const tgtBtn = document.querySelector<HTMLButtonElement>(`.panel-transfer[data-platform="${targetKey}"]`)
+  if (srcBtn) {
+    srcBtn.classList.add('busy')
+    srcBtn.disabled = true
+    srcBtn.textContent = '转移中…'
+  }
+  if (tgtBtn) tgtBtn.disabled = true
+
+  try {
+    // 1. 源状态检查
+    const srcIframe = panelIframe(sourceKey)
+    const srcWin = srcIframe.contentWindow
+    if (!srcWin) throw new Error('源 iframe 不可用')
+    const srcState = await new Promise<{ status: string }>((resolve) => {
+      const onMsg = (e: MessageEvent) => {
+        const d = e.data as { source?: string; type?: string; state?: { status: string } } | undefined
+        if (d?.source === 'aichatroom-content' && d.type === 'state' && d.state) {
+          window.removeEventListener('message', onMsg)
+          resolve(d.state)
+        }
+      }
+      window.addEventListener('message', onMsg)
+      srcWin.postMessage(
+        { source: 'aichatroom-parent', action: 'get-state' },
+        OFFICIAL_URLS[sourceKey],
+      )
+      setTimeout(() => { window.removeEventListener('message', onMsg); resolve({ status: 'unknown' }) }, 2000)
+    })
+
+    if (!['idle', 'finished', 'error'].includes(srcState.status)) {
+      showToast(`源 AI 还在生成中,等一会儿再试(当前: ${srcState.status})`, 'warn', 4000)
+      return
+    }
+
+    // 2. 取源回答
+    const content = await new Promise<string>((resolve) => {
+      const onMsg = (e: MessageEvent) => {
+        const d = e.data as { source?: string; type?: string; text?: string } | undefined
+        if (d?.source === 'aichatroom-content' && d.type === 'last-response') {
+          window.removeEventListener('message', onMsg)
+          resolve(d.text ?? '')
+        }
+      }
+      window.addEventListener('message', onMsg)
+      srcWin.postMessage(
+        { source: 'aichatroom-parent', action: 'get-last-response' },
+        OFFICIAL_URLS[sourceKey],
+      )
+      setTimeout(() => { window.removeEventListener('message', onMsg); resolve('') }, 3000)
+    })
+
+    if (!content || !content.trim()) {
+      showToast('源 AI 还没有回答可转移', 'warn', 4000)
+      return
+    }
+
+    // 3. 目标状态轻量预检(50ms 超时,降级)
+    const tgtIframe = panelIframe(targetKey)
+    const tgtWin = tgtIframe.contentWindow
+    if (tgtWin) {
+      try {
+        const tgtState = await new Promise<{ status: string } | null>((resolve) => {
+          const onMsg = (e: MessageEvent) => {
+            const d = e.data as { source?: string; type?: string; state?: { status: string } } | undefined
+            if (d?.source === 'aichatroom-content' && d.type === 'state' && d.state) {
+              window.removeEventListener('message', onMsg)
+              resolve(d.state)
+            }
+          }
+          window.addEventListener('message', onMsg)
+          tgtWin.postMessage(
+            { source: 'aichatroom-parent', action: 'get-state' },
+            OFFICIAL_URLS[targetKey],
+          )
+          setTimeout(() => { window.removeEventListener('message', onMsg); resolve(null) }, 50)
+        })
+        if (tgtState && !['idle', 'finished', 'error'].includes(tgtState.status)) {
+          showToast(`目标 AI 还在生成中,等一会儿再试(当前: ${tgtState.status})`, 'warn', 4000)
+          return
+        }
+      } catch { /* 预检失败不阻塞 */ }
+    }
+
+    // 4. 长文本保护
+    let finalContent = content
+    if (content.length > MAX_TRANSFER_LENGTH) {
+      finalContent = content.slice(0, MAX_TRANSFER_LENGTH) +
+        `\n\n[...已截断,原回答共 ${content.length} 字符]`
+      showToast(`源回答过长,已截断到 ${MAX_TRANSFER_LENGTH} 字符`, 'warn', 4000)
+    }
+
+    // 5. 渲染模板
+    const fromLabel = getPlatformMeta(sourceKey)?.label ?? sourceKey
+    const prompt = renderTemplate(transferTemplate, { fromLabel, content: finalContent })
+
+    // 6. 发送到目标
+    showToast(`正在把 ${fromLabel} 的回答转移到 ${getPlatformMeta(targetKey)?.label ?? targetKey}…`, 'info', 2000)
+    tgtWin?.postMessage(
+      { source: 'aichatroom-parent', action: 'write-and-send', text: prompt },
+      OFFICIAL_URLS[targetKey],
+    )
+  } catch (e) {
+    console.error('[AIChatRoom chat] transfer failed', e)
+    showToast(`转移失败: ${e instanceof Error ? e.message : String(e)}`, 'err', 5000)
+  } finally {
+    if (srcBtn) {
+      srcBtn.classList.remove('busy')
+      srcBtn.disabled = false
+      srcBtn.textContent = '转移 ➔'
+    }
+    if (tgtBtn) tgtBtn.disabled = false
+    closeAtPopup()
+  }
+}
+
+/** 在启动时给所有 .panel-transfer 按钮绑事件(数量随 N 个 AI 变化) */
+function setupTransferButtons() {
+  document.querySelectorAll<HTMLButtonElement>('.panel-transfer').forEach((btn) => {
+    const p = btn.dataset.platform
+    if (!p) return
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      void onTransfer(p as AIPlatform)
+    })
+  })
+}
+
 // ---------- 工具按钮(暂作占位) ----------
-function onC2G() { console.log('[AIChatRoom chat] C→G transfer: not implemented yet') }
-function onG2C() { console.log('[AIChatRoom chat] G→C transfer: not implemented yet') }
+// 转移按钮(panel header 上的 .panel-transfer)由 setupTransferButtons() 单独绑定(动态 target)
 function onSummary() { console.log('[AIChatRoom chat] summary: not implemented yet') }
 function onQuote() { console.log('[AIChatRoom chat] quote: not implemented yet') }
 function onHistory() { alert('历史功能 v1 暂未启用') }
@@ -621,8 +872,6 @@ function bindEvents() {
   inputEl.addEventListener('drop', onDrop)
   inputEl.addEventListener('dragover', (e) => e.preventDefault())
 
-  btnC2G.addEventListener('click', onC2G)
-  btnG2C.addEventListener('click', onG2C)
   btnSummary.addEventListener('click', onSummary)
   btnQuote.addEventListener('click', onQuote)
   btnHistory.addEventListener('click', onHistory)
@@ -649,6 +898,7 @@ window.addEventListener('DOMContentLoaded', () => {
   console.log('[AIChatRoom chat] ready')
   setupSplitter()
   setupOpenButtons()
+  setupTransferButtons()
   bindEvents()
   void bootstrap()
 })
