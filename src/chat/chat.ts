@@ -24,6 +24,7 @@ import { MAX_IMAGE_BYTES, ImageTooLargeError } from '../lib/image-handler'
 import { activePlatforms, getPlatformMeta, shortcutKey, type AIPlatformMeta } from '../lib/ai-platforms'
 import { detectAtInput, filterCandidates, parseAtMentions } from '../lib/at-parser'
 import { getDefaultTemplates, renderTemplate } from '../lib/prompt-template'
+import { DEFAULT_USER_SETTINGS, loadUserSettings, saveUserSettings, type UserSettings } from '../lib/user-settings'
 
 // PLATFORMS 不再硬编码:由 activePlatforms() 从 DOM 派生(HTML 里有几个 panel 就有几个)
 const OFFICIAL_URLS: Record<AIPlatform, string> = {
@@ -42,9 +43,12 @@ const panelIframe = (p: AIPlatform): HTMLIFrameElement =>
 
 const inputEl = $<HTMLTextAreaElement>('#input')
 const sendBtn = $<HTMLButtonElement>('#btn-send')
+const composer = $<HTMLElement>('.composer')
 const btnQuote = $<HTMLButtonElement>('#btn-quote')
 const btnSummary = $<HTMLButtonElement>('#btn-summary')
 const btnHistory = $<HTMLButtonElement>('#btn-history')
+const btnSettings = $<HTMLButtonElement>('#btn-settings')
+const btnExpandInput = $<HTMLButtonElement>('#btn-expand-input')
 const btnImage = $<HTMLButtonElement>('#btn-image')
 const fileInput = $<HTMLInputElement>('#file-input')
 const imagePreview = $<HTMLDivElement>('#image-preview')
@@ -54,10 +58,18 @@ const btnImageRemove = $<HTMLButtonElement>('#btn-image-remove')
 const btnRefresh = $<HTMLButtonElement>('#btn-refresh')
 const splitter = $<HTMLDivElement>('#splitter')
 const toastContainer = $<HTMLDivElement>('#toast-container')
+const settingsOverlay = $<HTMLDivElement>('#settings-overlay')
+const btnSettingsClose = $<HTMLButtonElement>('#btn-settings-close')
+const btnSettingsSave = $<HTMLButtonElement>('#btn-settings-save')
+const settingChatgpt = $<HTMLInputElement>('#setting-chatgpt')
+const settingGemini = $<HTMLInputElement>('#setting-gemini')
+const settingTransferTemplate = $<HTMLTextAreaElement>('#setting-transfer-template')
+const btnResetTransferTemplate = $<HTMLButtonElement>('#btn-reset-transfer-template')
 
 // ---------- 状态 ----------
 const readyMap: Record<AIPlatform, boolean> = { chatgpt: false, gemini: false }
 const readyWaiters: Record<AIPlatform, Array<(ok: boolean) => void>> = { chatgpt: [], gemini: [] }
+let userSettings: UserSettings = DEFAULT_USER_SETTINGS
 
 // 待发送的图片(仅支持 1 张,后续 attach 会替换)
 let pendingImage: File | null = null
@@ -118,6 +130,117 @@ function showToast(text: string, kind: ToastKind = 'info', durationMs = 4000) {
     div.style.transform = 'translateX(20px)'
     setTimeout(() => div.remove(), 300)
   }, durationMs)
+}
+
+// ---------- 设置 ----------
+function allPlatforms(): AIPlatform[] {
+  return ['chatgpt', 'gemini']
+}
+
+function platformPanel(p: AIPlatform): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`.panel[data-platform="${p}"]`)
+}
+
+function platformStatusItem(p: AIPlatform): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`.status-item[data-platform="${p}"]`)
+}
+
+function applyUserSettings(settings: UserSettings) {
+  userSettings = settings
+  for (const p of allPlatforms()) {
+    const enabled = settings.enabledPlatforms[p]
+    const panel = platformPanel(p)
+    const status = platformStatusItem(p)
+    const iframe = document.querySelector<HTMLIFrameElement>(`.panel-iframe[data-platform="${p}"]`)
+
+    if (panel) panel.hidden = !enabled
+    if (status) status.hidden = !enabled
+    if (!enabled && iframe) {
+      iframe.src = 'about:blank'
+      readyMap[p] = false
+    }
+    if (!enabled) atSelected.delete(p)
+  }
+
+  splitter.hidden = activePlatforms().length < 2
+  const canTransfer = activePlatforms().length >= 2
+  document.querySelectorAll<HTMLButtonElement>('.panel-transfer').forEach((btn) => {
+    btn.disabled = !canTransfer
+  })
+  renderChips()
+}
+
+function renderSettingsForm() {
+  settingChatgpt.checked = userSettings.enabledPlatforms.chatgpt
+  settingGemini.checked = userSettings.enabledPlatforms.gemini
+  settingTransferTemplate.value = userSettings.promptTemplates.transfer
+}
+
+function openSettings() {
+  renderSettingsForm()
+  settingsOverlay.hidden = false
+}
+
+function closeSettings() {
+  settingsOverlay.hidden = true
+}
+
+function selectSettingsTab(tab: string) {
+  document.querySelectorAll<HTMLButtonElement>('.settings-nav-item[data-settings-tab]').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.settingsTab === tab)
+  })
+  document.querySelectorAll<HTMLElement>('.settings-panel[data-settings-panel]').forEach((panel) => {
+    panel.classList.toggle('active', panel.dataset.settingsPanel === tab)
+  })
+}
+
+function toggleInputExpanded() {
+  const expanded = composer.classList.toggle('expanded')
+  btnExpandInput.textContent = expanded ? '⇲' : '⛶'
+  btnExpandInput.title = expanded ? '收起输入框' : '放大输入框'
+  btnExpandInput.setAttribute('aria-label', btnExpandInput.title)
+  inputEl.focus()
+}
+
+async function initializeSettings() {
+  try {
+    applyUserSettings(await loadUserSettings())
+  } catch (e) {
+    console.error('[AIChatRoom chat] load settings failed', e)
+    applyUserSettings(DEFAULT_USER_SETTINGS)
+  }
+}
+
+async function onSaveSettings() {
+  const next: UserSettings = {
+    enabledPlatforms: {
+      chatgpt: settingChatgpt.checked,
+      gemini: settingGemini.checked,
+    },
+    promptTemplates: {
+      transfer: settingTransferTemplate.value,
+    },
+  }
+
+  if (!next.enabledPlatforms.chatgpt && !next.enabledPlatforms.gemini) {
+    showToast('至少保留一个站点', 'warn')
+    settingChatgpt.checked = true
+    next.enabledPlatforms.chatgpt = true
+  }
+
+  btnSettingsSave.disabled = true
+  try {
+    const saved = await saveUserSettings(next)
+    applyUserSettings(saved)
+    closeSettings()
+    await refreshAllStatuses()
+    showToast('设置已保存', 'success', 1600)
+  } catch (e) {
+    console.error('[AIChatRoom chat] save settings failed', e)
+    showToast('设置保存失败,请重试', 'err')
+  } finally {
+    btnSettingsSave.disabled = false
+  }
 }
 
 // ---------- 图片处理 ----------
@@ -519,9 +642,6 @@ function onAtKeydown(e: KeyboardEvent) {
 // ---------- 转移(Transfer) ----------
 const MAX_TRANSFER_LENGTH = 50_000
 
-/** transfer 模板(取自 prompt-template.ts 的 getDefaultTemplates().transfer) */
-const transferTemplate = getDefaultTemplates().transfer
-
 /**
  * 转移流程:点 panel A 的 .panel-transfer
  *   1) 候选 = activePlatforms().filter(p => p !== sourceKey)
@@ -735,7 +855,7 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform) {
 
     // 5. 渲染模板
     const fromLabel = getPlatformMeta(sourceKey)?.label ?? sourceKey
-    const prompt = renderTemplate(transferTemplate, { fromLabel, content: finalContent })
+    const prompt = renderTemplate(userSettings.promptTemplates.transfer, { fromLabel, content: finalContent })
 
     // 6. 发送到目标
     showToast(`正在把 ${fromLabel} 的回答转移到 ${getPlatformMeta(targetKey)?.label ?? targetKey}…`, 'info', 2000)
@@ -841,7 +961,7 @@ function setupSplitter() {
 
 // ---------- 打开外部 tab ----------
 function setupOpenButtons() {
-  for (const p of activePlatforms()) {
+  for (const p of allPlatforms()) {
     document.querySelector<HTMLButtonElement>(`.panel-open[data-platform="${p}"]`)!
       .addEventListener('click', () => {
         const url = OFFICIAL_URLS[p as keyof typeof OFFICIAL_URLS] ?? ''
@@ -854,7 +974,7 @@ function setupOpenButtons() {
 function bindEvents() {
   sendBtn.addEventListener('click', () => void onSend())
   inputEl.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !atPopupOpen) {
       e.preventDefault()
       void onSend()
     }
@@ -875,6 +995,25 @@ function bindEvents() {
   btnSummary.addEventListener('click', onSummary)
   btnQuote.addEventListener('click', onQuote)
   btnHistory.addEventListener('click', onHistory)
+  btnSettings.addEventListener('click', openSettings)
+  btnExpandInput.addEventListener('click', toggleInputExpanded)
+  btnSettingsClose.addEventListener('click', closeSettings)
+  btnSettingsSave.addEventListener('click', () => void onSaveSettings())
+  btnResetTransferTemplate.addEventListener('click', () => {
+    settingTransferTemplate.value = DEFAULT_USER_SETTINGS.promptTemplates.transfer
+  })
+  document.querySelectorAll<HTMLButtonElement>('.settings-nav-item[data-settings-tab]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.settingsTab
+      if (tab) selectSettingsTab(tab)
+    })
+  })
+  settingsOverlay.addEventListener('mousedown', (e) => {
+    if (e.target === settingsOverlay) closeSettings()
+  })
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !settingsOverlay.hidden) closeSettings()
+  })
 
   // 图片按钮 + 移除按钮
   btnImage.addEventListener('click', onImageClick)
@@ -896,9 +1035,12 @@ window.addEventListener('beforeunload', () => {
 // ---------- 启动 ----------
 window.addEventListener('DOMContentLoaded', () => {
   console.log('[AIChatRoom chat] ready')
-  setupSplitter()
-  setupOpenButtons()
-  setupTransferButtons()
-  bindEvents()
-  void bootstrap()
+  void (async () => {
+    await initializeSettings()
+    setupSplitter()
+    setupOpenButtons()
+    setupTransferButtons()
+    bindEvents()
+    await bootstrap()
+  })()
 })

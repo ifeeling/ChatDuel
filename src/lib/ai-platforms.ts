@@ -39,6 +39,7 @@ export function activePlatforms(): AIPlatform[] {
   const result: AIPlatform[] = []
   const seen = new Set<string>()
   panels.forEach((el) => {
+    if (el.hidden) return
     const k = el.dataset.platform
     if (!k || seen.has(k)) return
     if (!(k in AI_PLATFORMS)) return

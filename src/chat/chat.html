@@ -58,11 +58,13 @@
         <button id="btn-history" title="查看历史">历史</button>
       </div>
       <div class="composer-input">
+        <button id="btn-settings" class="input-tool-btn" title="设置" type="button" aria-label="设置">⚙</button>
         <button id="btn-image" class="input-add-btn" title="附加图片">+</button>
         <input type="file" id="file-input" accept="image/*" hidden>
         <textarea id="input" rows="1"
           placeholder="在这里输入你的问题 或 输入 @ 和指定AI对话... (Ctrl+V 粘贴图片)"></textarea>
-        <button id="btn-send" title="发送">↑</button>
+        <button id="btn-expand-input" class="input-tool-btn" title="展开输入框" type="button" aria-label="展开输入框">⛶</button>
+        <button id="btn-send" title="发送" aria-label="发送">➤</button>
       </div>
       <!-- @ 候选弹层(绝对定位,由 chat.ts 算坐标) -->
       <div class="at-popup" id="at-popup" hidden role="listbox" aria-label="选择 AI 目标"></div>
@@ -71,6 +73,63 @@
 
   <!-- Toast 通知 -->
   <div class="toast-container" id="toast-container"></div>
+
+  <div class="settings-overlay" id="settings-overlay" hidden>
+    <section class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <header class="settings-header">
+        <h2 id="settings-title">设置</h2>
+        <button id="btn-settings-close" class="settings-close" type="button" title="关闭" aria-label="关闭">×</button>
+      </header>
+      <div class="settings-body">
+        <nav class="settings-nav" aria-label="设置分类">
+          <button class="settings-nav-item active" type="button" data-settings-tab="sites">显示站点</button>
+          <button class="settings-nav-item" type="button" data-settings-tab="prompts">提示词</button>
+          <button class="settings-nav-item" type="button" disabled>快捷键</button>
+          <button class="settings-nav-item" type="button" disabled>使用帮助</button>
+        </nav>
+        <main class="settings-main">
+          <div class="settings-panel active" data-settings-panel="sites">
+            <p class="settings-lead">选择要在主界面同时显示的站点</p>
+            <div class="site-list">
+              <label class="site-row">
+                <span class="switch">
+                  <input id="setting-chatgpt" type="checkbox" data-platform="chatgpt">
+                  <span class="switch-track"></span>
+                </span>
+                <span class="site-icon">✨</span>
+                <span class="site-name">ChatGPT</span>
+                <span class="site-owner">OpenAI</span>
+                <a class="site-open" href="https://chatgpt.com/" target="_blank" rel="noreferrer" title="打开 ChatGPT">↗</a>
+              </label>
+              <label class="site-row">
+                <span class="switch">
+                  <input id="setting-gemini" type="checkbox" data-platform="gemini">
+                  <span class="switch-track"></span>
+                </span>
+                <span class="site-icon">✦</span>
+                <span class="site-name">Gemini</span>
+                <span class="site-owner">Google</span>
+                <a class="site-open" href="https://gemini.google.com/" target="_blank" rel="noreferrer" title="打开 Gemini">↗</a>
+              </label>
+            </div>
+            <div class="settings-note">
+              <strong>注意：</strong>使用前请先确保官网可以访问，并且已经登录。打开多个官方页面会占用更多内存，建议先保持 2 个以内。
+            </div>
+          </div>
+          <div class="settings-panel" data-settings-panel="prompts">
+            <p class="settings-lead">修改“转移”功能发送给目标 AI 的提示词</p>
+            <label class="prompt-editor">
+              <span class="prompt-editor-label">转移提示词</span>
+              <textarea id="setting-transfer-template" spellcheck="false"></textarea>
+            </label>
+            <p class="settings-help">可用变量：{{fromLabel}} 表示来源 AI 名字，{{content}} 表示要转移的回答内容。</p>
+            <button id="btn-reset-transfer-template" class="settings-secondary" type="button">恢复默认提示词</button>
+          </div>
+          <button id="btn-settings-save" class="settings-save" type="button">保存</button>
+        </main>
+      </div>
+    </section>
+  </div>
 
   <script type="module" src="./chat.ts"></script>
 </body>
