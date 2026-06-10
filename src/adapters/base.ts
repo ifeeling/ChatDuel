@@ -5,6 +5,7 @@ export interface AIAdapter {
   writeText(text: string): Promise<void>
   triggerSend(): Promise<void>
   sendMessage(text: string, image?: File): Promise<void>
+  attachImage(file: File): Promise<void>
   getLastResponse(): Promise<string>
   getConversationState(): Promise<ConversationState>
   onStreamEvent(handler: (event: StreamEvent) => void): () => void

@@ -24,15 +24,18 @@ if (window.parent !== window) {
 // 接收父页通过 postMessage 直接发来的指令(iframe 模式)
 window.addEventListener('message', (e: MessageEvent) => {
   const data = e.data as
-    | { source?: string; action?: string; text?: string; imageDataUrl?: string }
+    | { source?: string; action?: string; text?: string; imageDataUrl?: string; imageMime?: string; imageName?: string }
     | undefined
   if (!data || data.source !== 'aichatroom-parent') return
   if (data.action !== 'write-and-send') return
 
   const text = data.text ?? ''
+  const file = data.imageDataUrl
+    ? dataUrlToFile(data.imageDataUrl, data.imageMime || 'image/png', data.imageName || 'image.png')
+    : undefined
 
   void Promise.resolve()
-    .then(() => adapter.sendMessage(text))
+    .then(() => adapter.sendMessage(text, file))
     .then(() => {
       e.source?.postMessage(
         { source: 'aichatroom-content', event: 'result', action: 'write-and-send', platform: 'chatgpt', ok: true },
@@ -83,3 +86,14 @@ chrome.runtime.onMessage.addListener((msg: SwToContent, _sender, sendResponse) =
   }
   return false
 })
+
+// 把父页传过来的 dataURL 还原成 File(给 adapter.sendMessage 第二参数)
+function dataUrlToFile(dataUrl: string, mime: string, name: string): File {
+  const commaIdx = dataUrl.indexOf(',')
+  const b64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl
+  const bin = atob(b64)
+  const len = bin.length
+  const bytes = new Uint8Array(len)
+  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i)
+  return new File([bytes], name, { type: mime })
+}

@@ -54,6 +54,120 @@ function dispatchEnterKey(el: HTMLElement): void {
   el.dispatchEvent(new KeyboardEvent('keydown', init))
 }
 
+
+
+
+
+// 把图片以 paste 事件 + clipboardData 方式注入 ql-editor(Quill 接管)
+// Gemini 用的是 Quill 富文本,paste 事件会触发 Quill 的内部 paste handler
+// (modules/clipboard),handler 会读取 clipboardData 里的 image/* item,
+// 转 base64 嵌入 Delta。文档明确支持这条路。
+async function pasteImageIntoEditor(file: File): Promise<boolean> {
+  const editor = document.querySelector<HTMLElement>('div.ql-editor[contenteditable="true"]')
+  if (!editor) return false
+  // 必须 focus,Quill 的 paste 监听依赖光标位置
+  editor.focus()
+  // 等一个 tick
+  await new Promise((r) => setTimeout(r, 50))
+
+  // 构造 DataTransfer,把 file 放进去
+  const dt = new DataTransfer()
+  dt.items.add(file)
+
+  // 派发 paste 事件,clipboardData 携带我们的文件
+  const evt = new ClipboardEvent('paste', {
+    bubbles: true,
+    cancelable: true,
+    clipboardData: dt,
+  } as unknown as ClipboardEventInit)
+  // 某些浏览器 ClipboardEvent 的 clipboardData 只读,Object.defineProperty 兜底
+  try {
+    Object.defineProperty(evt, 'clipboardData', { value: dt, configurable: true })
+  } catch {/* ignore */}
+  editor.dispatchEvent(evt)
+  return true
+}
+
+// 在所有 frame(同源子 frame)里递归找 file input。
+// Gemini 主页的 input 可能嵌在子 frame;ChatGPT 早期版本也有过类似情况。
+function findFileInput(): HTMLInputElement | null {
+  const candidates = [
+    "input[type='file'][accept*='image']",
+    "input[type='file'][data-testid*='upload' i]",
+    "input[type='file'][aria-label*='upload' i]",
+    "input[type='file'][aria-label*='image' i]",
+    "input[type='file'][aria-label*='附件' i]",
+    "input[type='file'][aria-label*='图片' i]",
+    "input[type='file']",
+  ]
+  function search(doc: Document): HTMLInputElement | null {
+    for (const sel of candidates) {
+      const el = doc.querySelector<HTMLInputElement>(sel)
+      if (el) return el
+    }
+    // 递归子 frame
+    const frames = doc.querySelectorAll<HTMLIFrameElement>('iframe')
+    for (const f of frames) {
+      try {
+        const cw = f.contentWindow
+        if (!cw) continue
+        const r = search(cw.document)
+        if (r) return r
+      } catch {
+        // 跨源子 frame 不能访问 document,跳过
+      }
+    }
+    return null
+  }
+  const result = search(document)
+  if (!result) {
+    // 诊断:扫所有能进的 frame,把 file input 个数报出来,帮排查 selector
+    function countInputs(doc: Document, depth: number): number {
+      let n = doc.querySelectorAll('input[type=file]').length
+      const frames = doc.querySelectorAll('iframe')
+      for (const fr of frames) {
+        try {
+          n += countInputs(fr.contentWindow!.document, depth + 1)
+        } catch {/* 跨源 */}
+      }
+      return n
+    }
+    console.warn('[AIChatRoom] no file input found. frames inspected, total file inputs =', countInputs(document, 0))
+  }
+  return result
+}
+
+async function attachImageToFileInput(_unusedSel: string, file: File): Promise<boolean> {
+  // file input 可能是延迟插入的(点完按钮才出现),重试 5 秒
+  const start = Date.now()
+  while (Date.now() - start < 5000) {
+    const input = findFileInput()
+    if (input) {
+      const dt = new DataTransfer()
+      dt.items.add(file)
+      input.files = dt.files
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+      return true
+    }
+    await new Promise((r) => setTimeout(r, 250))
+  }
+  return false
+}
+
+// 等 Gemini 上传流水线跑完。
+// 标志: ql-editor 里出现 <img> 子节点(图片被插到富文本里),或 input 出现缩略图
+async function waitForUploadReady(maxMs = 3000): Promise<void> {
+  const editor = document.querySelector('div.ql-editor[contenteditable="true"]')
+  if (!editor) return
+  const start = Date.now()
+  while (Date.now() - start < maxMs) {
+    // Gemini 把上传的图片以 <img> 节点插入 ql-editor
+    const hasImg = editor.querySelector('img')
+    if (hasImg) return
+    await new Promise((r) => setTimeout(r, 100))
+  }
+}
+
 export function createGeminiAdapter(): AIAdapter {
   let lastEventHandler: ((e: StreamEvent) => void) | null = null
   let observer: MutationObserver | null = null
@@ -115,14 +229,29 @@ export function createGeminiAdapter(): AIAdapter {
       btn.click()
     },
 
-    async sendMessage(text: string) {
+    async sendMessage(text: string, image?: File) {
       await this.writeText(text)
+      // 写完文字再附加图片(等 React/Quill 状态稳定)
+      await new Promise((r) => setTimeout(r, 50))
+      if (image) await this.attachImage(image)
+      // 等上传组件把缩略图渲染进 input,并等 AI 网站自己的图片处理流水线跑完
+      // (ChatGPT/Gemini 在收到文件后还要走内部转码/特征抽取)
+      await waitForUploadReady()
       // Quill 同步需要时间
       await new Promise((r) => setTimeout(r, 200))
       await this.triggerSend()
     },
 
-    getLastResponse() {
+    async attachImage(file: File) {
+      // 路径 1: 找原生 file input 并注入(ChatGPT 走这条)
+      if (await attachImageToFileInput(S.fileInput, file)) return
+      // 路径 2: Gemini 2026+ 把上传按钮封在 Angular xapfileselectortrigger 组件里,DOM 不暴露 file input。
+      //   退而求其次:派发 paste 事件到 ql-editor,Quill 的 paste handler 会把图片作为 base64 嵌入。
+      if (await pasteImageIntoEditor(file)) return
+      throw new Error('file input not found and paste fallback failed for image upload')
+    },
+
+        getLastResponse() {
       return Promise.resolve(q(S.lastResponse)?.textContent ?? '')
     },
 

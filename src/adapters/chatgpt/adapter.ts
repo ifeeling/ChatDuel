@@ -28,6 +28,89 @@ function writeEditableValue(el: HTMLElement, text: string): void {
   el.dispatchEvent(beforeInput)
 }
 
+
+
+
+// 在所有 frame(同源子 frame)里递归找 file input。
+// Gemini 主页的 input 可能嵌在子 frame;ChatGPT 早期版本也有过类似情况。
+function findFileInput(): HTMLInputElement | null {
+  const candidates = [
+    "input[type='file'][accept*='image']",
+    "input[type='file'][data-testid*='upload' i]",
+    "input[type='file'][aria-label*='upload' i]",
+    "input[type='file'][aria-label*='image' i]",
+    "input[type='file'][aria-label*='附件' i]",
+    "input[type='file'][aria-label*='图片' i]",
+    "input[type='file']",
+  ]
+  function search(doc: Document): HTMLInputElement | null {
+    for (const sel of candidates) {
+      const el = doc.querySelector<HTMLInputElement>(sel)
+      if (el) return el
+    }
+    // 递归子 frame
+    const frames = doc.querySelectorAll<HTMLIFrameElement>('iframe')
+    for (const f of frames) {
+      try {
+        const cw = f.contentWindow
+        if (!cw) continue
+        const r = search(cw.document)
+        if (r) return r
+      } catch {
+        // 跨源子 frame 不能访问 document,跳过
+      }
+    }
+    return null
+  }
+  const result = search(document)
+  if (!result) {
+    // 诊断:扫所有能进的 frame,把 file input 个数报出来,帮排查 selector
+    function countInputs(doc: Document, depth: number): number {
+      let n = doc.querySelectorAll('input[type=file]').length
+      const frames = doc.querySelectorAll('iframe')
+      for (const fr of frames) {
+        try {
+          n += countInputs(fr.contentWindow!.document, depth + 1)
+        } catch {/* 跨源 */}
+      }
+      return n
+    }
+    console.warn('[AIChatRoom] no file input found. frames inspected, total file inputs =', countInputs(document, 0))
+  }
+  return result
+}
+
+async function attachImageToFileInput(_unusedSel: string, file: File): Promise<boolean> {
+  // file input 可能是延迟插入的(点完按钮才出现),重试 5 秒
+  const start = Date.now()
+  while (Date.now() - start < 5000) {
+    const input = findFileInput()
+    if (input) {
+      const dt = new DataTransfer()
+      dt.items.add(file)
+      input.files = dt.files
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+      return true
+    }
+    await new Promise((r) => setTimeout(r, 250))
+  }
+  return false
+}
+
+// 等 ChatGPT 上传流水线跑完(没图时不做事)。
+// 标志: send 按钮变 enabled + input 旁边出现缩略图(图片 input dataURL)
+async function waitForUploadReady(maxMs = 3000): Promise<void> {
+  if (!document.querySelector("input[type='file']")) return
+  const start = Date.now()
+  while (Date.now() - start < maxMs) {
+    // 缩略图出现就视为就绪
+    const hasThumb = document.querySelector('img[src^="data:"]')
+    const sendBtn = document.querySelector<HTMLButtonElement>("button[data-testid='send-button']")
+    if (hasThumb && sendBtn && !sendBtn.disabled) return
+    await new Promise((r) => setTimeout(r, 100))
+  }
+}
+
 export function createChatGPTAdapter(): AIAdapter {
   let lastEventHandler: ((e: StreamEvent) => void) | null = null
   let observer: MutationObserver | null = null
@@ -83,14 +166,24 @@ export function createChatGPTAdapter(): AIAdapter {
       btn.click()
     },
 
-    async sendMessage(text: string) {
+    async sendMessage(text: string, image?: File) {
       await this.writeText(text)
+      // 写完文字再附加图片(等 React/Quill 状态稳定)
+      await new Promise((r) => setTimeout(r, 50))
+      if (image) await this.attachImage(image)
+      // 等上传组件把缩略图渲染进 input,并等 AI 网站自己的图片处理流水线跑完
+      // (ChatGPT/Gemini 在收到文件后还要走内部转码/特征抽取)
+      await waitForUploadReady()
       // 给 React/ProseMirror 一个微任务让状态更新,再点发送按钮
-      await new Promise((r) => setTimeout(r, 100))
       await this.triggerSend()
     },
 
-    getLastResponse() {
+    async attachImage(file: File) {
+      if (await attachImageToFileInput(S.fileInput, file)) return  // S.fileInput 保留以备后续精确化
+      throw new Error('file input not found for image upload')
+    },
+
+        getLastResponse() {
       return Promise.resolve(q(S.lastResponse)?.textContent ?? '')
     },
 

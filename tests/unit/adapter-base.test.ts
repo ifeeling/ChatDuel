@@ -8,6 +8,7 @@ describe('AIAdapter interface', () => {
       writeText: async () => {},
       triggerSend: async () => {},
       sendMessage: async () => {},
+      attachImage: async () => {},
       getLastResponse: async () => '',
       getConversationState: async () => ({ status: 'idle' }),
       onStreamEvent: () => () => {},

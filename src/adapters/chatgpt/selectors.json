@@ -9,6 +9,7 @@
     "userMessage": "[data-testid='conversation-turn'][data-turn='user']",
     "rateLimitToast": "[role='alert']",
     "continueButton": "button[data-testid='continue-generation-button']",
-    "loggedIn": "[data-testid='user-menu-button']"
+    "loggedIn": "[data-testid='user-menu-button']",
+    "fileInput": "input[type=\"file\"]"
   }
 }

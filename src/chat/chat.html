@@ -45,8 +45,14 @@
 
     <footer class="composer">
       <div class="composer-toolbar">
-        <button id="btn-image" title="粘贴/拖拽图片">图片</button>
-        <span class="at-hint">@chatgpt @gemini 选择目标</span>
+        <button id="btn-image" title="选择图片">图片</button>
+        <input type="file" id="file-input" accept="image/*" hidden>
+        <span class="at-hint" id="at-hint">@chatgpt @gemini 选择目标</span>
+        <span class="image-preview" id="image-preview" hidden>
+          <img id="preview-img" alt="预览">
+          <span class="image-meta" id="image-meta"></span>
+          <button id="btn-image-remove" title="移除图片" type="button">×</button>
+        </span>
         <button id="btn-quote" disabled title="引用上一轮回答">引用</button>
         <button id="btn-transfer-c2g" disabled title="把 ChatGPT 的回答搬到 Gemini">C→G</button>
         <button id="btn-transfer-g2c" disabled title="把 Gemini 的回答搬到 ChatGPT">G→C</button>
@@ -55,11 +61,15 @@
       </div>
       <div class="composer-input">
         <textarea id="input" rows="2"
-          placeholder="在这里输入你的问题 或 输入 @ 和指定AI对话..."></textarea>
+          placeholder="在这里输入你的问题 或 输入 @ 和指定AI对话... (Ctrl+V 粘贴图片)"></textarea>
         <button id="btn-send" title="发送">↑</button>
       </div>
     </footer>
   </div>
+
+  <!-- Toast 通知 -->
+  <div class="toast-container" id="toast-container"></div>
+
   <script type="module" src="./chat.ts"></script>
 </body>
 </html>

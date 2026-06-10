@@ -15,7 +15,8 @@
     "unlimitedStorage",
     "tabs",
     "scripting",
-    "declarativeNetRequest"
+    "declarativeNetRequest",
+    "downloads"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
@@ -23,14 +24,22 @@
   ],
   "content_scripts": [
     {
-      "matches": ["https://chatgpt.com/*"],
-      "js": ["src/content-scripts/chatgpt-content.ts"],
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
+      "js": [
+        "src/content-scripts/chatgpt-content.ts"
+      ],
       "run_at": "document_idle",
       "all_frames": true
     },
     {
-      "matches": ["https://gemini.google.com/*"],
-      "js": ["src/content-scripts/gemini-content.ts"],
+      "matches": [
+        "https://gemini.google.com/*"
+      ],
+      "js": [
+        "src/content-scripts/gemini-content.ts"
+      ],
       "run_at": "document_idle",
       "all_frames": true
     }

@@ -9,6 +9,7 @@
     "userMessage": "user-message",
     "rateLimitToast": "[role='alert']",
     "continueButton": "button[aria-label*='Continue' i]",
-    "loggedIn": "[aria-label*='Google Account' i], img[alt*='avatar' i]"
+    "loggedIn": "[aria-label*='Google Account' i], img[alt*='avatar' i]",
+    "fileInput": "input[type='file'][accept='image/*']"
   }
 }
