@@ -22,10 +22,12 @@
 import type { AIPlatform, Session, SessionAttachment, SessionResponse } from '../types'
 import {
   FileTooLargeError,
+  SUPPORTED_FILE_FORMATS_TEXT,
   UnsupportedFileTypeError,
   assertFileWithinLimit,
   buildInlineTextPrompt,
   classifyFile,
+  getUnsupportedFileMessage,
   inlineTextFile,
   supportsAutoUpload,
   type FileClassification,
@@ -84,6 +86,7 @@ const historyOverlay = $<HTMLDivElement>('#history-overlay')
 const btnHistoryClose = $<HTMLButtonElement>('#btn-history-close')
 const historyList = $<HTMLDivElement>('#history-list')
 const historyDetail = $<HTMLDivElement>('#history-detail')
+const ATTACH_BUTTON_TITLE = `支持：${SUPPORTED_FILE_FORMATS_TEXT}。暂不支持 Word。`
 
 // ---------- 状态 ----------
 const readyMap: Record<AIPlatform, boolean> = { chatgpt: false, gemini: false }
@@ -287,7 +290,7 @@ async function acceptFile(file: File) {
     assertFileWithinLimit(file, classification)
   } catch (e) {
     if (e instanceof UnsupportedFileTypeError) {
-      showToast('暂不支持这个文件格式', 'err')
+      showToast(getUnsupportedFileMessage(file), 'err', 7000)
       return
     }
     if (e instanceof FileTooLargeError) {
@@ -338,7 +341,7 @@ function clearAttachment() {
   imageMeta.textContent = ''
   imagePreview.hidden = true
   btnImage.classList.remove('has-image')
-  btnImage.title = '附加文件'
+  btnImage.title = ATTACH_BUTTON_TITLE
   if (fileInput) fileInput.value = ''
 }
 

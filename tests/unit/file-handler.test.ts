@@ -3,6 +3,7 @@ import {
   FileTooLargeError,
   UnsupportedFileTypeError,
   classifyFile,
+  getUnsupportedFileMessage,
   inlineTextFile,
   MAX_DOCUMENT_BYTES,
   MAX_INLINE_TEXT_BYTES,
@@ -77,5 +78,23 @@ describe('supportsAutoUpload', () => {
     const documentFile = classifyFile(new File(['x'], 'book.pdf', { type: 'application/pdf' }))
     expect(supportsAutoUpload('chatgpt', documentFile)).toBe(false)
     expect(supportsAutoUpload('gemini', documentFile)).toBe(true)
+  })
+})
+
+describe('getUnsupportedFileMessage', () => {
+  it('explains why Word documents are not supported yet', () => {
+    const message = getUnsupportedFileMessage({ name: 'doc.docx' })
+
+    expect(message).toContain('暂不支持 Word 文档')
+    expect(message).toContain('图片、表格或版式信息')
+    expect(message).toContain('建议先转成 PDF')
+  })
+
+  it('lists supported formats for other unsupported files', () => {
+    const message = getUnsupportedFileMessage({ name: 'slides.pptx' })
+
+    expect(message).toContain('当前支持')
+    expect(message).toContain('Markdown')
+    expect(message).toContain('Excel')
   })
 })

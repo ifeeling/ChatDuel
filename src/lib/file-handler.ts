@@ -3,6 +3,7 @@ import { MAX_IMAGE_BYTES } from './image-handler'
 
 export const MAX_INLINE_TEXT_BYTES = 1 * 1024 * 1024
 export const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
+export const SUPPORTED_FILE_FORMATS_TEXT = '图片、TXT、Markdown、CSV、PDF、Excel（XLSX）'
 
 export type AttachmentKind = SessionAttachment['kind']
 export type AttachmentHandling = SessionAttachment['handling']
@@ -34,6 +35,15 @@ export class FileTooLargeError extends Error {
 function extname(name: string): string {
   const idx = name.lastIndexOf('.')
   return idx >= 0 ? name.slice(idx).toLowerCase() : ''
+}
+
+export function getUnsupportedFileMessage(file: Pick<File, 'name'>): string {
+  const ext = extname(file.name)
+  if (['.doc', '.docx'].includes(ext)) {
+    return `暂不支持 Word 文档。Word 里可能有图片、表格或版式信息，直接抽文字容易丢内容；建议先转成 PDF，或把关键页面截图后上传。当前支持：${SUPPORTED_FILE_FORMATS_TEXT}。`
+  }
+
+  return `暂不支持这个文件格式。当前支持：${SUPPORTED_FILE_FORMATS_TEXT}。`
 }
 
 export function classifyFile(file: File): FileClassification {
