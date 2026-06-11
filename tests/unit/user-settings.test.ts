@@ -26,6 +26,7 @@ describe('user-settings', () => {
     })
     expect(saved.enabledPlatforms).toEqual({ chatgpt: false, gemini: true })
     expect(saved.promptTemplates.transfer).toBe(DEFAULT_USER_SETTINGS.promptTemplates.transfer)
+    expect(saved.promptTemplates.summary).toBe(DEFAULT_USER_SETTINGS.promptTemplates.summary)
     await expect(loadUserSettings()).resolves.toEqual(saved)
   })
 
@@ -43,10 +44,24 @@ describe('user-settings', () => {
     expect(saved.promptTemplates.transfer).toBe('请审查 {{fromLabel}}：{{content}}')
   })
 
+  it('saves summary prompt template', async () => {
+    const saved = await saveUserSettings({
+      promptTemplates: { summary: '总结：{{historyBlock}}' },
+    })
+    expect(saved.promptTemplates.summary).toBe('总结：{{historyBlock}}')
+  })
+
   it('falls back when transfer prompt is empty', async () => {
     const saved = await saveUserSettings({
       promptTemplates: { transfer: '   ' },
     })
     expect(saved.promptTemplates.transfer).toBe(DEFAULT_USER_SETTINGS.promptTemplates.transfer)
+  })
+
+  it('falls back when summary prompt is empty', async () => {
+    const saved = await saveUserSettings({
+      promptTemplates: { summary: '   ' },
+    })
+    expect(saved.promptTemplates.summary).toBe(DEFAULT_USER_SETTINGS.promptTemplates.summary)
   })
 })

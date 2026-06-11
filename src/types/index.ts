@@ -10,10 +10,16 @@ export type StreamStatus =
   | 'error'
 
 export interface SessionFollowUp {
+  type?: 'transfer' | 'quote' | 'manual'
   from: 'user' | 'chatgpt' | 'gemini'
   to: 'chatgpt' | 'gemini'
   text: string
+  promptTemplate?: string
+  status?: 'pending' | 'sent' | 'captured' | 'failed'
+  result?: string
   timestamp: number
+  capturedAt?: number
+  error?: string
 }
 
 export interface SessionStats {
@@ -24,13 +30,56 @@ export interface SessionStats {
 
 export interface Session {
   id: string
+  conversationId?: string
   createdAt: number
+  updatedAt: number
   prompt: string
-  responses: { chatgpt?: string; gemini?: string }
+  sentPrompt: string
+  targetPlatforms: AIPlatform[]
+  responses: Partial<Record<AIPlatform, SessionResponse>>
+  attachments: SessionAttachment[]
   followUps: SessionFollowUp[]
+  summaries: SessionSummary[]
   summary?: string
   stats?: SessionStats
 }
+
+export interface SessionResponse {
+  text: string
+  status: 'pending' | 'captured' | 'failed'
+  capturedAt?: number
+  error?: string
+}
+
+export interface SessionAttachment {
+  id: string
+  name: string
+  mime: string
+  size: number
+  kind: 'image' | 'text' | 'document'
+  handling: 'inline-text' | 'file-upload' | 'manual'
+  inlinedText?: string
+  uploadStatus?: 'pending' | 'ready' | 'failed' | 'manual'
+  error?: string
+}
+
+export interface SessionSummary {
+  id: string
+  target: AIPlatform
+  range: SummaryRange
+  mode: SummaryMode
+  prompt: string
+  status: 'pending' | 'sent' | 'captured' | 'failed'
+  result?: string
+  sourceSessionIds: string[]
+  timestamp: number
+  sentAt?: number
+  capturedAt?: number
+  error?: string
+}
+
+export type SummaryRange = 'latest-1' | 'latest-3' | 'latest-5'
+export type SummaryMode = 'final-answer' | 'differences' | 'short-summary'
 
 export type StreamEvent =
   | { type: 'started'; platform: AIPlatform; timestamp: number }

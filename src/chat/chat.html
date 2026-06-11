@@ -30,7 +30,7 @@
           <button class="panel-transfer" data-platform="gemini" title="把这里的回答转移到其它 AI">转移 ➔</button>
           <button class="panel-open" data-platform="gemini" title="在新标签页打开官方页面">↗</button>
         </header>
-        <iframe class="panel-iframe" data-platform="gemini" src="about:blank"></iframe>
+        <iframe class="panel-iframe" data-platform="gemini" src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
       </section>
 
       <div class="splitter" id="splitter"></div>
@@ -41,7 +41,7 @@
           <button class="panel-transfer" data-platform="chatgpt" title="把这里的回答转移到其它 AI">转移 ➔</button>
           <button class="panel-open" data-platform="chatgpt" title="在新标签页打开官方页面">↗</button>
         </header>
-        <iframe class="panel-iframe" data-platform="chatgpt" src="about:blank"></iframe>
+        <iframe class="panel-iframe" data-platform="chatgpt" src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
       </section>
     </main>
 
@@ -54,13 +54,13 @@
           <button id="btn-image-remove" title="移除图片" type="button">×</button>
         </span>
         <button id="btn-quote" disabled title="引用上一轮回答">引用</button>
-        <button id="btn-summary" disabled title="对比总结">总结</button>
+        <button id="btn-summary" title="对比总结">总结</button>
         <button id="btn-history" title="查看历史">历史</button>
       </div>
       <div class="composer-input">
         <button id="btn-settings" class="input-tool-btn" title="设置" type="button" aria-label="设置">⚙</button>
-        <button id="btn-image" class="input-add-btn" title="附加图片">+</button>
-        <input type="file" id="file-input" accept="image/*" hidden>
+        <button id="btn-image" class="input-add-btn" title="支持：图片、TXT、Markdown、CSV、PDF、Excel（XLSX）。暂不支持 Word。">+</button>
+        <input type="file" id="file-input" accept="image/*,.txt,.md,.csv,.pdf,.xlsx" hidden>
         <textarea id="input" rows="1"
           placeholder="在这里输入你的问题 或 输入 @ 和指定AI对话... (Ctrl+V 粘贴图片)"></textarea>
         <button id="btn-expand-input" class="input-tool-btn" title="展开输入框" type="button" aria-label="展开输入框">⛶</button>
@@ -117,15 +117,36 @@
             </div>
           </div>
           <div class="settings-panel" data-settings-panel="prompts">
-            <p class="settings-lead">修改“转移”功能发送给目标 AI 的提示词</p>
+            <p class="settings-lead">修改发送给目标 AI 的提示词</p>
             <label class="prompt-editor">
               <span class="prompt-editor-label">转移提示词</span>
               <textarea id="setting-transfer-template" spellcheck="false"></textarea>
             </label>
             <p class="settings-help">可用变量：{{fromLabel}} 表示来源 AI 名字，{{content}} 表示要转移的回答内容。</p>
             <button id="btn-reset-transfer-template" class="settings-secondary" type="button">恢复默认提示词</button>
+            <label class="prompt-editor prompt-editor-spaced">
+              <span class="prompt-editor-label">总结提示词</span>
+              <textarea id="setting-summary-template" spellcheck="false"></textarea>
+            </label>
+            <p class="settings-help">可用变量：{{historyBlock}} 表示最近一轮历史记录。</p>
+            <button id="btn-reset-summary-template" class="settings-secondary" type="button">恢复默认总结提示词</button>
           </div>
           <button id="btn-settings-save" class="settings-save" type="button">保存</button>
+        </main>
+      </div>
+    </section>
+  </div>
+
+  <div class="history-overlay" id="history-overlay" hidden>
+    <section class="history-dialog" role="dialog" aria-modal="true" aria-labelledby="history-title">
+      <header class="history-header">
+        <h2 id="history-title">历史记录</h2>
+        <button id="btn-history-close" class="history-close" type="button" title="关闭" aria-label="关闭">×</button>
+      </header>
+      <div class="history-body">
+        <aside class="history-list" id="history-list" aria-label="历史记录列表"></aside>
+        <main class="history-detail" id="history-detail">
+          <div class="history-empty">还没有历史记录</div>
         </main>
       </div>
     </section>

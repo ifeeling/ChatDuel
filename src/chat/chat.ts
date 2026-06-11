@@ -19,12 +19,25 @@
 //   - ChatGPT 走原生 <input type=file>,Gemini 走 paste 事件 fallback
 //   - onSend 收集各平台结果,合并 toast;全部/部分失败时复制剪贴板兜底
 
-import type { AIPlatform } from '../types'
-import { MAX_IMAGE_BYTES, ImageTooLargeError } from '../lib/image-handler'
+import type { AIPlatform, Session, SessionAttachment, SessionResponse } from '../types'
+import {
+  FileTooLargeError,
+  UnsupportedFileTypeError,
+  assertFileWithinLimit,
+  buildInlineTextPrompt,
+  classifyFile,
+  inlineTextFile,
+  supportsAutoUpload,
+  type FileClassification,
+} from '../lib/file-handler'
 import { activePlatforms, getPlatformMeta, shortcutKey, type AIPlatformMeta } from '../lib/ai-platforms'
 import { detectAtInput, filterCandidates, parseAtMentions } from '../lib/at-parser'
 import { getDefaultTemplates, renderTemplate } from '../lib/prompt-template'
 import { DEFAULT_USER_SETTINGS, loadUserSettings, saveUserSettings, type UserSettings } from '../lib/user-settings'
+import { addSession, deleteSession, loadSessions, updateSession } from '../lib/session-store'
+import { applyCapturedResponses, applySendResults, createSessionRecord } from '../lib/session-record'
+import { formatBytes, formatSessionMarkdown, summarizeSessionTargets } from '../lib/history-format'
+import { buildSummaryPrompt, hasCapturedResponses } from '../lib/summary-builder'
 
 // PLATFORMS 不再硬编码:由 activePlatforms() 从 DOM 派生(HTML 里有几个 panel 就有几个)
 const OFFICIAL_URLS: Record<AIPlatform, string> = {
@@ -64,15 +77,29 @@ const btnSettingsSave = $<HTMLButtonElement>('#btn-settings-save')
 const settingChatgpt = $<HTMLInputElement>('#setting-chatgpt')
 const settingGemini = $<HTMLInputElement>('#setting-gemini')
 const settingTransferTemplate = $<HTMLTextAreaElement>('#setting-transfer-template')
+const settingSummaryTemplate = $<HTMLTextAreaElement>('#setting-summary-template')
 const btnResetTransferTemplate = $<HTMLButtonElement>('#btn-reset-transfer-template')
+const btnResetSummaryTemplate = $<HTMLButtonElement>('#btn-reset-summary-template')
+const historyOverlay = $<HTMLDivElement>('#history-overlay')
+const btnHistoryClose = $<HTMLButtonElement>('#btn-history-close')
+const historyList = $<HTMLDivElement>('#history-list')
+const historyDetail = $<HTMLDivElement>('#history-detail')
 
 // ---------- 状态 ----------
 const readyMap: Record<AIPlatform, boolean> = { chatgpt: false, gemini: false }
 const readyWaiters: Record<AIPlatform, Array<(ok: boolean) => void>> = { chatgpt: [], gemini: [] }
 let userSettings: UserSettings = DEFAULT_USER_SETTINGS
+let historySessions: Session[] = []
+let selectedHistoryId: string | null = null
 
-// 待发送的图片(仅支持 1 张,后续 attach 会替换)
-let pendingImage: File | null = null
+// 待发送的附件(仅支持 1 个,后续 attach 会替换)
+interface PendingAttachment {
+  file: File
+  classification: FileClassification
+  textContent?: string
+}
+
+let pendingAttachment: PendingAttachment | null = null
 let pendingImageObjectUrl: string | null = null
 
 // ---------- @ 状态 ----------
@@ -167,6 +194,7 @@ function applyUserSettings(settings: UserSettings) {
   document.querySelectorAll<HTMLButtonElement>('.panel-transfer').forEach((btn) => {
     btn.disabled = !canTransfer
   })
+  btnSummary.disabled = activePlatforms().length < 2
   renderChips()
 }
 
@@ -174,6 +202,7 @@ function renderSettingsForm() {
   settingChatgpt.checked = userSettings.enabledPlatforms.chatgpt
   settingGemini.checked = userSettings.enabledPlatforms.gemini
   settingTransferTemplate.value = userSettings.promptTemplates.transfer
+  settingSummaryTemplate.value = userSettings.promptTemplates.summary
 }
 
 function openSettings() {
@@ -219,6 +248,7 @@ async function onSaveSettings() {
     },
     promptTemplates: {
       transfer: settingTransferTemplate.value,
+      summary: settingSummaryTemplate.value,
     },
   }
 
@@ -243,42 +273,72 @@ async function onSaveSettings() {
   }
 }
 
-// ---------- 图片处理 ----------
-function acceptImage(file: File) {
-  if (!file.type.startsWith('image/')) {
-    showToast('只支持图片文件', 'err')
-    return
-  }
-  if (file.size > MAX_IMAGE_BYTES) {
-    showToast(`图片太大(${(file.size / 1024 / 1024).toFixed(1)}MB,上限 ${MAX_IMAGE_BYTES / 1024 / 1024}MB)`, 'err')
-    return
-  }
-
+// ---------- 附件处理 ----------
+async function acceptFile(file: File) {
   // 清理旧的 object URL
-  if (pendingImageObjectUrl) {
-    URL.revokeObjectURL(pendingImageObjectUrl)
-  }
-  pendingImage = file
-  pendingImageObjectUrl = URL.createObjectURL(file)
-  previewImg.src = pendingImageObjectUrl
-  imageMeta.textContent = `${file.name || 'image'} · ${(file.size / 1024).toFixed(0)}KB`
-  imagePreview.hidden = false
-  btnImage.classList.add('has-image')
-  btnImage.title = `已附加图片: ${file.name || 'image'} — 点击替换`
-  showToast('图片已附加', 'success', 1500)
-}
-
-function clearImage() {
   if (pendingImageObjectUrl) {
     URL.revokeObjectURL(pendingImageObjectUrl)
     pendingImageObjectUrl = null
   }
-  pendingImage = null
+
+  let classification: FileClassification
+  try {
+    classification = classifyFile(file)
+    assertFileWithinLimit(file, classification)
+  } catch (e) {
+    if (e instanceof UnsupportedFileTypeError) {
+      showToast('暂不支持这个文件格式', 'err')
+      return
+    }
+    if (e instanceof FileTooLargeError) {
+      showToast(`文件太大(${(file.size / 1024 / 1024).toFixed(1)}MB)`, 'err')
+      return
+    }
+    throw e
+  }
+
+  let textContent: string | undefined
+  if (classification.handling === 'inline-text') {
+    try {
+      const result = await inlineTextFile(file, inputEl.value.trim())
+      textContent = result.textContent
+    } catch (e) {
+      console.error('[AIChatRoom chat] failed to read text file', e)
+      showToast('读取文本文件失败', 'err')
+      return
+    }
+  }
+
+  pendingAttachment = { file, classification, textContent }
+
+  if (classification.kind === 'image') {
+    pendingImageObjectUrl = URL.createObjectURL(file)
+    previewImg.src = pendingImageObjectUrl
+    previewImg.hidden = false
+  } else {
+    previewImg.src = ''
+    previewImg.hidden = true
+  }
+
+  imageMeta.textContent = `${file.name || 'file'} · ${(file.size / 1024).toFixed(0)}KB`
+  imagePreview.hidden = false
+  btnImage.classList.add('has-image')
+  btnImage.title = `已附加文件: ${file.name || 'file'} — 点击替换`
+  showToast(classification.handling === 'inline-text' ? '文本文件已附加' : '文件已附加', 'success', 1500)
+}
+
+function clearAttachment() {
+  if (pendingImageObjectUrl) {
+    URL.revokeObjectURL(pendingImageObjectUrl)
+    pendingImageObjectUrl = null
+  }
+  pendingAttachment = null
   previewImg.src = ''
+  previewImg.hidden = false
   imageMeta.textContent = ''
   imagePreview.hidden = true
   btnImage.classList.remove('has-image')
-  btnImage.title = '附加图片'
+  btnImage.title = '附加文件'
   if (fileInput) fileInput.value = ''
 }
 
@@ -324,6 +384,26 @@ function postToIframe(p: AIPlatform, action: string, extra: Record<string, unkno
   win.postMessage({ source: 'aichatroom-parent', action, ...extra }, OFFICIAL_URLS[p])
 }
 
+function requestLastResponse(p: AIPlatform, timeoutMs = 3000): Promise<string> {
+  const win = panelIframe(p).contentWindow
+  if (!win) return Promise.resolve('')
+  return new Promise<string>((resolve) => {
+    const onMsg = (e: MessageEvent) => {
+      const d = e.data as { source?: string; type?: string; text?: string } | undefined
+      if (d?.source === 'aichatroom-content' && d.type === 'last-response') {
+        window.removeEventListener('message', onMsg)
+        resolve(d.text ?? '')
+      }
+    }
+    window.addEventListener('message', onMsg)
+    postToIframe(p, 'get-last-response')
+    setTimeout(() => {
+      window.removeEventListener('message', onMsg)
+      resolve('')
+    }, timeoutMs)
+  })
+}
+
 window.addEventListener('message', (e: MessageEvent) => {
   const data = e.data as
     | { source?: string; event?: string; platform?: AIPlatform; action?: string; ok?: boolean; error?: string }
@@ -346,8 +426,8 @@ window.addEventListener('message', (e: MessageEvent) => {
 // ---------- 发送 ----------
 async function onSend() {
   const text = inputEl.value.trim()
-  if (!text && !pendingImage) {
-    showToast('请输入文字或附加图片', 'warn')
+  if (!text && !pendingAttachment) {
+    showToast('请输入文字或附加文件', 'warn')
     return
   }
   // 目标优先级:atSelected(UI 选) > 文本里手打 @xxx(向后兼容) > 全发
@@ -360,22 +440,64 @@ async function onSend() {
     targets = mentioned.length > 0 ? mentioned : activePlatforms()
   }
 
-  // 1. 准备图片(若有):转 dataURL 供 iframe 内 adapter 接管
-  let imageDataUrl: string | undefined
-  let imageMime: string | undefined
-  let imageName: string | undefined
-  if (pendingImage) {
-    try {
-      imageDataUrl = await fileToDataUrl(pendingImage)
-      imageMime = pendingImage.type
-      imageName = pendingImage.name
-    } catch (e) {
-      console.error('[AIChatRoom chat] failed to read image as data URL', e)
+  if (pendingAttachment?.classification.handling === 'file-upload') {
+    const unsupportedTargets = targets.filter((p) => !supportsAutoUpload(p, pendingAttachment!.classification))
+    targets = targets.filter((p) => supportsAutoUpload(p, pendingAttachment!.classification))
+    if (unsupportedTargets.length > 0) {
+      const labels = unsupportedTargets.map((p) => getPlatformMeta(p)?.label ?? p).join(' / ')
+      showToast(`${labels} 暂不支持自动上传这个文件类型,已跳过;可手动上传`, 'warn', 6000)
+    }
+    if (targets.length === 0) {
+      showToast('当前目标都不支持自动上传这个文件类型,请手动上传或改用 .md/.txt', 'warn', 6000)
+      return
     }
   }
 
-  // 2. 发文字 + 图片到 iframe(由 content script 交给 adapter)。文字不附加 [图片] 后缀。
-  const textToSend = text
+  // 1. 准备附件:上传类转 dataURL,文本类拼进 prompt。
+  let imageDataUrl: string | undefined
+  let imageMime: string | undefined
+  let imageName: string | undefined
+  let textToSend = text
+  if (pendingAttachment?.classification.handling === 'inline-text') {
+    textToSend = buildInlineTextPrompt(pendingAttachment.file.name, pendingAttachment.textContent ?? '', text)
+  }
+  if (pendingAttachment?.classification.handling === 'file-upload') {
+    try {
+      imageDataUrl = await fileToDataUrl(pendingAttachment.file)
+      imageMime = pendingAttachment.file.type
+      imageName = pendingAttachment.file.name
+    } catch (e) {
+      console.error('[AIChatRoom chat] failed to read file as data URL', e)
+    }
+  }
+
+  const attachments: SessionAttachment[] = pendingAttachment
+    ? [{
+      id: `attachment-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      name: pendingAttachment.file.name,
+      mime: pendingAttachment.file.type,
+      size: pendingAttachment.file.size,
+      kind: pendingAttachment.classification.kind,
+      handling: pendingAttachment.classification.handling,
+      inlinedText: pendingAttachment.classification.handling === 'inline-text' ? pendingAttachment.textContent : undefined,
+      uploadStatus: pendingAttachment.classification.handling === 'file-upload' ? 'pending' : undefined,
+    }]
+    : []
+
+  let currentSession: Session | null = createSessionRecord({
+    prompt: text,
+    sentPrompt: textToSend,
+    targetPlatforms: targets,
+    attachments,
+  })
+  try {
+    await addSession(currentSession)
+  } catch (e) {
+    console.error('[AIChatRoom chat] failed to save session history', e)
+    currentSession = null
+  }
+
+  // 2. 发文字 + 附件到 iframe(由 content script 交给 adapter)。
   // 给每个目标发;分别等结果(不阻塞,但用 Promise 收集成功/失败)
   const results: Array<{ p: AIPlatform; ok: boolean }> = []
   await Promise.all(
@@ -417,17 +539,26 @@ async function onSend() {
     ),
   )
 
+  if (currentSession) {
+    try {
+      currentSession = applySendResults(currentSession, results)
+      await updateSession(currentSession)
+    } catch (e) {
+      console.error('[AIChatRoom chat] failed to update session history', e)
+    }
+  }
+
   // 3. 根据结果给一个合并的 toast
   const okCount = results.filter((r) => r.ok).length
-  if (pendingImage) {
+  if (pendingAttachment?.classification.handling === 'file-upload') {
     if (okCount === results.length && results.length > 0) {
-      showToast('图片已发送到所有目标', 'success', 2500)
+      showToast('文件已发送到所有目标', 'success', 2500)
     } else if (okCount > 0) {
       // 部分成功:v0.5+ 不再走剪贴板兜底(跨源 iframe 写剪贴板经常失败)
-      showToast('部分目标未自动接收图片,请手动上传到失败侧', 'warn', 6000)
+      showToast('部分目标未自动接收文件,请手动上传到失败侧', 'warn', 6000)
     } else {
       // 全部失败:v0.5+ 不再走剪贴板兜底
-      showToast('图片自动发送失败,请手动上传', 'err', 6000)
+      showToast('文件自动发送失败,请手动上传', 'err', 6000)
     }
   } else {
     if (okCount === 0 && results.length > 0) {
@@ -439,7 +570,7 @@ async function onSend() {
 
   // 4. 清空
   inputEl.value = ''
-  clearImage()
+  clearAttachment()
   // onSend 完顺手清掉 at 选择(避免下条消息还受上一条的影响)
   // 不清 atSelected:如果想连发同一组目标,保留;但目前默认清掉,符合"每次明确选"的直觉
   // 选 1:不 clear(连发场景更顺手)
@@ -889,11 +1020,249 @@ function setupTransferButtons() {
   })
 }
 
+// ---------- 历史记录 ----------
+function compactText(text: string, max = 80): string {
+  const oneLine = text.replace(/\s+/g, ' ').trim()
+  if (!oneLine) return '空问题'
+  return oneLine.length > max ? `${oneLine.slice(0, max)}...` : oneLine
+}
+
+function responseLabel(response?: SessionResponse): string {
+  if (!response) return '未发送'
+  if (response.status === 'captured') return '已记录'
+  if (response.status === 'failed') return '发送失败'
+  return '待回填'
+}
+
+function formatTime(ts: number): string {
+  return new Date(ts).toLocaleString()
+}
+
+function renderHistoryList() {
+  historyList.innerHTML = ''
+  if (historySessions.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'history-empty'
+    empty.textContent = '还没有历史记录'
+    historyList.appendChild(empty)
+    return
+  }
+
+  for (const session of historySessions) {
+    const item = document.createElement('button')
+    item.type = 'button'
+    item.className = `history-item${session.id === selectedHistoryId ? ' active' : ''}`
+    item.dataset.sessionId = session.id
+
+    const title = document.createElement('span')
+    title.className = 'history-item-title'
+    title.textContent = compactText(session.prompt)
+
+    const meta = document.createElement('span')
+    meta.className = 'history-item-meta'
+    meta.textContent = formatTime(session.createdAt)
+
+    const targets = document.createElement('span')
+    targets.className = 'history-item-targets'
+    targets.textContent = summarizeSessionTargets(session)
+
+    item.append(title, meta, targets)
+    item.addEventListener('click', () => {
+      selectedHistoryId = session.id
+      renderHistoryList()
+      renderHistoryDetail(session)
+      void refreshAndRenderHistorySession(session)
+    })
+    historyList.appendChild(item)
+  }
+}
+
+function renderHistoryDetail(session?: Session) {
+  historyDetail.innerHTML = ''
+  if (!session) {
+    const empty = document.createElement('div')
+    empty.className = 'history-empty'
+    empty.textContent = historySessions.length === 0 ? '还没有历史记录' : '选择一条历史记录查看详情'
+    historyDetail.appendChild(empty)
+    return
+  }
+
+  const header = document.createElement('div')
+  header.className = 'history-detail-header'
+
+  const headingWrap = document.createElement('div')
+  const title = document.createElement('h3')
+  title.className = 'history-detail-title'
+  title.textContent = compactText(session.prompt, 120)
+  const meta = document.createElement('div')
+  meta.className = 'history-detail-meta'
+  meta.textContent = `${formatTime(session.createdAt)} · ${summarizeSessionTargets(session)}`
+  headingWrap.append(title, meta)
+
+  const actions = document.createElement('div')
+  actions.className = 'history-actions'
+  const copyBtn = document.createElement('button')
+  copyBtn.type = 'button'
+  copyBtn.className = 'history-action'
+  copyBtn.textContent = '复制 Markdown'
+  copyBtn.addEventListener('click', () => void copySessionMarkdown(session))
+  const deleteBtn = document.createElement('button')
+  deleteBtn.type = 'button'
+  deleteBtn.className = 'history-action danger'
+  deleteBtn.textContent = '删除'
+  deleteBtn.addEventListener('click', () => void deleteHistorySession(session.id))
+  actions.append(copyBtn, deleteBtn)
+  header.append(headingWrap, actions)
+  historyDetail.appendChild(header)
+
+  appendHistorySection('用户问题', session.prompt || '空')
+  if (session.sentPrompt && session.sentPrompt !== session.prompt) {
+    appendHistorySection('实际发送内容', session.sentPrompt)
+  }
+  if (session.attachments.length > 0) {
+    appendAttachmentSection(session.attachments)
+  }
+  for (const platform of session.targetPlatforms) {
+    const label = getPlatformMeta(platform)?.label ?? platform
+    const response = session.responses[platform]
+    const text = response?.status === 'captured' && response.text.trim()
+      ? response.text
+      : responseLabel(response)
+    appendHistorySection(`${label} 回答`, text)
+  }
+}
+
+function appendHistorySection(titleText: string, bodyText: string) {
+  const section = document.createElement('section')
+  section.className = 'history-section'
+  const title = document.createElement('h3')
+  title.textContent = titleText
+  const body = document.createElement('pre')
+  body.className = 'history-block'
+  body.textContent = bodyText
+  section.append(title, body)
+  historyDetail.appendChild(section)
+}
+
+function appendAttachmentSection(attachments: SessionAttachment[]) {
+  const section = document.createElement('section')
+  section.className = 'history-section'
+  const title = document.createElement('h3')
+  title.textContent = '附件'
+  const list = document.createElement('ul')
+  list.className = 'history-attachments'
+  for (const attachment of attachments) {
+    const item = document.createElement('li')
+    item.textContent = `${attachment.name} · ${attachment.mime || '未知类型'} · ${formatBytes(attachment.size)}`
+    list.appendChild(item)
+  }
+  section.append(title, list)
+  historyDetail.appendChild(section)
+}
+
+async function copySessionMarkdown(session: Session) {
+  try {
+    await navigator.clipboard.writeText(formatSessionMarkdown(session))
+    showToast('已复制历史 Markdown', 'success', 1600)
+  } catch (e) {
+    console.error('[AIChatRoom chat] failed to copy history markdown', e)
+    showToast('复制失败,请稍后重试', 'err', 3000)
+  }
+}
+
+async function deleteHistorySession(id: string) {
+  if (!confirm('确定删除这条历史记录吗？')) return
+  await deleteSession(id)
+  historySessions = historySessions.filter((s) => s.id !== id)
+  selectedHistoryId = historySessions[0]?.id ?? null
+  renderHistoryList()
+  renderHistoryDetail(historySessions[0])
+  showToast('历史记录已删除', 'success', 1600)
+}
+
+async function refreshAndRenderHistorySession(session: Session) {
+  const refreshed = await refreshSessionResponses(session)
+  if (refreshed === session) return
+  historySessions = historySessions.map((s) => (s.id === refreshed.id ? refreshed : s))
+  renderHistoryList()
+  if (selectedHistoryId === refreshed.id) renderHistoryDetail(refreshed)
+}
+
+async function refreshSessionResponses(session: Session): Promise<Session> {
+  const captured: Partial<Record<AIPlatform, string>> = {}
+  for (const platform of session.targetPlatforms) {
+    const current = session.responses[platform]
+    if (current?.status === 'captured' && current.text.trim()) continue
+    captured[platform] = await requestLastResponse(platform)
+  }
+  const updated = applyCapturedResponses(session, captured)
+  if (updated !== session) await updateSession(updated)
+  return updated
+}
+
+async function openHistory() {
+  historyOverlay.hidden = false
+  historyDetail.innerHTML = '<div class="history-empty">正在刷新最新回答…</div>'
+  historySessions = (await loadSessions()).sort((a, b) => b.createdAt - a.createdAt)
+  if (historySessions[0]) {
+    const refreshed = await refreshSessionResponses(historySessions[0])
+    historySessions = historySessions.map((s) => (s.id === refreshed.id ? refreshed : s))
+  }
+  selectedHistoryId = historySessions[0]?.id ?? null
+  renderHistoryList()
+  renderHistoryDetail(historySessions[0])
+}
+
+function closeHistory() {
+  historyOverlay.hidden = true
+}
+
+function pickSummaryTarget(): AIPlatform | null {
+  const active = activePlatforms()
+  if (active.includes('chatgpt')) return 'chatgpt'
+  if (active.includes('gemini')) return 'gemini'
+  return null
+}
+
+async function getLatestSessionForSummary(): Promise<Session | null> {
+  const sessions = (await loadSessions()).sort((a, b) => b.createdAt - a.createdAt)
+  if (!sessions[0]) return null
+  return refreshSessionResponses(sessions[0])
+}
+
 // ---------- 工具按钮(暂作占位) ----------
 // 转移按钮(panel header 上的 .panel-transfer)由 setupTransferButtons() 单独绑定(动态 target)
-function onSummary() { console.log('[AIChatRoom chat] summary: not implemented yet') }
+async function onSummary() {
+  const target = pickSummaryTarget()
+  if (!target) {
+    showToast('没有可用的总结目标 AI', 'warn')
+    return
+  }
+
+  btnSummary.disabled = true
+  try {
+    const session = await getLatestSessionForSummary()
+    if (!session) {
+      showToast('还没有历史记录可总结', 'warn')
+      return
+    }
+    if (!hasCapturedResponses(session)) {
+      showToast('这条历史还没有可用回答,等 AI 回答完成后再试', 'warn', 4000)
+      return
+    }
+
+    const prompt = buildSummaryPrompt(userSettings.promptTemplates.summary, session)
+    postToIframe(target, 'write-and-send', { text: prompt })
+    showToast(`已发送总结请求到 ${getPlatformMeta(target)?.label ?? target}`, 'success', 1800)
+  } catch (e) {
+    console.error('[AIChatRoom chat] summary failed', e)
+    showToast(`总结失败: ${e instanceof Error ? e.message : String(e)}`, 'err', 5000)
+  } finally {
+    btnSummary.disabled = activePlatforms().length < 2
+  }
+}
 function onQuote() { console.log('[AIChatRoom chat] quote: not implemented yet') }
-function onHistory() { alert('历史功能 v1 暂未启用') }
+function onHistory() { void openHistory() }
 
 // ---------- 图片按钮 ----------
 function onImageClick() {
@@ -904,7 +1273,7 @@ function onImageClick() {
 function onFileInputChange(e: Event) {
   const target = e.target as HTMLInputElement
   const file = target.files?.[0]
-  if (file) acceptImage(file)
+  if (file) void acceptFile(file)
 }
 
 function onPaste(e: ClipboardEvent) {
@@ -916,7 +1285,7 @@ function onPaste(e: ClipboardEvent) {
       const file = item.getAsFile()
       if (file) {
         e.preventDefault()
-        acceptImage(file)
+        void acceptFile(file)
         return
       }
     }
@@ -930,7 +1299,7 @@ function onDrop(e: DragEvent) {
     const file = files[i]
     if (file.type.startsWith('image/')) {
       e.preventDefault()
-      acceptImage(file)
+      void acceptFile(file)
       return
     }
   }
@@ -995,12 +1364,19 @@ function bindEvents() {
   btnSummary.addEventListener('click', onSummary)
   btnQuote.addEventListener('click', onQuote)
   btnHistory.addEventListener('click', onHistory)
+  btnHistoryClose.addEventListener('click', closeHistory)
+  historyOverlay.addEventListener('click', (e) => {
+    if (e.target === historyOverlay) closeHistory()
+  })
   btnSettings.addEventListener('click', openSettings)
   btnExpandInput.addEventListener('click', toggleInputExpanded)
   btnSettingsClose.addEventListener('click', closeSettings)
   btnSettingsSave.addEventListener('click', () => void onSaveSettings())
   btnResetTransferTemplate.addEventListener('click', () => {
     settingTransferTemplate.value = DEFAULT_USER_SETTINGS.promptTemplates.transfer
+  })
+  btnResetSummaryTemplate.addEventListener('click', () => {
+    settingSummaryTemplate.value = DEFAULT_USER_SETTINGS.promptTemplates.summary
   })
   document.querySelectorAll<HTMLButtonElement>('.settings-nav-item[data-settings-tab]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -1017,7 +1393,7 @@ function bindEvents() {
 
   // 图片按钮 + 移除按钮
   btnImage.addEventListener('click', onImageClick)
-  btnImageRemove.addEventListener('click', clearImage)
+  btnImageRemove.addEventListener('click', clearAttachment)
   fileInput.addEventListener('change', onFileInputChange)
 
   btnRefresh.addEventListener('click', () => void refreshAllStatuses())

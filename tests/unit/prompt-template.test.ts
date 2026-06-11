@@ -28,10 +28,9 @@ describe('getDefaultTemplates', () => {
     const t = getDefaultTemplates()
     expect(t.review).toContain('{{response}}')
   })
-  it('summary template contains {{responseA}} and {{responseB}} placeholders', () => {
+  it('summary template contains a {{historyBlock}} placeholder', () => {
     const t = getDefaultTemplates()
-    expect(t.summary).toContain('{{responseA}}')
-    expect(t.summary).toContain('{{responseB}}')
+    expect(t.summary).toContain('{{historyBlock}}')
   })
 })
 

@@ -45,6 +45,18 @@ export async function getSession(id: string): Promise<Session | undefined> {
   return all.find(s => s.id === id)
 }
 
+export async function updateSession(session: Session): Promise<void> {
+  const all = await getRaw()
+  const idx = all.findIndex(s => s.id === session.id)
+  if (idx >= 0) {
+    all[idx] = session
+  } else {
+    all.push(session)
+  }
+  const trimmed = await evictIfNeeded(all)
+  await setRaw(trimmed)
+}
+
 export async function deleteSession(id: string): Promise<void> {
   const all = await getRaw()
   await setRaw(all.filter(s => s.id !== id))

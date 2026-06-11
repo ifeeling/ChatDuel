@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { addSession, loadSessions, getSession, deleteSession, MAX_SESSIONS, MAX_BYTES } from '../../src/lib/session-store'
+import { addSession, loadSessions, getSession, deleteSession, updateSession, MAX_SESSIONS, MAX_BYTES } from '../../src/lib/session-store'
 import type { Session } from '../../src/types'
 
 // jsdom doesn't provide chrome.storage, so mock it
@@ -18,8 +18,9 @@ beforeEach(() => {
 })
 
 const make = (id: string, prompt = 'p'): Session => ({
-  id, createdAt: Date.now(), prompt,
+  id, createdAt: Date.now(), updatedAt: Date.now(), prompt, sentPrompt: prompt, targetPlatforms: ['chatgpt'],
   responses: {}, followUps: [],
+  attachments: [], summaries: [],
 })
 
 describe('session-store', () => {
@@ -55,5 +56,22 @@ describe('session-store', () => {
     await deleteSession('del')
     const s = await getSession('del')
     expect(s).toBeUndefined()
+  })
+
+  it('updateSession replaces an existing session and refreshes updatedAt', async () => {
+    const original = make('update', 'before')
+    await addSession(original)
+
+    await updateSession({
+      ...original,
+      prompt: 'after',
+      sentPrompt: 'after',
+      updatedAt: original.updatedAt + 10,
+    })
+
+    const saved = await getSession('update')
+    expect(saved?.prompt).toBe('after')
+    expect(saved?.sentPrompt).toBe('after')
+    expect(saved?.updatedAt).toBe(original.updatedAt + 10)
   })
 })
