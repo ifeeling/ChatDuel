@@ -48,8 +48,10 @@
 开关规则：
 
 - 如果当前只剩 2 个 AI，再关闭其中一个时要阻止，并提示“至少保留 2 个 AI”。
-- 如果未来平台数量超过 3 个，再打开第 4 个时要阻止，并提示“最多同时显示 3 个 AI”。
-- 本阶段平台总数刚好 3 个，所以只需要保证关闭规则和未来上限逻辑都存在。
+- 如果未来平台数量超过 3 个，再打开第 4 个时要在 UI 层阻止，并提示“最多同时显示 3 个 AI”。
+- 不强制恢复到 ChatGPT + Gemini。用户可以使用 ChatGPT + 豆包，也可以使用 Gemini + 豆包。
+- 不静默裁剪“前三个启用平台”。如果用户操作会超过上限，应该阻止这次操作，而不是悄悄关闭另一个平台。
+- 本阶段平台总数刚好 3 个，但代码结构要为后续新增 Claude / DeepSeek 等平台预留。
 
 ### 主界面布局
 
@@ -65,6 +67,8 @@
 - 2 个 AI 时显示 1 条分隔条。
 - 3 个 AI 时显示 2 条分隔条。
 - 每条分隔条只调整它左右相邻的两个面板。
+- 第一版可以先采用固定比例布局：2 栏 50 / 50，3 栏 1 / 1 / 1。
+- 如果拖拽逻辑变复杂或影响豆包接入主线，允许先把 splitter 作为视觉分隔，后续再增强拖拽。
 
 注意：
 
@@ -97,8 +101,67 @@
 - 豆包出现在 @ 候选里。
 - `@doubao` 可指定只发豆包。
 - 空目标时默认发送给当前启用的所有 AI。
+- @ 候选应从“已启用平台 + 平台能力”派生。只有能接收文本的平台才进入 @ 候选。
 
 ## 技术设计
+
+### 平台注册与能力模型
+
+代码层不要把平台数量写死为 3，也不要到处写 `platform === 'doubao'`。
+
+建议新增或整理为统一平台注册：
+
+```ts
+export const SUPPORTED_PLATFORMS: AIPlatform[] = ['chatgpt', 'gemini', 'doubao']
+export const MAX_ACTIVE_PLATFORMS = 3
+export const MIN_ACTIVE_PLATFORMS = 2
+```
+
+并为每个平台声明能力：
+
+```ts
+export interface AIPlatformCapabilities {
+  supportsText: boolean
+  supportsImageUpload: boolean
+  supportsFileUpload: boolean
+  supportsLastResponse: boolean
+}
+```
+
+豆包能力应按验证阶段逐步打开。阶段 1/2 只注册平台和加载页面，不把豆包放进可发送目标。阶段 3 纯文本发送验证通过后，再打开 `supportsText`。
+
+阶段 1/2：
+
+```ts
+doubao: {
+  supportsText: false,
+  supportsImageUpload: false,
+  supportsFileUpload: false,
+  supportsLastResponse: false,
+}
+```
+
+阶段 3 通过后：
+
+```ts
+doubao: {
+  supportsText: true,
+  supportsImageUpload: false,
+  supportsFileUpload: false,
+  supportsLastResponse: false,
+}
+```
+
+阶段 4 最后回答读取验证通过后，再把 `supportsLastResponse` 改为 `true`。
+
+能力使用规则：
+
+- @ 候选：启用且 `supportsText` 的平台。
+- 总结目标：启用且 `supportsText` 的平台。
+- 转移来源：启用且 `supportsLastResponse` 的平台。
+- 转移目标：启用且 `supportsText` 的平台。
+- 图片自动上传：启用且 `supportsImageUpload` 的平台。
+- 文件自动上传：启用且 `supportsFileUpload` 的平台。
 
 ### 平台类型
 
@@ -154,8 +217,9 @@ enabledPlatforms: {
 新增规范化逻辑：
 
 - 旧用户没有 `doubao` 字段时自动补 `false`。
-- 启用数量少于 2 时自动恢复 ChatGPT + Gemini。
-- 启用数量超过 3 时只保留前三个启用平台。
+- 加载旧设置时，如果启用数量少于 2，可以用默认值兜底，避免页面不可用。
+- 用户在设置页主动关闭平台时，如果会导致少于 2 个，应在 UI 层阻止并提示，不要自动恢复到 ChatGPT + Gemini。
+- 用户在设置页主动打开平台时，如果会导致超过 3 个，应在 UI 层阻止并提示，不要静默关闭其它平台。
 
 更好的做法是抽一个小函数：
 
@@ -248,6 +312,7 @@ export const PLATFORM_KEYS: AIPlatform[] = ['chatgpt', 'gemini', 'doubao']
 新增 host permission：
 
 ```json
+"https://doubao.com/*",
 "https://www.doubao.com/*"
 ```
 
@@ -255,7 +320,7 @@ export const PLATFORM_KEYS: AIPlatform[] = ['chatgpt', 'gemini', 'doubao']
 
 ```json
 {
-  "matches": ["https://www.doubao.com/*"],
+  "matches": ["https://doubao.com/*", "https://www.doubao.com/*"],
   "js": ["src/content-scripts/doubao-content.ts"],
   "run_at": "document_idle",
   "all_frames": true
@@ -284,6 +349,7 @@ const RULE_IDS = { chatgpt: 1, gemini: 2, doubao: 3 } as const
 
 - 豆包可能有更复杂的 CSP 或登录策略。
 - 即使 DNR 规则通过，也要实际 iframe 验证。
+- 先覆盖 `doubao.com` 和 `www.doubao.com`，如果登录、跳转或页面主应用使用其它子域名，再根据实际网络记录补 host permissions / content script matches。
 
 ### Service Worker
 
@@ -304,6 +370,8 @@ doubao: 'https://www.doubao.com/'
 ```
 
 `findOfficialTab()` 当前写死三元表达式，需要改成查表。
+
+如果豆包实际存在 `https://doubao.com/` 和 `https://www.doubao.com/` 两个入口，状态检测需要支持多个 URL prefix，而不是只检查一个字符串。
 
 ### 豆包 Adapter
 
@@ -341,6 +409,14 @@ doubao: 'https://www.doubao.com/'
 - 回答内容：
   - 先从页面中最后一个 assistant/message 容器探索，不要盲目提交最终 selector。
 
+写入输入框时不能假设 `textarea.value = text` 一定有效。豆包如果使用富文本编辑器，需要准备多级写入策略：
+
+1. `focus()` 输入框。
+2. 如果是 `textarea`，设置 `value` 并派发 `input` / `change`。
+3. 如果是 `contenteditable`，优先尝试 `document.execCommand('insertText', false, text)`。
+4. 必要时派发 `beforeinput` / `input` / `compositionend` 等事件，让内部框架同步状态。
+5. 每种策略都要在真实页面验证，不能只靠 DOM 赋值判断成功。
+
 建议实现顺序：
 
 1. 先让 iframe 打开豆包页面。
@@ -363,6 +439,17 @@ doubao: 'https://www.doubao.com/'
 
 ## 历史、总结、转移
 
+豆包第一版不要一开始要求完整接入历史、总结、转移。
+
+推荐顺序：
+
+1. 先验证豆包能加载。
+2. 再验证豆包能发送纯文本。
+3. 再验证豆包能读取最后回答。
+4. 最后再把豆包纳入历史、总结、转移。
+
+原因是历史、总结、转移都依赖“最后回答读取”和“生成完成判断”。如果 selector 不稳定，过早接入会让历史里误显示“已记录”。
+
 ### 历史
 
 `Session.responses` 已经是 `Partial<Record<AIPlatform, SessionResponse>>`，类型扩展后应自然支持豆包。
@@ -372,20 +459,27 @@ doubao: 'https://www.doubao.com/'
 - 历史列表显示 `豆包 已记录 / 待回填`。
 - 历史详情出现“豆包 回答”。
 - Markdown 复制包含豆包回答。
+- 豆包 selector 未稳定前，允许显示 `待回填` 或 `捕获失败`，不能误显示 `已记录`。
+- 豆包回答原始捕获不应截断；但保存、转移、总结时仍然必须走统一长度保护，避免超长内容拖慢页面或塞爆目标输入框。
 
 ### 总结
 
-总结目标下拉应包含当前启用平台。
+总结目标下拉应包含当前启用且支持文本输入的平台。
 
 需要确认：
 
 - 可以选择豆包作为总结目标。
 - 总结来源历史能包含豆包回答。
 - 总结生成后写入历史记录。
+- 只有当豆包 `supportsText` 验证通过后，豆包才作为总结目标出现。
+- 总结来源可以包含豆包的 captured 回答；pending / failed 回答要按现有“待回填 / 发送失败”文案进入预览。
 
 ### 转移
 
-每个 panel 的“转移”按钮应支持从豆包转移到其它 AI，也支持从其它 AI 转移到豆包。
+每个 panel 的“转移”按钮应从能力模型派生：
+
+- 支持 `supportsLastResponse` 的平台才能作为转移来源。
+- 支持 `supportsText` 的平台才能作为转移目标。
 
 风险：
 
@@ -401,8 +495,10 @@ doubao: 'https://www.doubao.com/'
 1. `tests/unit/user-settings.test.ts`
    - 默认 ChatGPT/Gemini 开启，豆包关闭。
    - 旧设置缺少豆包时自动补齐。
-   - 少于 2 个启用时自动恢复至少 2 个。
-   - 超过 3 个启用时最多保留 3 个。
+   - 加载异常旧设置时至少恢复到 2 个可用平台。
+   - UI 层关闭到少于 2 个时应阻止。
+   - UI 层打开到超过 3 个时应阻止。
+   - 不强制恢复 ChatGPT + Gemini，允许 ChatGPT + 豆包、Gemini + 豆包。
 
 2. `tests/unit/chat-html.test.ts`
    - 页面包含 3 个 `.panel`。
@@ -413,6 +509,8 @@ doubao: 'https://www.doubao.com/'
 3. `tests/unit/ai-platforms.test.ts`
    - `AI_PLATFORMS` 包含 `chatgpt/gemini/doubao`。
    - activePlatforms 能从 DOM 派生可见平台。
+   - `SUPPORTED_PLATFORMS` 和 `MAX_ACTIVE_PLATFORMS` 是统一来源。
+   - 平台能力能派生 @ 候选、总结目标和转移目标。
 
 4. `tests/unit/file-handler.test.ts`
    - 豆包不支持图片自动上传。
@@ -428,6 +526,8 @@ doubao: 'https://www.doubao.com/'
    - 显示三栏。
    - 豆包 iframe 能加载。
    - 状态显示“已打开”或合理错误。
+   - 每栏约 1/3 宽度时，豆包没有切到不可操作的移动端/H5 页面。
+   - 没有出现强制 App 下载弹窗遮挡输入框。
 
 3. 发送纯文本：
    - 空目标发送给 3 个 AI。
@@ -436,7 +536,8 @@ doubao: 'https://www.doubao.com/'
 
 4. 回答捕获：
    - 豆包回答结束后写入历史。
-   - 不截断长回答。
+   - 原始捕获不截断长回答。
+   - 保存、转移、总结仍然使用统一长度保护。
 
 5. 总结：
    - 历史记录里包含豆包回答。
@@ -446,8 +547,15 @@ doubao: 'https://www.doubao.com/'
    - 图片发给 3 个 AI 时，豆包不能自动上传时要提示，不影响其它 AI。
 
 7. 最少 / 最多：
-   - 尝试只保留 1 个 AI，应被阻止或自动恢复。
+   - 尝试只保留 1 个 AI，应被阻止。
    - 同时最多 3 个。
+   - 可以保留 Gemini + 豆包 或 ChatGPT + 豆包。
+
+8. 3 栏窄屏：
+   - 输入框仍可定位。
+   - 发送按钮仍可定位。
+   - 回答 DOM 没有因为窄屏切换而换成另一套 selector。
+   - 如果页面切换到 H5 DOM，记录 selector 差异后再决定是否支持。
 
 ## 分阶段实施建议
 
@@ -458,24 +566,28 @@ doubao: 'https://www.doubao.com/'
 - 类型和设置支持豆包。
 - 主界面能显示 3 栏。
 - 设置页能开关豆包。
-- 不要求豆包真正能发送。
+- 不加载豆包真实页面，不要求豆包真正能发送。
 
 验证：
 
 - typecheck/test/build 通过。
 - 打开设置页启用豆包后，三栏布局出现。
+- 设置规则能阻止少于 2 个和超过 3 个。
 
-### 阶段 2：豆包 iframe 和 DNR
+### 阶段 2：豆包 iframe、DNR 和可加载性探针
 
 目标：
 
 - 豆包能在 iframe 中加载。
 - 状态检测能识别官方页面是否打开。
+- content script 能注入成功。
+- iframe 内能复用登录态。
 
 验证：
 
 - iframe 不报 X-Frame-Options / CSP 拦截。
 - 未登录/已登录状态能被基本识别。
+- 如果这一步不稳定，先停止，不进入发送和读取。
 
 ### 阶段 3：豆包纯文本发送
 
@@ -495,14 +607,40 @@ doubao: 'https://www.doubao.com/'
 
 - 能读取最后一条回答。
 - 能判断 streaming / finished。
-- 历史记录能保存完整豆包回答。
 
 验证：
 
-- 长回答不截断。
-- 历史、总结、转移都能看到豆包内容。
+- 原始长回答捕获不截断。
+- selector 不稳定时显示 pending / failed，不误报 captured。
 
-### 阶段 5：收尾和发布
+### 阶段 5：接入历史、总结和转移
+
+目标：
+
+- 历史记录能保存豆包回答。
+- 总结来源可以包含豆包回答。
+- 豆包在能力允许时可以作为总结目标。
+- 豆包在能力允许时可以作为转移来源或目标。
+
+验证：
+
+- 历史详情显示豆包回答状态。
+- 总结预览能展示豆包回答。
+- 转移动作遵守 capability，不向不支持的平台发送。
+
+### 阶段 6：附件能力与体验优化
+
+目标：
+
+- 保持豆包第一版图片/文件自动上传关闭。
+- 如果后续验证豆包支持文件，再单独扩展能力。
+- 评估是否需要 ChatBrawl 风格悬浮菜单。
+
+验证：
+
+- 图片发送到 3 个 AI 时，豆包被跳过并提示，不影响其它平台。
+
+### 阶段 7：收尾和发布
 
 目标：
 
@@ -524,9 +662,19 @@ doubao: 'https://www.doubao.com/'
 4. 豆包发送按钮可能依赖内部框架状态，简单 click 可能无效。
 5. 豆包回答 DOM 结构可能变化快，selector 需要保守。
 6. 3 栏下每栏宽度变窄，官方页面自身响应式可能表现不一致。
+7. 豆包可能在 1/3 栏宽度下切换到移动端/H5 DOM，导致输入框、发送按钮、回答 selector 都变化。
+8. 豆包可能跳转到其它子域名，需要根据实际跳转补充 host permissions 和 content script matches。
+9. User-Agent 伪装可以作为防止 H5 降级的备选方案，但不作为第一阶段默认依赖；先实际验证 3 栏宽度下的页面表现。
 
 ## 决策
 
 本轮先采用“设置页启用豆包”的方案。
+
+豆包第一版定位为“第三个可选文本 AI”：
+
+- 先完成 iframe 加载。
+- 再完成纯文本发送。
+- 再完成最后回答读取。
+- 最后接入历史、总结、转移。
 
 ChatBrawl 风格悬浮菜单作为后续增强，不进入豆包第一阶段接入范围。
