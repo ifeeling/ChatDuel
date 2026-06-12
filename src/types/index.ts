@@ -78,7 +78,7 @@ export interface SessionSummary {
   error?: string
 }
 
-export type SummaryRange = 'latest-1' | 'latest-3' | 'latest-5'
+export type SummaryRange = 'latest-1' | 'latest-3' | 'latest-5' | 'manual'
 export type SummaryMode = 'final-answer' | 'differences' | 'short-summary'
 
 export type StreamEvent =

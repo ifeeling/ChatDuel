@@ -41,4 +41,25 @@ describe('summary-builder', () => {
     expect(prompt).toContain('### 第 1 轮')
     expect(prompt).toContain('先保存用户问题。')
   })
+
+  it('builds a history block from selected sessions', () => {
+    const second: Session = {
+      ...session,
+      id: 's2',
+      createdAt: 3000,
+      prompt: '怎么做总结？',
+      sentPrompt: '怎么做总结？',
+      responses: {
+        chatgpt: { text: '先选择历史。', status: 'captured', capturedAt: 3500 },
+        gemini: { text: '再合并回答。', status: 'captured', capturedAt: 3600 },
+      },
+    }
+
+    const block = buildHistoryBlock([session, second])
+
+    expect(block).toContain('### 第 1 轮')
+    expect(block).toContain('怎么做历史记录？')
+    expect(block).toContain('### 第 2 轮')
+    expect(block).toContain('怎么做总结？')
+  })
 })

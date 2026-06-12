@@ -152,6 +152,44 @@
     </section>
   </div>
 
+  <div class="summary-overlay" id="summary-overlay" hidden>
+    <section class="summary-dialog" role="dialog" aria-modal="true" aria-labelledby="summary-title">
+      <header class="summary-header">
+        <h2 id="summary-title">对比总结</h2>
+        <button id="btn-summary-close" class="summary-close" type="button" title="关闭" aria-label="关闭">×</button>
+      </header>
+      <div class="summary-body">
+        <aside class="summary-list" id="summary-list" aria-label="选择要总结的历史记录"></aside>
+        <main class="summary-options">
+          <div class="summary-config">
+            <p class="summary-lead">默认选中最新一条历史。你可以勾选其它相关记录一起总结。</p>
+            <label class="summary-field">
+              <span>总结目标</span>
+              <select id="summary-target"></select>
+            </label>
+            <label class="summary-field">
+              <span>总结方式</span>
+              <select id="summary-mode">
+                <option value="final-answer">最终结论</option>
+                <option value="differences">只看分歧</option>
+                <option value="short-summary">简短摘要</option>
+              </select>
+            </label>
+            <div class="summary-selected" id="summary-selected">已选择 0 条历史</div>
+            <div class="summary-actions">
+              <button id="btn-summary-cancel" class="summary-secondary" type="button">取消</button>
+              <button id="btn-summary-generate" class="summary-primary" type="button">生成总结</button>
+            </div>
+          </div>
+          <section class="summary-preview" aria-label="已选择历史内容预览">
+            <h3>内容预览</h3>
+            <div id="summary-preview" class="summary-preview-list"></div>
+          </section>
+        </main>
+      </div>
+    </section>
+  </div>
+
   <script type="module" src="./chat.ts"></script>
 </body>
 </html>

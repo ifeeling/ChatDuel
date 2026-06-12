@@ -15,7 +15,7 @@ export type SwToContent =
 export type ContentToSw =
   | { type: 'state'; platform: AIPlatform; state: ConversationState }
   | { type: 'stream-event'; event: StreamEvent }
-  | { type: 'last-response'; text: string }
+  | { type: 'last-response'; platform: AIPlatform; text: string }
 
 export type SwToPopup =
   | { type: 'state-update'; platform: AIPlatform; state: ConversationState }

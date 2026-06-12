@@ -1,4 +1,4 @@
-import type { AIPlatform, Session, SessionAttachment, SessionResponse } from '../types'
+import type { AIPlatform, Session, SessionAttachment, SessionResponse, SessionSummary } from '../types'
 
 export interface CreateSessionRecordInput {
   prompt: string
@@ -12,6 +12,15 @@ export interface CreateSessionRecordInput {
 export interface SendResult {
   p: AIPlatform
   ok: boolean
+}
+
+export interface CreateSummarySessionRecordInput {
+  title: string
+  prompt: string
+  target: AIPlatform
+  summary: SessionSummary
+  now?: number
+  id?: string
 }
 
 function makeId(): string {
@@ -40,6 +49,22 @@ export function createSessionRecord(input: CreateSessionRecordInput): Session {
     attachments: input.attachments ?? [],
     followUps: [],
     summaries: [],
+  }
+}
+
+export function createSummarySessionRecord(input: CreateSummarySessionRecordInput): Session {
+  const now = input.now ?? Date.now()
+  return {
+    id: input.id ?? makeId(),
+    createdAt: now,
+    updatedAt: now,
+    prompt: input.title,
+    sentPrompt: input.prompt,
+    targetPlatforms: [input.target],
+    responses: pendingResponses([input.target]),
+    attachments: [],
+    followUps: [],
+    summaries: [input.summary],
   }
 }
 
@@ -80,4 +105,10 @@ export function applyCapturedResponses(
     updatedAt: now,
     responses,
   }
+}
+
+export function isNewCapturedResponse(text: string | undefined, baseline: string | undefined): boolean {
+  const next = text?.trim() ?? ''
+  if (!next) return false
+  return next !== (baseline?.trim() ?? '')
 }

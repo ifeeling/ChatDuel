@@ -111,6 +111,15 @@ async function waitForUploadReady(maxMs = 3000): Promise<void> {
   }
 }
 
+function hasStopGeneratingButton(): boolean {
+  const candidates = [
+    "button[data-testid='stop-button']",
+    "button[aria-label*='stop' i]",
+    "button[aria-label*='停止' i]",
+  ]
+  return candidates.some((selector) => !!document.querySelector(selector))
+}
+
 export function createChatGPTAdapter(): AIAdapter {
   let lastEventHandler: ((e: StreamEvent) => void) | null = null
   let observer: MutationObserver | null = null
@@ -194,6 +203,8 @@ export function createChatGPTAdapter(): AIAdapter {
 
     getConversationState(): Promise<ConversationState> {
       const lastText = last(S.lastResponse)?.textContent ?? ''
+      if (hasStopGeneratingButton()) return Promise.resolve({ status: 'streaming', lastResponse: lastText })
+      if (q(selectorsJson.selectors.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText })
       if (!lastText) return Promise.resolve({ status: 'idle' })
       return Promise.resolve({ status: 'finished', lastResponse: lastText })
     },

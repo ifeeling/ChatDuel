@@ -19,7 +19,7 @@
 //   - ChatGPT 走原生 <input type=file>,Gemini 走 paste 事件 fallback
 //   - onSend 收集各平台结果,合并 toast;全部/部分失败时复制剪贴板兜底
 
-import type { AIPlatform, Session, SessionAttachment, SessionResponse } from '../types'
+import type { AIPlatform, ConversationState, Session, SessionAttachment, SessionResponse, SessionSummary, SummaryMode } from '../types'
 import {
   FileTooLargeError,
   SUPPORTED_FILE_FORMATS_TEXT,
@@ -36,10 +36,17 @@ import { activePlatforms, getPlatformMeta, shortcutKey, type AIPlatformMeta } fr
 import { detectAtInput, filterCandidates, parseAtMentions } from '../lib/at-parser'
 import { getDefaultTemplates, renderTemplate } from '../lib/prompt-template'
 import { DEFAULT_USER_SETTINGS, loadUserSettings, saveUserSettings, type UserSettings } from '../lib/user-settings'
-import { addSession, deleteSession, loadSessions, updateSession } from '../lib/session-store'
-import { applyCapturedResponses, applySendResults, createSessionRecord } from '../lib/session-record'
+import { addSession, deleteSession, getSession, loadSessions, updateSession } from '../lib/session-store'
+import {
+  applyCapturedResponses,
+  applySendResults,
+  createSessionRecord,
+  createSummarySessionRecord,
+  isNewCapturedResponse,
+} from '../lib/session-record'
 import { formatBytes, formatSessionMarkdown, summarizeSessionTargets } from '../lib/history-format'
 import { buildSummaryPrompt, hasCapturedResponses } from '../lib/summary-builder'
+import { evaluateResponseCapture, type ResponseCaptureProgress } from '../lib/response-capture'
 
 // PLATFORMS 不再硬编码:由 activePlatforms() 从 DOM 派生(HTML 里有几个 panel 就有几个)
 const OFFICIAL_URLS: Record<AIPlatform, string> = {
@@ -86,14 +93,28 @@ const historyOverlay = $<HTMLDivElement>('#history-overlay')
 const btnHistoryClose = $<HTMLButtonElement>('#btn-history-close')
 const historyList = $<HTMLDivElement>('#history-list')
 const historyDetail = $<HTMLDivElement>('#history-detail')
+const summaryOverlay = $<HTMLDivElement>('#summary-overlay')
+const btnSummaryClose = $<HTMLButtonElement>('#btn-summary-close')
+const btnSummaryCancel = $<HTMLButtonElement>('#btn-summary-cancel')
+const btnSummaryGenerate = $<HTMLButtonElement>('#btn-summary-generate')
+const summaryList = $<HTMLDivElement>('#summary-list')
+const summaryTargetSelect = $<HTMLSelectElement>('#summary-target')
+const summaryModeSelect = $<HTMLSelectElement>('#summary-mode')
+const summarySelected = $<HTMLDivElement>('#summary-selected')
+const summaryPreview = $<HTMLDivElement>('#summary-preview')
 const ATTACH_BUTTON_TITLE = `支持：${SUPPORTED_FILE_FORMATS_TEXT}。暂不支持 Word。`
 
 // ---------- 状态 ----------
 const readyMap: Record<AIPlatform, boolean> = { chatgpt: false, gemini: false }
 const readyWaiters: Record<AIPlatform, Array<(ok: boolean) => void>> = { chatgpt: [], gemini: [] }
+const RESPONSE_BACKFILL_INTERVAL_MS = 3000
+const RESPONSE_BACKFILL_MAX_ATTEMPTS = 20
+const RESPONSE_STABLE_REQUIRED_POLLS = 2
 let userSettings: UserSettings = DEFAULT_USER_SETTINGS
 let historySessions: Session[] = []
 let selectedHistoryId: string | null = null
+let summarySessions: Session[] = []
+const selectedSummaryIds: Set<string> = new Set()
 
 // 待发送的附件(仅支持 1 个,后续 attach 会替换)
 interface PendingAttachment {
@@ -392,8 +413,13 @@ function requestLastResponse(p: AIPlatform, timeoutMs = 3000): Promise<string> {
   if (!win) return Promise.resolve('')
   return new Promise<string>((resolve) => {
     const onMsg = (e: MessageEvent) => {
-      const d = e.data as { source?: string; type?: string; text?: string } | undefined
-      if (d?.source === 'aichatroom-content' && d.type === 'last-response') {
+      const d = e.data as { source?: string; type?: string; platform?: AIPlatform; text?: string } | undefined
+      if (
+        e.source === win &&
+        d?.source === 'aichatroom-content' &&
+        d.type === 'last-response' &&
+        d.platform === p
+      ) {
         window.removeEventListener('message', onMsg)
         resolve(d.text ?? '')
       }
@@ -405,6 +431,102 @@ function requestLastResponse(p: AIPlatform, timeoutMs = 3000): Promise<string> {
       resolve('')
     }, timeoutMs)
   })
+}
+
+function requestConversationState(p: AIPlatform, timeoutMs = 3000): Promise<ConversationState> {
+  const win = panelIframe(p).contentWindow
+  if (!win) return Promise.resolve({ status: 'idle' })
+  return new Promise<ConversationState>((resolve) => {
+    const onMsg = (e: MessageEvent) => {
+      const d = e.data as {
+        source?: string
+        type?: string
+        platform?: AIPlatform
+        state?: ConversationState
+      } | undefined
+      if (
+        e.source === win &&
+        d?.source === 'aichatroom-content' &&
+        d.type === 'state' &&
+        d.platform === p &&
+        d.state
+      ) {
+        window.removeEventListener('message', onMsg)
+        resolve(d.state)
+      }
+    }
+    window.addEventListener('message', onMsg)
+    postToIframe(p, 'get-state')
+    setTimeout(() => {
+      window.removeEventListener('message', onMsg)
+      resolve({ status: 'idle' })
+    }, timeoutMs)
+  })
+}
+
+async function captureResponseBaselines(targets: AIPlatform[]): Promise<Partial<Record<AIPlatform, string>>> {
+  const entries = await Promise.all(
+    targets.map(async (platform) => [platform, await requestLastResponse(platform, 1500)] as const),
+  )
+  return Object.fromEntries(entries)
+}
+
+function scheduleSessionResponseBackfill(
+  sessionId: string,
+  platforms: AIPlatform[],
+  baselines: Partial<Record<AIPlatform, string>>,
+  progress: Partial<Record<AIPlatform, ResponseCaptureProgress>> = {},
+  attempt = 0,
+) {
+  if (platforms.length === 0 || attempt >= RESPONSE_BACKFILL_MAX_ATTEMPTS) return
+
+  setTimeout(() => {
+    void backfillSessionResponses(sessionId, platforms, baselines, progress, attempt)
+  }, RESPONSE_BACKFILL_INTERVAL_MS)
+}
+
+async function backfillSessionResponses(
+  sessionId: string,
+  platforms: AIPlatform[],
+  baselines: Partial<Record<AIPlatform, string>>,
+  progress: Partial<Record<AIPlatform, ResponseCaptureProgress>>,
+  attempt: number,
+) {
+  try {
+    const session = await getSession(sessionId)
+    if (!session) return
+
+    const pendingPlatforms = platforms.filter((platform) => {
+      const response = session.responses[platform]
+      return response?.status === 'pending'
+    })
+    if (pendingPlatforms.length === 0) return
+
+    const captured: Partial<Record<AIPlatform, string>> = {}
+    const nextProgress = { ...progress }
+    await Promise.all(pendingPlatforms.map(async (platform) => {
+      const state = await requestConversationState(platform, 1500)
+      const text = state.lastResponse ? state.lastResponse : await requestLastResponse(platform, 1500)
+      const decision = evaluateResponseCapture(
+        { text, status: state.status },
+        baselines[platform],
+        progress[platform],
+        RESPONSE_STABLE_REQUIRED_POLLS,
+      )
+      nextProgress[platform] = decision.progress
+      if (decision.shouldCapture && isNewCapturedResponse(decision.text, baselines[platform])) {
+        captured[platform] = decision.text
+      }
+    }))
+
+    const updated = applyCapturedResponses(session, captured)
+    if (updated !== session) await updateSession(updated)
+
+    const remaining = pendingPlatforms.filter((platform) => !captured[platform])
+    scheduleSessionResponseBackfill(sessionId, remaining, baselines, nextProgress, attempt + 1)
+  } catch (e) {
+    console.error('[AIChatRoom chat] response backfill failed', e)
+  }
 }
 
 window.addEventListener('message', (e: MessageEvent) => {
@@ -500,6 +622,8 @@ async function onSend() {
     currentSession = null
   }
 
+  const responseBaselines = await captureResponseBaselines(targets)
+
   // 2. 发文字 + 附件到 iframe(由 content script 交给 adapter)。
   // 给每个目标发;分别等结果(不阻塞,但用 Promise 收集成功/失败)
   const results: Array<{ p: AIPlatform; ok: boolean }> = []
@@ -546,6 +670,11 @@ async function onSend() {
     try {
       currentSession = applySendResults(currentSession, results)
       await updateSession(currentSession)
+      scheduleSessionResponseBackfill(
+        currentSession.id,
+        results.filter((r) => r.ok).map((r) => r.p),
+        responseBaselines,
+      )
     } catch (e) {
       console.error('[AIChatRoom chat] failed to update session history', e)
     }
@@ -911,8 +1040,14 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform) {
     if (!srcWin) throw new Error('源 iframe 不可用')
     const srcState = await new Promise<{ status: string }>((resolve) => {
       const onMsg = (e: MessageEvent) => {
-        const d = e.data as { source?: string; type?: string; state?: { status: string } } | undefined
-        if (d?.source === 'aichatroom-content' && d.type === 'state' && d.state) {
+        const d = e.data as { source?: string; type?: string; platform?: AIPlatform; state?: { status: string } } | undefined
+        if (
+          e.source === srcWin &&
+          d?.source === 'aichatroom-content' &&
+          d.type === 'state' &&
+          d.platform === sourceKey &&
+          d.state
+        ) {
           window.removeEventListener('message', onMsg)
           resolve(d.state)
         }
@@ -933,8 +1068,13 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform) {
     // 2. 取源回答
     const content = await new Promise<string>((resolve) => {
       const onMsg = (e: MessageEvent) => {
-        const d = e.data as { source?: string; type?: string; text?: string } | undefined
-        if (d?.source === 'aichatroom-content' && d.type === 'last-response') {
+        const d = e.data as { source?: string; type?: string; platform?: AIPlatform; text?: string } | undefined
+        if (
+          e.source === srcWin &&
+          d?.source === 'aichatroom-content' &&
+          d.type === 'last-response' &&
+          d.platform === sourceKey
+        ) {
           window.removeEventListener('message', onMsg)
           resolve(d.text ?? '')
         }
@@ -959,8 +1099,14 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform) {
       try {
         const tgtState = await new Promise<{ status: string } | null>((resolve) => {
           const onMsg = (e: MessageEvent) => {
-            const d = e.data as { source?: string; type?: string; state?: { status: string } } | undefined
-            if (d?.source === 'aichatroom-content' && d.type === 'state' && d.state) {
+            const d = e.data as { source?: string; type?: string; platform?: AIPlatform; state?: { status: string } } | undefined
+            if (
+              e.source === tgtWin &&
+              d?.source === 'aichatroom-content' &&
+              d.type === 'state' &&
+              d.platform === targetKey &&
+              d.state
+            ) {
               window.removeEventListener('message', onMsg)
               resolve(d.state)
             }
@@ -1118,6 +1264,9 @@ function renderHistoryDetail(session?: Session) {
   header.append(headingWrap, actions)
   historyDetail.appendChild(header)
 
+  if (session.summaries.length > 0 && session.prompt.startsWith('【总结】')) {
+    appendHistorySection('总结信息', formatSummaryHistoryInfo(session.summaries[0]))
+  }
   appendHistorySection('用户问题', session.prompt || '空')
   if (session.sentPrompt && session.sentPrompt !== session.prompt) {
     appendHistorySection('实际发送内容', session.sentPrompt)
@@ -1145,6 +1294,18 @@ function appendHistorySection(titleText: string, bodyText: string) {
   body.textContent = bodyText
   section.append(title, body)
   historyDetail.appendChild(section)
+}
+
+function formatSummaryHistoryInfo(summary: SessionSummary): string {
+  const targetLabel = getPlatformMeta(summary.target)?.label ?? summary.target
+  const modeLabel = SUMMARY_MODE_LABELS[summary.mode]
+  const sourceCount = summary.sourceSessionIds.length
+  return [
+    `总结目标：${targetLabel}`,
+    `总结方式：${modeLabel}`,
+    `来源历史：${sourceCount} 条`,
+    `发送时间：${formatTime(summary.sentAt ?? summary.timestamp)}`,
+  ].join('\n')
 }
 
 function appendAttachmentSection(attachments: SessionAttachment[]) {
@@ -1220,6 +1381,12 @@ function closeHistory() {
   historyOverlay.hidden = true
 }
 
+const SUMMARY_MODE_LABELS: Record<SummaryMode, string> = {
+  'final-answer': '最终结论',
+  differences: '只看分歧',
+  'short-summary': '简短摘要',
+}
+
 function pickSummaryTarget(): AIPlatform | null {
   const active = activePlatforms()
   if (active.includes('chatgpt')) return 'chatgpt'
@@ -1227,42 +1394,233 @@ function pickSummaryTarget(): AIPlatform | null {
   return null
 }
 
-async function getLatestSessionForSummary(): Promise<Session | null> {
-  const sessions = (await loadSessions()).sort((a, b) => b.createdAt - a.createdAt)
-  if (!sessions[0]) return null
-  return refreshSessionResponses(sessions[0])
+function renderSummaryTargets() {
+  summaryTargetSelect.innerHTML = ''
+  for (const platform of activePlatforms()) {
+    const option = document.createElement('option')
+    option.value = platform
+    option.textContent = getPlatformMeta(platform)?.label ?? platform
+    summaryTargetSelect.appendChild(option)
+  }
+  const preferred = pickSummaryTarget()
+  if (preferred) summaryTargetSelect.value = preferred
 }
 
-// ---------- 工具按钮(暂作占位) ----------
-// 转移按钮(panel header 上的 .panel-transfer)由 setupTransferButtons() 单独绑定(动态 target)
-async function onSummary() {
-  const target = pickSummaryTarget()
+function renderSummaryList() {
+  summaryList.innerHTML = ''
+  if (summarySessions.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'history-empty'
+    empty.textContent = '还没有历史记录'
+    summaryList.appendChild(empty)
+    updateSummarySelectedCount()
+    return
+  }
+
+  for (const session of summarySessions) {
+    const item = document.createElement('label')
+    item.className = 'summary-item'
+
+    const checkbox = document.createElement('input')
+    checkbox.type = 'checkbox'
+    checkbox.value = session.id
+    checkbox.checked = selectedSummaryIds.has(session.id)
+
+    const content = document.createElement('span')
+    const title = document.createElement('span')
+    title.className = 'summary-item-title'
+    title.textContent = compactText(session.prompt)
+    const meta = document.createElement('span')
+    meta.className = 'summary-item-meta'
+    meta.textContent = formatTime(session.createdAt)
+    const targets = document.createElement('span')
+    targets.className = 'summary-item-targets'
+    targets.textContent = summarizeSessionTargets(session)
+
+    content.append(title, meta, targets)
+    item.append(checkbox, content)
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) selectedSummaryIds.add(session.id)
+      else selectedSummaryIds.delete(session.id)
+      updateSummarySelectedCount()
+    })
+    summaryList.appendChild(item)
+  }
+  updateSummarySelectedCount()
+}
+
+function updateSummarySelectedCount() {
+  summarySelected.textContent = `已选择 ${selectedSummaryIds.size} 条历史`
+  btnSummaryGenerate.disabled = selectedSummaryIds.size === 0
+  renderSummaryPreview()
+}
+
+function renderSummaryPreview() {
+  summaryPreview.innerHTML = ''
+  const sessions = selectedSummarySessions().sort((a, b) => b.createdAt - a.createdAt)
+  if (sessions.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'summary-preview-empty'
+    empty.textContent = '勾选左侧历史后，这里会显示具体聊天内容'
+    summaryPreview.appendChild(empty)
+    return
+  }
+
+  for (const session of sessions) {
+    const card = document.createElement('article')
+    card.className = 'summary-preview-card'
+
+    const header = document.createElement('header')
+    header.className = 'summary-preview-card-header'
+    const title = document.createElement('h4')
+    title.className = 'summary-preview-title'
+    title.textContent = compactText(session.prompt, 90)
+    const meta = document.createElement('div')
+    meta.className = 'summary-preview-meta'
+    meta.textContent = `${formatTime(session.createdAt)} · ${summarizeSessionTargets(session)}`
+    header.append(title, meta)
+    card.appendChild(header)
+
+    appendSummaryPreviewSection(card, '用户问题', session.prompt || '空')
+    if (session.sentPrompt && session.sentPrompt !== session.prompt) {
+      appendSummaryPreviewSection(card, '实际发送内容', session.sentPrompt)
+    }
+    for (const platform of session.targetPlatforms) {
+      const label = getPlatformMeta(platform)?.label ?? platform
+      const response = session.responses[platform]
+      const text = response?.status === 'captured' && response.text.trim()
+        ? response.text
+        : responseLabel(response)
+      appendSummaryPreviewSection(card, `${label} 回答`, text)
+    }
+
+    summaryPreview.appendChild(card)
+  }
+}
+
+function appendSummaryPreviewSection(card: HTMLElement, titleText: string, bodyText: string) {
+  const section = document.createElement('section')
+  section.className = 'summary-preview-section'
+  const title = document.createElement('h4')
+  title.textContent = titleText
+  const body = document.createElement('pre')
+  body.className = 'summary-preview-text'
+  body.textContent = truncatePreviewText(bodyText)
+  section.append(title, body)
+  card.appendChild(section)
+}
+
+function truncatePreviewText(text: string, max = 1200): string {
+  const normalized = text.trim() || '空'
+  return normalized.length > max ? `${normalized.slice(0, max)}\n\n……内容较长，生成总结时会使用完整内容。` : normalized
+}
+
+async function openSummaryDialog() {
+  summaryOverlay.hidden = false
+  summaryList.innerHTML = '<div class="history-empty">正在读取历史记录…</div>'
+  selectedSummaryIds.clear()
+  renderSummaryTargets()
+  summaryModeSelect.value = 'final-answer'
+
+  summarySessions = (await loadSessions()).sort((a, b) => b.createdAt - a.createdAt)
+  if (summarySessions[0]) {
+    const refreshed = await refreshSessionResponses(summarySessions[0])
+    summarySessions = summarySessions.map((s) => (s.id === refreshed.id ? refreshed : s))
+    selectedSummaryIds.add(refreshed.id)
+  }
+  renderSummaryList()
+}
+
+function closeSummaryDialog() {
+  summaryOverlay.hidden = true
+}
+
+function selectedSummarySessions(): Session[] {
+  return summarySessions
+    .filter((session) => selectedSummaryIds.has(session.id))
+    .sort((a, b) => a.createdAt - b.createdAt)
+}
+
+function summarySessionTitle(sessions: Session[], mode: SummaryMode): string {
+  const firstPrompt = compactText(sessions[0]?.prompt ?? '历史记录', 56)
+  const modeLabel = SUMMARY_MODE_LABELS[mode]
+  const countLabel = sessions.length > 1 ? `${firstPrompt} 等 ${sessions.length} 条` : firstPrompt
+  return `【总结】${modeLabel} · ${countLabel}`
+}
+
+async function onGenerateSummary() {
+  const target = summaryTargetSelect.value as AIPlatform
   if (!target) {
     showToast('没有可用的总结目标 AI', 'warn')
     return
   }
 
-  btnSummary.disabled = true
-  try {
-    const session = await getLatestSessionForSummary()
-    if (!session) {
-      showToast('还没有历史记录可总结', 'warn')
-      return
-    }
-    if (!hasCapturedResponses(session)) {
-      showToast('这条历史还没有可用回答,等 AI 回答完成后再试', 'warn', 4000)
-      return
-    }
+  const sessions = selectedSummarySessions()
+  if (sessions.length === 0) {
+    showToast('请至少选择一条历史记录', 'warn')
+    return
+  }
+  const incomplete = sessions.filter((session) => !hasCapturedResponses(session))
+  if (incomplete.length > 0) {
+    showToast(`有 ${incomplete.length} 条历史还没有可用回答,等 AI 回答完成后再试`, 'warn', 5000)
+    return
+  }
 
-    const prompt = buildSummaryPrompt(userSettings.promptTemplates.summary, session)
+  const mode = summaryModeSelect.value as SummaryMode
+  const prompt = buildSummaryPrompt(userSettings.promptTemplates.summary, sessions, {
+    targetLabel: getPlatformMeta(target)?.label ?? target,
+    modeLabel: SUMMARY_MODE_LABELS[mode],
+  })
+  const summary: SessionSummary = {
+    id: `summary-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    target,
+    range: 'manual',
+    mode,
+    prompt,
+    status: 'sent',
+    sourceSessionIds: sessions.map((session) => session.id),
+    timestamp: Date.now(),
+    sentAt: Date.now(),
+  }
+
+  btnSummaryGenerate.disabled = true
+  try {
+    const summaryBaselines = await captureResponseBaselines([target])
+    const summarySession = createSummarySessionRecord({
+      title: summarySessionTitle(sessions, mode),
+      prompt,
+      target,
+      summary,
+    })
+    await addSession(summarySession)
+
+    for (const session of sessions) {
+      await updateSession({
+        ...session,
+        summaries: [summary, ...(session.summaries ?? [])],
+        updatedAt: Date.now(),
+      })
+    }
     postToIframe(target, 'write-and-send', { text: prompt })
+    scheduleSessionResponseBackfill(summarySession.id, [target], summaryBaselines)
+    closeSummaryDialog()
     showToast(`已发送总结请求到 ${getPlatformMeta(target)?.label ?? target}`, 'success', 1800)
   } catch (e) {
     console.error('[AIChatRoom chat] summary failed', e)
     showToast(`总结失败: ${e instanceof Error ? e.message : String(e)}`, 'err', 5000)
   } finally {
-    btnSummary.disabled = activePlatforms().length < 2
+    updateSummarySelectedCount()
   }
+}
+
+// ---------- 工具按钮(暂作占位) ----------
+// 转移按钮(panel header 上的 .panel-transfer)由 setupTransferButtons() 单独绑定(动态 target)
+async function onSummary() {
+  if (activePlatforms().length === 0) {
+    showToast('没有可用的总结目标 AI', 'warn')
+    return
+  }
+  await openSummaryDialog()
 }
 function onQuote() { console.log('[AIChatRoom chat] quote: not implemented yet') }
 function onHistory() { void openHistory() }
@@ -1365,6 +1723,12 @@ function bindEvents() {
   inputEl.addEventListener('dragover', (e) => e.preventDefault())
 
   btnSummary.addEventListener('click', onSummary)
+  btnSummaryClose.addEventListener('click', closeSummaryDialog)
+  btnSummaryCancel.addEventListener('click', closeSummaryDialog)
+  btnSummaryGenerate.addEventListener('click', () => void onGenerateSummary())
+  summaryOverlay.addEventListener('click', (e) => {
+    if (e.target === summaryOverlay) closeSummaryDialog()
+  })
   btnQuote.addEventListener('click', onQuote)
   btnHistory.addEventListener('click', onHistory)
   btnHistoryClose.addEventListener('click', closeHistory)
@@ -1391,6 +1755,7 @@ function bindEvents() {
     if (e.target === settingsOverlay) closeSettings()
   })
   window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !summaryOverlay.hidden) closeSummaryDialog()
     if (e.key === 'Escape' && !settingsOverlay.hidden) closeSettings()
   })
 

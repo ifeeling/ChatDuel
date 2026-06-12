@@ -32,7 +32,7 @@ window.addEventListener('message', (e: MessageEvent) => {
     if (data.action === 'get-state') {
       adapter.getConversationState().then((state) => {
         e.source?.postMessage(
-          { source: 'aichatroom-content', type: 'state', state },
+          { source: 'aichatroom-content', type: 'state', platform: 'chatgpt', state },
           { targetOrigin: '*' },
         )
       })
@@ -41,7 +41,7 @@ window.addEventListener('message', (e: MessageEvent) => {
     if (data.action === 'get-last-response') {
       adapter.getLastResponse().then((text) => {
         e.source?.postMessage(
-          { source: 'aichatroom-content', type: 'last-response', text },
+          { source: 'aichatroom-content', type: 'last-response', platform: 'chatgpt', text },
           { targetOrigin: '*' },
         )
       })
@@ -100,7 +100,7 @@ chrome.runtime.onMessage.addListener((msg: SwToContent, _sender, sendResponse) =
     adapter
       .getLastResponse()
       .then((text) => {
-        const reply: ContentToSw = { type: 'last-response', text }
+        const reply: ContentToSw = { type: 'last-response', platform: 'chatgpt' as AIPlatform, text }
         sendResponse(reply)
       })
     return true

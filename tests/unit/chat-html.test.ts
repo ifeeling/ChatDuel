@@ -16,4 +16,15 @@ describe('chat.html', () => {
       expect(allow).toContain('clipboard-write')
     }
   })
+
+  it('renders summary dialog controls', () => {
+    document.body.innerHTML = html
+
+    expect(document.querySelector('#summary-overlay')).toBeTruthy()
+    expect(document.querySelector('#summary-list')).toBeTruthy()
+    expect(document.querySelector('#summary-target')).toBeTruthy()
+    expect(document.querySelector('#summary-mode')).toBeTruthy()
+    expect(document.querySelector('#summary-preview')).toBeTruthy()
+    expect(document.querySelector('#btn-summary-generate')).toBeTruthy()
+  })
 })

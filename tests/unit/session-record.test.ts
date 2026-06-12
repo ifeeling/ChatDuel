@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { applyCapturedResponses, applySendResults, createSessionRecord } from '../../src/lib/session-record'
+import {
+  applyCapturedResponses,
+  applySendResults,
+  createSessionRecord,
+  createSummarySessionRecord,
+  isNewCapturedResponse,
+} from '../../src/lib/session-record'
 
 describe('session-record', () => {
   it('creates a session with target platforms and pending responses', () => {
@@ -66,5 +72,41 @@ describe('session-record', () => {
       status: 'captured',
       capturedAt: 3000,
     })
+  })
+
+  it('detects whether a captured response is newer than the baseline', () => {
+    expect(isNewCapturedResponse('新的回答', '旧的回答')).toBe(true)
+    expect(isNewCapturedResponse('旧的回答', '旧的回答')).toBe(false)
+    expect(isNewCapturedResponse('   ', '旧的回答')).toBe(false)
+  })
+
+  it('creates a visible summary session with pending response', () => {
+    const summary = {
+      id: 'sum1',
+      target: 'chatgpt' as const,
+      range: 'manual' as const,
+      mode: 'final-answer' as const,
+      prompt: '总结提示词',
+      status: 'sent' as const,
+      sourceSessionIds: ['s1', 's2'],
+      timestamp: 1000,
+      sentAt: 1000,
+    }
+
+    const session = createSummarySessionRecord({
+      title: '【总结】两个问题',
+      prompt: '总结提示词',
+      target: 'chatgpt',
+      summary,
+      now: 2000,
+      id: 'summary-session',
+    })
+
+    expect(session.id).toBe('summary-session')
+    expect(session.prompt).toBe('【总结】两个问题')
+    expect(session.sentPrompt).toBe('总结提示词')
+    expect(session.targetPlatforms).toEqual(['chatgpt'])
+    expect(session.responses.chatgpt?.status).toBe('pending')
+    expect(session.summaries).toEqual([summary])
   })
 })

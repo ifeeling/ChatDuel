@@ -20,9 +20,14 @@ export function hasCapturedResponses(session: Session): boolean {
   })
 }
 
-export function buildHistoryBlock(session: Session): string {
+export function buildHistoryBlock(sessionOrSessions: Session | Session[]): string {
+  const sessions = Array.isArray(sessionOrSessions) ? sessionOrSessions : [sessionOrSessions]
+  return sessions.map((session, index) => buildSingleHistoryBlock(session, index + 1)).join('\n\n')
+}
+
+function buildSingleHistoryBlock(session: Session, round: number): string {
   const parts: string[] = [
-    '### 第 1 轮',
+    `### 第 ${round} 轮`,
     '',
     '【用户问题】',
     session.sentPrompt || session.prompt || '空',
@@ -37,11 +42,17 @@ export function buildHistoryBlock(session: Session): string {
   return parts.join('\n').trim()
 }
 
-export function buildSummaryPrompt(template: string, session: Session): string {
+export interface SummaryPromptOptions {
+  targetLabel?: string
+  modeLabel?: string
+}
+
+export function buildSummaryPrompt(template: string, sessionOrSessions: Session | Session[], options: SummaryPromptOptions = {}): string {
+  const sessions = Array.isArray(sessionOrSessions) ? sessionOrSessions : [sessionOrSessions]
   return renderTemplate(template, {
-    historyBlock: buildHistoryBlock(session),
-    targetLabel: 'AI',
-    rangeLabel: '最近 1 轮',
-    modeLabel: '最终结论',
+    historyBlock: buildHistoryBlock(sessions),
+    targetLabel: options.targetLabel ?? 'AI',
+    rangeLabel: sessions.length === 1 ? '已选择 1 条历史' : `已选择 ${sessions.length} 条历史`,
+    modeLabel: options.modeLabel ?? '最终结论',
   })
 }
