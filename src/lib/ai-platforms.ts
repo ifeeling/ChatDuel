@@ -73,7 +73,7 @@ export const AI_PLATFORMS: Record<AIPlatform, AIPlatformMeta> = {
     url: 'https://www.doubao.com/chat/',
     capabilities: {
       supportsEmbed: true,
-      supportsText: false,
+      supportsText: true,
       supportsImageUpload: false,
       supportsFileUpload: false,
       supportsLastResponse: false,

@@ -1,7 +1,9 @@
 import type { ContentToSw, SwToContent } from '../shared/messages'
 import type { AIPlatform, ConversationState } from '../types'
+import { createDoubaoAdapter } from '../adapters/doubao/adapter'
 
 const PLATFORM: AIPlatform = 'doubao'
+const adapter = createDoubaoAdapter()
 
 function hasUsableComposer(): boolean {
   return !!document.querySelector([
@@ -55,14 +57,47 @@ window.addEventListener('message', (e: MessageEvent) => {
   if (!data || data.source !== 'aichatroom-parent') return
 
   if (data.action === 'get-state') {
-    replyToParent(e, getProbeState())
+    adapter.getConversationState()
+      .then((state) => replyToParent(e, state.status === 'error' ? getProbeState() : state))
+      .catch(() => replyToParent(e, getProbeState()))
+    return
+  }
+  if (data.action === 'write-and-send') {
+    const text = (data as { text?: string }).text ?? ''
+    adapter.sendMessage(text)
+      .then(() => {
+        e.source?.postMessage(
+          { source: 'aichatroom-content', event: 'result', action: 'write-and-send', platform: PLATFORM, ok: true },
+          { targetOrigin: '*' },
+        )
+      })
+      .catch((err: unknown) => {
+        e.source?.postMessage(
+          {
+            source: 'aichatroom-content',
+            event: 'result',
+            action: 'write-and-send',
+            platform: PLATFORM,
+            ok: false,
+            error: String(err),
+          },
+          { targetOrigin: '*' },
+        )
+      })
   }
 })
 
 chrome.runtime.onMessage.addListener((msg: SwToContent, _sender, sendResponse) => {
   if (msg.type === 'get-state') {
-    const reply: ContentToSw = { type: 'state', platform: PLATFORM, state: getProbeState() }
-    sendResponse(reply)
+    adapter.getConversationState()
+      .then((state) => {
+        const reply: ContentToSw = { type: 'state', platform: PLATFORM, state: state.status === 'error' ? getProbeState() : state }
+        sendResponse(reply)
+      })
+      .catch(() => {
+        const reply: ContentToSw = { type: 'state', platform: PLATFORM, state: getProbeState() }
+        sendResponse(reply)
+      })
     return true
   }
   if (msg.type === 'get-last-response') {
@@ -71,7 +106,10 @@ chrome.runtime.onMessage.addListener((msg: SwToContent, _sender, sendResponse) =
     return true
   }
   if (msg.type === 'write-and-send') {
-    sendResponse({ ok: false, error: '豆包文本发送尚未接入' })
+    adapter
+      .sendMessage(msg.text)
+      .then(() => sendResponse({ ok: true }))
+      .catch((e: unknown) => sendResponse({ ok: false, error: String(e) }))
     return true
   }
   return false
