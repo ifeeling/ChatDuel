@@ -27,4 +27,20 @@ describe('chat.html', () => {
     expect(document.querySelector('#summary-preview')).toBeTruthy()
     expect(document.querySelector('#btn-summary-generate')).toBeTruthy()
   })
+
+  it('keeps primary controls compact for split-screen use', () => {
+    document.body.innerHTML = html
+
+    expect(document.querySelector('.topbar')).toBeNull()
+    expect(document.querySelectorAll('#btn-quote')).toHaveLength(1)
+    expect(document.querySelectorAll('#btn-summary')).toHaveLength(1)
+    expect(document.querySelectorAll('#btn-history')).toHaveLength(1)
+    expect(document.querySelector('.composer-input #btn-quote')).toBeTruthy()
+    expect(document.querySelector('.composer-input #btn-summary')).toBeTruthy()
+    expect(document.querySelector('.composer-input #btn-history')).toBeTruthy()
+
+    for (const panel of document.querySelectorAll<HTMLElement>('.panel')) {
+      expect(panel.querySelector('.panel-title-wrap .status-item')).toBeTruthy()
+    }
+  })
 })

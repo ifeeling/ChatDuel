@@ -66,6 +66,7 @@ const panelIframe = (p: AIPlatform): HTMLIFrameElement =>
 const inputEl = $<HTMLTextAreaElement>('#input')
 const sendBtn = $<HTMLButtonElement>('#btn-send')
 const composer = $<HTMLElement>('.composer')
+const composerToolbar = $<HTMLDivElement>('.composer-toolbar')
 const btnQuote = $<HTMLButtonElement>('#btn-quote')
 const btnSummary = $<HTMLButtonElement>('#btn-summary')
 const btnHistory = $<HTMLButtonElement>('#btn-history')
@@ -138,6 +139,10 @@ let atPopupAnchor: { start: number; length: number } | null = null
 
 const atChipsEl = $<HTMLDivElement>('#at-chips')
 const atPopupEl = $<HTMLDivElement>('#at-popup')
+
+function updateComposerToolbarVisibility() {
+  composerToolbar.classList.toggle('has-content', !atChipsEl.hidden || !imagePreview.hidden)
+}
 
 function setStatus(p: AIPlatform, state: 'ok' | 'err' | 'warn', text: string) {
   const dot = statusDot(p)
@@ -346,6 +351,7 @@ async function acceptFile(file: File) {
 
   imageMeta.textContent = `${file.name || 'file'} · ${(file.size / 1024).toFixed(0)}KB`
   imagePreview.hidden = false
+  updateComposerToolbarVisibility()
   btnImage.classList.add('has-image')
   btnImage.title = `已附加文件: ${file.name || 'file'} — 点击替换`
   showToast(classification.handling === 'inline-text' ? '文本文件已附加' : '文件已附加', 'success', 1500)
@@ -361,6 +367,7 @@ function clearAttachment() {
   previewImg.hidden = false
   imageMeta.textContent = ''
   imagePreview.hidden = true
+  updateComposerToolbarVisibility()
   btnImage.classList.remove('has-image')
   btnImage.title = ATTACH_BUTTON_TITLE
   if (fileInput) fileInput.value = ''
@@ -721,9 +728,11 @@ function renderChips() {
   if (atSelected.size === 0) {
     atChipsEl.hidden = true
     atChipsEl.innerHTML = ''
+    updateComposerToolbarVisibility()
     return
   }
   atChipsEl.hidden = false
+  updateComposerToolbarVisibility()
   atChipsEl.innerHTML = ''
   for (const p of atSelected) {
     const meta = getPlatformMeta(p)
@@ -1669,21 +1678,45 @@ function onDrop(e: DragEvent) {
 // ---------- 分隔条拖拽 ----------
 function setupSplitter() {
   let dragging = false
+  let startX = 0
+  let leftStartWidth = 0
+  let rightStartWidth = 0
+  let leftPanel: HTMLElement | null = null
+  let rightPanel: HTMLElement | null = null
+
   splitter.addEventListener('mousedown', (e) => {
+    const previous = splitter.previousElementSibling
+    const next = splitter.nextElementSibling
+    if (!(previous instanceof HTMLElement) || !(next instanceof HTMLElement)) return
+    leftPanel = previous.closest<HTMLElement>('.panel')
+    rightPanel = next.closest<HTMLElement>('.panel')
+    if (!leftPanel || !rightPanel) return
+
     dragging = true
+    startX = e.clientX
+    leftStartWidth = leftPanel.getBoundingClientRect().width
+    rightStartWidth = rightPanel.getBoundingClientRect().width
     splitter.classList.add('dragging')
     e.preventDefault()
   })
   window.addEventListener('mousemove', (e) => {
-    if (!dragging) return
-    const panels = document.querySelector<HTMLElement>('.panels')!
-    const leftPanel = document.querySelector<HTMLElement>('.panel[data-platform="gemini"]')!
-    const ratio = Math.max(0.15, Math.min(0.85, e.clientX / panels.clientWidth))
-    leftPanel.style.flex = `0 0 ${ratio * 100}%`
+    if (!dragging || !leftPanel || !rightPanel) return
+    const total = leftStartWidth + rightStartWidth
+    if (total <= 0) return
+
+    const delta = e.clientX - startX
+    const minWidth = 240
+    const leftWidth = Math.max(minWidth, Math.min(total - minWidth, leftStartWidth + delta))
+    const rightWidth = total - leftWidth
+
+    leftPanel.style.flex = `0 0 ${leftWidth}px`
+    rightPanel.style.flex = `0 0 ${rightWidth}px`
   })
   window.addEventListener('mouseup', () => {
     if (dragging) {
       dragging = false
+      leftPanel = null
+      rightPanel = null
       splitter.classList.remove('dragging')
     }
   })

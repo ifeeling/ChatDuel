@@ -8,25 +8,15 @@
 </head>
 <body>
   <div class="app">
-    <header class="topbar">
-      <h1 class="brand">AIChatRoom</h1>
-      <div class="status" id="status">
-        <span class="status-item" data-platform="chatgpt">
-          <span class="dot"></span>ChatGPT:<span class="status-text">检测中…</span>
-        </span>
-        <span class="status-item" data-platform="gemini">
-          <span class="dot"></span>Gemini:<span class="status-text">检测中…</span>
-        </span>
-      </div>
-      <div class="topbar-actions">
-        <button id="btn-refresh" title="刷新状态">↻</button>
-      </div>
-    </header>
-
     <main class="panels">
       <section class="panel" data-platform="gemini">
         <header class="panel-header">
-          <span class="panel-title">Gemini</span>
+          <span class="panel-title-wrap">
+            <span class="panel-title">Gemini</span>
+            <span class="status-item" data-platform="gemini">
+              <span class="dot"></span><span class="status-text">检测中…</span>
+            </span>
+          </span>
           <button class="panel-transfer" data-platform="gemini" title="把这里的回答转移到其它 AI">转移 ➔</button>
           <button class="panel-open" data-platform="gemini" title="在新标签页打开官方页面">↗</button>
         </header>
@@ -37,7 +27,12 @@
 
       <section class="panel" data-platform="chatgpt">
         <header class="panel-header">
-          <span class="panel-title">ChatGPT</span>
+          <span class="panel-title-wrap">
+            <span class="panel-title">ChatGPT</span>
+            <span class="status-item" data-platform="chatgpt">
+              <span class="dot"></span><span class="status-text">检测中…</span>
+            </span>
+          </span>
           <button class="panel-transfer" data-platform="chatgpt" title="把这里的回答转移到其它 AI">转移 ➔</button>
           <button class="panel-open" data-platform="chatgpt" title="在新标签页打开官方页面">↗</button>
         </header>
@@ -53,13 +48,14 @@
           <span class="image-meta" id="image-meta"></span>
           <button id="btn-image-remove" title="移除图片" type="button">×</button>
         </span>
-        <button id="btn-quote" disabled title="引用上一轮回答">引用</button>
-        <button id="btn-summary" title="对比总结">总结</button>
-        <button id="btn-history" title="查看历史">历史</button>
       </div>
       <div class="composer-input">
         <button id="btn-settings" class="input-tool-btn" title="设置" type="button" aria-label="设置">⚙</button>
         <button id="btn-image" class="input-add-btn" title="支持：图片、TXT、Markdown、CSV、PDF、Excel（XLSX）。暂不支持 Word。">+</button>
+        <button id="btn-quote" class="input-action-btn" disabled title="引用上一轮回答" type="button">引用</button>
+        <button id="btn-summary" class="input-action-btn" title="对比总结" type="button">总结</button>
+        <button id="btn-history" class="input-action-btn" title="查看历史" type="button">历史</button>
+        <button id="btn-refresh" class="input-tool-btn compact" title="刷新状态" type="button" aria-label="刷新状态">↻</button>
         <input type="file" id="file-input" accept="image/*,.txt,.md,.csv,.pdf,.xlsx" hidden>
         <textarea id="input" rows="1"
           placeholder="在这里输入你的问题 或 输入 @ 和指定AI对话... (Ctrl+V 粘贴图片)"></textarea>
