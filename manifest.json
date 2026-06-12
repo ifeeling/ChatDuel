@@ -20,7 +20,9 @@
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
-    "https://gemini.google.com/*"
+    "https://gemini.google.com/*",
+    "https://doubao.com/*",
+    "https://www.doubao.com/*"
   ],
   "content_scripts": [
     {
@@ -39,6 +41,17 @@
       ],
       "js": [
         "src/content-scripts/gemini-content.ts"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "https://doubao.com/*",
+        "https://www.doubao.com/*"
+      ],
+      "js": [
+        "src/content-scripts/doubao-content.ts"
       ],
       "run_at": "document_idle",
       "all_frames": true

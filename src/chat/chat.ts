@@ -202,6 +202,16 @@ function platformUrl(p: AIPlatform): string {
   return getPlatformMeta(p)?.url ?? 'about:blank'
 }
 
+function platformOrigin(p: AIPlatform): string {
+  const url = platformUrl(p)
+  if (url === 'about:blank') return '*'
+  try {
+    return new URL(url).origin
+  } catch {
+    return '*'
+  }
+}
+
 function platformStatusItem(p: AIPlatform): HTMLElement | null {
   return document.querySelector<HTMLElement>(`.status-item[data-platform="${p}"]`)
 }
@@ -462,8 +472,18 @@ async function refreshAllStatuses() {
       iframe.src = platformUrl(p)
     }
     const ok = await waitForIframeReady(p)
-    if (ok) setStatus(p, 'ok', '已打开')
-    else setStatus(p, 'err', '加载超时')
+    if (ok) {
+      const capabilities = getPlatformCapabilities(p)
+      if (capabilities.supportsText) {
+        setStatus(p, 'ok', '已打开')
+      } else {
+        const state = await requestConversationState(p, 1000)
+        if (state.status === 'error') setStatus(p, 'warn', state.errorMessage ?? '需检查')
+        else setStatus(p, 'ok', '已打开')
+      }
+    } else {
+      setStatus(p, 'err', '加载超时')
+    }
   }
 }
 
@@ -471,7 +491,7 @@ async function refreshAllStatuses() {
 function postToIframe(p: AIPlatform, action: string, extra: Record<string, unknown> = {}) {
   const win = panelIframe(p).contentWindow
   if (!win) return
-  win.postMessage({ source: 'aichatroom-parent', action, ...extra }, platformUrl(p))
+  win.postMessage({ source: 'aichatroom-parent', action, ...extra }, platformOrigin(p))
 }
 
 function requestLastResponse(p: AIPlatform, timeoutMs = 3000): Promise<string> {
@@ -1133,7 +1153,7 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform) {
       window.addEventListener('message', onMsg)
       srcWin.postMessage(
         { source: 'aichatroom-parent', action: 'get-state' },
-        platformUrl(sourceKey),
+        platformOrigin(sourceKey),
       )
       setTimeout(() => { window.removeEventListener('message', onMsg); resolve({ status: 'unknown' }) }, 2000)
     })
@@ -1160,7 +1180,7 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform) {
       window.addEventListener('message', onMsg)
       srcWin.postMessage(
         { source: 'aichatroom-parent', action: 'get-last-response' },
-        platformUrl(sourceKey),
+        platformOrigin(sourceKey),
       )
       setTimeout(() => { window.removeEventListener('message', onMsg); resolve('') }, 3000)
     })
@@ -1192,7 +1212,7 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform) {
           window.addEventListener('message', onMsg)
           tgtWin.postMessage(
             { source: 'aichatroom-parent', action: 'get-state' },
-            platformUrl(targetKey),
+            platformOrigin(targetKey),
           )
           setTimeout(() => { window.removeEventListener('message', onMsg); resolve(null) }, 50)
         })
@@ -1219,7 +1239,7 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform) {
     showToast(`正在把 ${fromLabel} 的回答转移到 ${getPlatformMeta(targetKey)?.label ?? targetKey}…`, 'info', 2000)
     tgtWin?.postMessage(
       { source: 'aichatroom-parent', action: 'write-and-send', text: prompt },
-      platformUrl(targetKey),
+      platformOrigin(targetKey),
     )
   } catch (e) {
     console.error('[AIChatRoom chat] transfer failed', e)
