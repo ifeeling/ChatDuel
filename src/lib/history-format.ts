@@ -1,8 +1,8 @@
 import type { AIPlatform, Session, SessionAttachment, SessionResponse } from '../types'
+import { getPlatformMeta } from './ai-platforms'
 
-const PLATFORM_LABELS: Record<AIPlatform, string> = {
-  chatgpt: 'ChatGPT',
-  gemini: 'Gemini',
+function platformLabel(platform: AIPlatform): string {
+  return getPlatformMeta(platform)?.label ?? platform
 }
 
 function firstLine(text: string, max = 60): string {
@@ -26,7 +26,7 @@ function responseStatusLabel(response?: SessionResponse): string {
 
 export function summarizeSessionTargets(session: Session): string {
   return session.targetPlatforms
-    .map((platform) => `${PLATFORM_LABELS[platform]} ${responseStatusLabel(session.responses[platform])}`)
+    .map((platform) => `${platformLabel(platform)} ${responseStatusLabel(session.responses[platform])}`)
     .join(' / ')
 }
 
@@ -39,7 +39,7 @@ export function formatSessionMarkdown(session: Session): string {
     `# ${firstLine(session.prompt)}`,
     '',
     `- 创建时间: ${new Date(session.createdAt).toLocaleString()}`,
-    `- 目标: ${session.targetPlatforms.map((p) => PLATFORM_LABELS[p]).join(' / ')}`,
+    `- 目标: ${session.targetPlatforms.map(platformLabel).join(' / ')}`,
     '',
     '## 用户问题',
     '',
@@ -55,7 +55,7 @@ export function formatSessionMarkdown(session: Session): string {
   }
 
   for (const platform of session.targetPlatforms) {
-    const label = PLATFORM_LABELS[platform]
+    const label = platformLabel(platform)
     const response = session.responses[platform]
     parts.push('', `## ${label} 回答`, '')
     if (response?.status === 'captured' && response.text.trim()) {

@@ -1,10 +1,6 @@
 import type { AIPlatform, Session } from '../types'
+import { getPlatformMeta } from './ai-platforms'
 import { renderTemplate } from './prompt-template'
-
-const PLATFORM_LABELS: Record<AIPlatform, string> = {
-  chatgpt: 'ChatGPT',
-  gemini: 'Gemini',
-}
 
 function capturedText(session: Session, platform: AIPlatform): string {
   const response = session.responses[platform]
@@ -35,7 +31,7 @@ function buildSingleHistoryBlock(session: Session, round: number): string {
   ]
 
   for (const platform of session.targetPlatforms) {
-    const label = PLATFORM_LABELS[platform]
+    const label = getPlatformMeta(platform)?.label ?? platform
     parts.push(`【${label} 回答】`, capturedText(session, platform), '')
   }
 

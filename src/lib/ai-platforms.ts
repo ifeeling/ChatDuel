@@ -1,15 +1,15 @@
 // AI 平台元数据 + DOM 派生。
 //
 // 设计原则:
-//   - 元数据(key → label/icon)在这里单点维护
-//   - @ 候选范围 = HTML 里实际存在的 .panel[data-platform]
-//     也就是"前台打开了几个面板,@ 就有几个候选"
+//   - 元数据(key → label/icon/url/capabilities)在这里单点维护
+//   - @ 候选、总结目标、转移目标由 enabled platform + capabilities 派生
+//     也就是"页面显示"和"能力可用"分开判断
 //   - 加新 AI 流程:
 //       1) types/index.ts 的 AIPlatform 联合加上新 key(让 TS 在 protocol 层卡住)
 //       2) adapters/<name>/adapter.ts + selectors.json
 //       3) AI_PLATFORMS 加新元数据
 //       4) chat.html 加 <section class="panel" data-platform="<name>">
-//     @ 那套自动支持,无需改 chat.ts
+//     支持哪些功能由 capabilities 控制,避免在 chat.ts 里写平台特判
 
 import type { AIPlatform } from '../types'
 
@@ -20,12 +20,65 @@ export interface AIPlatformMeta {
   readonly label: string
   /** 一个小图标(emoji 或 1-2 字符) */
   readonly icon: string
+  /** 官方网页入口 */
+  readonly url: string
+  /** 平台当前已验证能力 */
+  readonly capabilities: AIPlatformCapabilities
 }
+
+export interface AIPlatformCapabilities {
+  readonly supportsEmbed: boolean
+  readonly supportsText: boolean
+  readonly supportsImageUpload: boolean
+  readonly supportsFileUpload: boolean
+  readonly supportsLastResponse: boolean
+}
+
+export const MIN_ACTIVE_PLATFORMS = 2
+export const MAX_ACTIVE_PLATFORMS = 3
+export const SUPPORTED_PLATFORMS: AIPlatform[] = ['chatgpt', 'gemini', 'doubao']
 
 /** 元数据表(key 必须跟 types/index.ts AIPlatform 联合一致) */
 export const AI_PLATFORMS: Record<AIPlatform, AIPlatformMeta> = {
-  chatgpt: { key: 'chatgpt', label: 'ChatGPT', icon: '✨' },
-  gemini: { key: 'gemini', label: 'Gemini', icon: '✦' },
+  chatgpt: {
+    key: 'chatgpt',
+    label: 'ChatGPT',
+    icon: '✨',
+    url: 'https://chatgpt.com/',
+    capabilities: {
+      supportsEmbed: true,
+      supportsText: true,
+      supportsImageUpload: true,
+      supportsFileUpload: false,
+      supportsLastResponse: true,
+    },
+  },
+  gemini: {
+    key: 'gemini',
+    label: 'Gemini',
+    icon: '✦',
+    url: 'https://gemini.google.com/',
+    capabilities: {
+      supportsEmbed: true,
+      supportsText: true,
+      supportsImageUpload: true,
+      supportsFileUpload: true,
+      supportsLastResponse: true,
+    },
+  },
+  doubao: {
+    key: 'doubao',
+    label: '豆包',
+    icon: '豆',
+    url: 'https://www.doubao.com/chat/',
+    capabilities: {
+      supportsEmbed: false,
+      supportsText: false,
+      supportsImageUpload: false,
+      supportsFileUpload: false,
+      supportsLastResponse: false,
+    },
+  },
 }
 
 /**
@@ -61,4 +114,12 @@ export function shortcutKey(index: number): string | null {
 /** 元数据查询(没注册时返回 undefined,调用方自行决定 fallback) */
 export function getPlatformMeta(key: string): AIPlatformMeta | undefined {
   return (AI_PLATFORMS as Record<string, AIPlatformMeta | undefined>)[key]
+}
+
+export function getPlatformCapabilities(key: AIPlatform): AIPlatformCapabilities {
+  return AI_PLATFORMS[key].capabilities
+}
+
+export function platformsWithCapability(capability: keyof AIPlatformCapabilities, platforms = activePlatforms()): AIPlatform[] {
+  return platforms.filter((platform) => AI_PLATFORMS[platform].capabilities[capability])
 }

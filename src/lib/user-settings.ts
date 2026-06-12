@@ -1,4 +1,5 @@
 import type { AIPlatform } from '../types'
+import { MIN_ACTIVE_PLATFORMS, SUPPORTED_PLATFORMS } from './ai-platforms'
 import { getDefaultTemplates } from './prompt-template'
 
 export interface UserSettings {
@@ -9,7 +10,8 @@ export interface UserSettings {
   }
 }
 
-type PartialUserSettings = Partial<Omit<UserSettings, 'promptTemplates'>> & {
+type PartialUserSettings = Partial<Omit<UserSettings, 'enabledPlatforms' | 'promptTemplates'>> & {
+  enabledPlatforms?: Partial<Record<AIPlatform, boolean>>
   promptTemplates?: Partial<UserSettings['promptTemplates']>
 }
 
@@ -19,6 +21,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   enabledPlatforms: {
     chatgpt: true,
     gemini: true,
+    doubao: false,
   },
   promptTemplates: {
     transfer: getDefaultTemplates().transfer,
@@ -30,14 +33,17 @@ function normalizeSettings(value: PartialUserSettings | undefined): UserSettings
   const enabledPlatforms = {
     ...DEFAULT_USER_SETTINGS.enabledPlatforms,
     ...(value?.enabledPlatforms ?? {}),
-  }
+  } as Record<AIPlatform, boolean>
   const promptTemplates = {
     ...DEFAULT_USER_SETTINGS.promptTemplates,
     ...(value?.promptTemplates ?? {}),
   }
 
-  if (!enabledPlatforms.chatgpt && !enabledPlatforms.gemini) {
-    enabledPlatforms.chatgpt = true
+  const activeCount = SUPPORTED_PLATFORMS.filter((platform) => enabledPlatforms[platform]).length
+  if (activeCount < MIN_ACTIVE_PLATFORMS) {
+    for (const platform of SUPPORTED_PLATFORMS) {
+      enabledPlatforms[platform] = DEFAULT_USER_SETTINGS.enabledPlatforms[platform]
+    }
   }
 
   if (promptTemplates.transfer.trim().length === 0) {

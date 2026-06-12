@@ -1,4 +1,4 @@
-export type AIPlatform = 'chatgpt' | 'gemini'
+export type AIPlatform = 'chatgpt' | 'gemini' | 'doubao'
 
 export type StreamStatus =
   | 'idle'
@@ -11,8 +11,8 @@ export type StreamStatus =
 
 export interface SessionFollowUp {
   type?: 'transfer' | 'quote' | 'manual'
-  from: 'user' | 'chatgpt' | 'gemini'
-  to: 'chatgpt' | 'gemini'
+  from: 'user' | AIPlatform
+  to: AIPlatform
   text: string
   promptTemplate?: string
   status?: 'pending' | 'sent' | 'captured' | 'failed'
@@ -23,9 +23,9 @@ export interface SessionFollowUp {
 }
 
 export interface SessionStats {
-  wordCount: { chatgpt?: number; gemini?: number }
-  durationMs: { chatgpt?: number; gemini?: number }
-  ttftMs: { chatgpt?: number; gemini?: number }
+  wordCount: Partial<Record<AIPlatform, number>>
+  durationMs: Partial<Record<AIPlatform, number>>
+  ttftMs: Partial<Record<AIPlatform, number>>
 }
 
 export interface Session {

@@ -1,4 +1,5 @@
 import type { AIPlatform, SessionAttachment } from '../types'
+import { getPlatformCapabilities } from './ai-platforms'
 import { MAX_IMAGE_BYTES } from './image-handler'
 
 export const MAX_INLINE_TEXT_BYTES = 1 * 1024 * 1024
@@ -58,8 +59,9 @@ export function classifyFile(file: File): FileClassification {
 
 export function supportsAutoUpload(platform: AIPlatform, classification: FileClassification): boolean {
   if (classification.handling !== 'file-upload') return false
-  if (classification.kind === 'image') return true
-  return platform === 'gemini'
+  const capabilities = getPlatformCapabilities(platform)
+  if (classification.kind === 'image') return capabilities.supportsImageUpload
+  return capabilities.supportsFileUpload
 }
 
 export function assertFileWithinLimit(file: File, classification = classifyFile(file)): void {

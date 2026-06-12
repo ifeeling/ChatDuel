@@ -11,14 +11,15 @@
 // 没有 tabId,SW 找不到它们)。详见 docs/postmortems/2026-06-09-iframe-no-response.md
 
 import { enableEmbedRules, disableEmbedRules } from './dnr-rules'
+import { SUPPORTED_PLATFORMS } from '../lib/ai-platforms'
 import type { AIPlatform } from '../types'
 
 const CHAT_PAGE_URL = 'src/chat/chat.html'
 
-const PLATFORMS: AIPlatform[] = ['chatgpt', 'gemini']
-const PLATFORM_URL_PREFIX: Record<AIPlatform, string> = {
-  chatgpt: 'https://chatgpt.com/',
-  gemini: 'https://gemini.google.com/',
+const PLATFORM_URL_PREFIXES: Record<AIPlatform, string[]> = {
+  chatgpt: ['https://chatgpt.com/'],
+  gemini: ['https://gemini.google.com/'],
+  doubao: ['https://www.doubao.com/', 'https://doubao.com/'],
 }
 
 const CHAT_TAB_IDS_KEY = 'chatTabIds'
@@ -41,8 +42,11 @@ async function removeChatTabId(id: number): Promise<void> {
 }
 
 async function findOfficialTab(platform: AIPlatform): Promise<chrome.tabs.Tab | null> {
-  const tabs = await chrome.tabs.query({ url: `https://${platform === 'chatgpt' ? 'chatgpt.com' : 'gemini.google.com'}/*` })
-  return tabs[0] ?? null
+  for (const prefix of PLATFORM_URL_PREFIXES[platform]) {
+    const tabs = await chrome.tabs.query({ url: `${prefix}*` })
+    if (tabs[0]) return tabs[0]
+  }
+  return null
 }
 
 async function broadcastToChatTabs(msg: unknown): Promise<void> {
@@ -90,7 +94,7 @@ chrome.webNavigation?.onCommitted.addListener((details) => {
 // ---------- 官方页 tab 状态广播 ----------
 chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
   if (removeInfo.windowId === chrome.windows.WINDOW_ID_NONE) return
-  for (const p of PLATFORMS) {
+  for (const p of SUPPORTED_PLATFORMS) {
     const tab = await findOfficialTab(p)
     await broadcastToChatTabs({ type: 'tab-status-changed', platform: p, exists: !!tab })
   }
@@ -98,8 +102,8 @@ chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
 
 chrome.tabs.onUpdated.addListener(async (tabId, _change, tab) => {
   if (!tab.url) return
-  for (const p of PLATFORMS) {
-    if (tab.url.startsWith(PLATFORM_URL_PREFIX[p])) {
+  for (const p of SUPPORTED_PLATFORMS) {
+    if (PLATFORM_URL_PREFIXES[p].some((prefix) => tab.url?.startsWith(prefix))) {
       const t = await findOfficialTab(p)
       await broadcastToChatTabs({ type: 'tab-status-changed', platform: p, exists: !!t })
     }

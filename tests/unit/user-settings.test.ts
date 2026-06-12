@@ -22,19 +22,26 @@ describe('user-settings', () => {
 
   it('saves enabled platform preferences', async () => {
     const saved = await saveUserSettings({
-      enabledPlatforms: { chatgpt: false, gemini: true },
+      enabledPlatforms: { chatgpt: false, gemini: true, doubao: true },
     })
-    expect(saved.enabledPlatforms).toEqual({ chatgpt: false, gemini: true })
+    expect(saved.enabledPlatforms).toEqual({ chatgpt: false, gemini: true, doubao: true })
     expect(saved.promptTemplates.transfer).toBe(DEFAULT_USER_SETTINGS.promptTemplates.transfer)
     expect(saved.promptTemplates.summary).toBe(DEFAULT_USER_SETTINGS.promptTemplates.summary)
     await expect(loadUserSettings()).resolves.toEqual(saved)
   })
 
-  it('keeps at least one platform enabled', async () => {
+  it('fills missing platform preferences from defaults', async () => {
     const saved = await saveUserSettings({
-      enabledPlatforms: { chatgpt: false, gemini: false },
+      enabledPlatforms: { chatgpt: true, gemini: true },
     })
-    expect(saved.enabledPlatforms).toEqual({ chatgpt: true, gemini: false })
+    expect(saved.enabledPlatforms).toEqual({ chatgpt: true, gemini: true, doubao: false })
+  })
+
+  it('falls back to defaults when fewer than two platforms are enabled', async () => {
+    const saved = await saveUserSettings({
+      enabledPlatforms: { chatgpt: false, gemini: false, doubao: true },
+    })
+    expect(saved.enabledPlatforms).toEqual(DEFAULT_USER_SETTINGS.enabledPlatforms)
   })
 
   it('saves transfer prompt template', async () => {

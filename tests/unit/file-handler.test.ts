@@ -72,12 +72,14 @@ describe('supportsAutoUpload', () => {
     const image = classifyFile(new File(['x'], 'photo.png', { type: 'image/png' }))
     expect(supportsAutoUpload('chatgpt', image)).toBe(true)
     expect(supportsAutoUpload('gemini', image)).toBe(true)
+    expect(supportsAutoUpload('doubao', image)).toBe(false)
   })
 
   it('does not auto-upload document files to ChatGPT in v1', () => {
     const documentFile = classifyFile(new File(['x'], 'book.pdf', { type: 'application/pdf' }))
     expect(supportsAutoUpload('chatgpt', documentFile)).toBe(false)
     expect(supportsAutoUpload('gemini', documentFile)).toBe(true)
+    expect(supportsAutoUpload('doubao', documentFile)).toBe(false)
   })
 })
 

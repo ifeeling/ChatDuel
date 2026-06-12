@@ -13,6 +13,9 @@ describe('parseAtMentions', () => {
     const r = parseAtMentions('@chatgpt @gemini 你好')
     expect(r.sort()).toEqual(['chatgpt', 'gemini'])
   })
+  it('extracts doubao after platform registration', () => {
+    expect(parseAtMentions('@doubao 你好')).toEqual(['doubao'])
+  })
   it('dedupes repeated mentions', () => {
     const r = parseAtMentions('@chatgpt @chatgpt hi')
     expect(r).toEqual(['chatgpt'])
@@ -74,6 +77,11 @@ describe('filterCandidates', () => {
   it('filters by label prefix (case-insensitive)', () => {
     expect(filterCandidates(candidates, 'GEMI')).toEqual([
       AI_PLATFORMS.gemini,
+    ])
+  })
+  it('filters doubao by key prefix', () => {
+    expect(filterCandidates(candidates, 'dou')).toEqual([
+      AI_PLATFORMS.doubao,
     ])
   })
   it('returns empty when no match', () => {

@@ -32,7 +32,17 @@ import {
   supportsAutoUpload,
   type FileClassification,
 } from '../lib/file-handler'
-import { activePlatforms, getPlatformMeta, shortcutKey, type AIPlatformMeta } from '../lib/ai-platforms'
+import {
+  MAX_ACTIVE_PLATFORMS,
+  MIN_ACTIVE_PLATFORMS,
+  SUPPORTED_PLATFORMS,
+  activePlatforms,
+  getPlatformCapabilities,
+  getPlatformMeta,
+  platformsWithCapability,
+  shortcutKey,
+  type AIPlatformMeta,
+} from '../lib/ai-platforms'
 import { detectAtInput, filterCandidates, parseAtMentions } from '../lib/at-parser'
 import { getDefaultTemplates, renderTemplate } from '../lib/prompt-template'
 import { DEFAULT_USER_SETTINGS, loadUserSettings, saveUserSettings, type UserSettings } from '../lib/user-settings'
@@ -47,12 +57,6 @@ import {
 import { formatBytes, formatSessionMarkdown, summarizeSessionTargets } from '../lib/history-format'
 import { buildSummaryPrompt, hasCapturedResponses } from '../lib/summary-builder'
 import { evaluateResponseCapture, type ResponseCaptureProgress } from '../lib/response-capture'
-
-// PLATFORMS 不再硬编码:由 activePlatforms() 从 DOM 派生(HTML 里有几个 panel 就有几个)
-const OFFICIAL_URLS: Record<AIPlatform, string> = {
-  chatgpt: 'https://chatgpt.com/',
-  gemini: 'https://gemini.google.com/',
-}
 
 // ---------- DOM 引用 ----------
 const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => document.querySelector<T>(sel)!
@@ -79,13 +83,10 @@ const previewImg = $<HTMLImageElement>('#preview-img')
 const imageMeta = $<HTMLSpanElement>('#image-meta')
 const btnImageRemove = $<HTMLButtonElement>('#btn-image-remove')
 const btnRefresh = $<HTMLButtonElement>('#btn-refresh')
-const splitter = $<HTMLDivElement>('#splitter')
 const toastContainer = $<HTMLDivElement>('#toast-container')
 const settingsOverlay = $<HTMLDivElement>('#settings-overlay')
 const btnSettingsClose = $<HTMLButtonElement>('#btn-settings-close')
 const btnSettingsSave = $<HTMLButtonElement>('#btn-settings-save')
-const settingChatgpt = $<HTMLInputElement>('#setting-chatgpt')
-const settingGemini = $<HTMLInputElement>('#setting-gemini')
 const settingTransferTemplate = $<HTMLTextAreaElement>('#setting-transfer-template')
 const settingSummaryTemplate = $<HTMLTextAreaElement>('#setting-summary-template')
 const btnResetTransferTemplate = $<HTMLButtonElement>('#btn-reset-transfer-template')
@@ -106,8 +107,8 @@ const summaryPreview = $<HTMLDivElement>('#summary-preview')
 const ATTACH_BUTTON_TITLE = `支持：${SUPPORTED_FILE_FORMATS_TEXT}。暂不支持 Word。`
 
 // ---------- 状态 ----------
-const readyMap: Record<AIPlatform, boolean> = { chatgpt: false, gemini: false }
-const readyWaiters: Record<AIPlatform, Array<(ok: boolean) => void>> = { chatgpt: [], gemini: [] }
+const readyMap: Record<AIPlatform, boolean> = { chatgpt: false, gemini: false, doubao: false }
+const readyWaiters: Record<AIPlatform, Array<(ok: boolean) => void>> = { chatgpt: [], gemini: [], doubao: [] }
 const RESPONSE_BACKFILL_INTERVAL_MS = 3000
 const RESPONSE_BACKFILL_MAX_ATTEMPTS = 20
 const RESPONSE_STABLE_REQUIRED_POLLS = 2
@@ -190,15 +191,53 @@ function showToast(text: string, kind: ToastKind = 'info', durationMs = 4000) {
 
 // ---------- 设置 ----------
 function allPlatforms(): AIPlatform[] {
-  return ['chatgpt', 'gemini']
+  return [...SUPPORTED_PLATFORMS]
 }
 
 function platformPanel(p: AIPlatform): HTMLElement | null {
   return document.querySelector<HTMLElement>(`.panel[data-platform="${p}"]`)
 }
 
+function platformUrl(p: AIPlatform): string {
+  return getPlatformMeta(p)?.url ?? 'about:blank'
+}
+
 function platformStatusItem(p: AIPlatform): HTMLElement | null {
   return document.querySelector<HTMLElement>(`.status-item[data-platform="${p}"]`)
+}
+
+function settingPlatformInputs(): HTMLInputElement[] {
+  return [...document.querySelectorAll<HTMLInputElement>('.site-row input[data-platform]')]
+    .filter((input) => allPlatforms().includes(input.dataset.platform as AIPlatform))
+}
+
+function selectedSettingsPlatforms(): AIPlatform[] {
+  return settingPlatformInputs()
+    .filter((input) => input.checked)
+    .map((input) => input.dataset.platform as AIPlatform)
+}
+
+function syncSplitters() {
+  const hasVisiblePanelBefore = (el: HTMLElement): boolean => {
+    let current = el.previousElementSibling
+    while (current) {
+      if (current instanceof HTMLElement && current.classList.contains('panel') && !current.hidden) return true
+      current = current.previousElementSibling
+    }
+    return false
+  }
+  const hasVisiblePanelAfter = (el: HTMLElement): boolean => {
+    let current = el.nextElementSibling
+    while (current) {
+      if (current instanceof HTMLElement && current.classList.contains('panel') && !current.hidden) return true
+      current = current.nextElementSibling
+    }
+    return false
+  }
+
+  document.querySelectorAll<HTMLElement>('.splitter').forEach((splitterEl) => {
+    splitterEl.hidden = !hasVisiblePanelBefore(splitterEl) || !hasVisiblePanelAfter(splitterEl)
+  })
 }
 
 function applyUserSettings(settings: UserSettings) {
@@ -215,21 +254,24 @@ function applyUserSettings(settings: UserSettings) {
       iframe.src = 'about:blank'
       readyMap[p] = false
     }
-    if (!enabled) atSelected.delete(p)
+    if (!enabled || !getPlatformCapabilities(p).supportsText) atSelected.delete(p)
   }
 
-  splitter.hidden = activePlatforms().length < 2
-  const canTransfer = activePlatforms().length >= 2
+  syncSplitters()
+  const canTransfer = platformsWithCapability('supportsLastResponse').length >= 1 && platformsWithCapability('supportsText').length >= 2
   document.querySelectorAll<HTMLButtonElement>('.panel-transfer').forEach((btn) => {
-    btn.disabled = !canTransfer
+    const platform = btn.dataset.platform as AIPlatform | undefined
+    btn.disabled = !canTransfer || !platform || !getPlatformCapabilities(platform).supportsLastResponse
   })
-  btnSummary.disabled = activePlatforms().length < 2
+  btnSummary.disabled = platformsWithCapability('supportsText').length < 2
   renderChips()
 }
 
 function renderSettingsForm() {
-  settingChatgpt.checked = userSettings.enabledPlatforms.chatgpt
-  settingGemini.checked = userSettings.enabledPlatforms.gemini
+  for (const input of settingPlatformInputs()) {
+    const platform = input.dataset.platform as AIPlatform
+    input.checked = !!userSettings.enabledPlatforms[platform]
+  }
   settingTransferTemplate.value = userSettings.promptTemplates.transfer
   settingSummaryTemplate.value = userSettings.promptTemplates.summary
 }
@@ -270,21 +312,31 @@ async function initializeSettings() {
 }
 
 async function onSaveSettings() {
+  const enabledPlatforms = Object.fromEntries(
+    allPlatforms().map((platform) => [platform, false]),
+  ) as Record<AIPlatform, boolean>
+  for (const input of settingPlatformInputs()) {
+    enabledPlatforms[input.dataset.platform as AIPlatform] = input.checked
+  }
+
+  const selectedPlatforms = selectedSettingsPlatforms()
+  if (selectedPlatforms.length < MIN_ACTIVE_PLATFORMS) {
+    showToast(`至少保留 ${MIN_ACTIVE_PLATFORMS} 个 AI`, 'warn')
+    renderSettingsForm()
+    return
+  }
+  if (selectedPlatforms.length > MAX_ACTIVE_PLATFORMS) {
+    showToast(`最多同时显示 ${MAX_ACTIVE_PLATFORMS} 个 AI`, 'warn')
+    renderSettingsForm()
+    return
+  }
+
   const next: UserSettings = {
-    enabledPlatforms: {
-      chatgpt: settingChatgpt.checked,
-      gemini: settingGemini.checked,
-    },
+    enabledPlatforms,
     promptTemplates: {
       transfer: settingTransferTemplate.value,
       summary: settingSummaryTemplate.value,
     },
-  }
-
-  if (!next.enabledPlatforms.chatgpt && !next.enabledPlatforms.gemini) {
-    showToast('至少保留一个站点', 'warn')
-    settingChatgpt.checked = true
-    next.enabledPlatforms.chatgpt = true
   }
 
   btnSettingsSave.disabled = true
@@ -397,10 +449,17 @@ async function bootstrap() {
 
 async function refreshAllStatuses() {
   for (const p of activePlatforms()) {
+    if (!getPlatformCapabilities(p).supportsEmbed) {
+      readyMap[p] = false
+      setStatus(p, 'warn', '待接入')
+      const iframe = panelIframe(p)
+      iframe.src = 'about:blank'
+      continue
+    }
     setStatus(p, 'warn', '检测中…')
     const iframe = panelIframe(p)
     if (iframe.src === 'about:blank' || !iframe.src) {
-      iframe.src = OFFICIAL_URLS[p]
+      iframe.src = platformUrl(p)
     }
     const ok = await waitForIframeReady(p)
     if (ok) setStatus(p, 'ok', '已打开')
@@ -412,7 +471,7 @@ async function refreshAllStatuses() {
 function postToIframe(p: AIPlatform, action: string, extra: Record<string, unknown> = {}) {
   const win = panelIframe(p).contentWindow
   if (!win) return
-  win.postMessage({ source: 'aichatroom-parent', action, ...extra }, OFFICIAL_URLS[p])
+  win.postMessage({ source: 'aichatroom-parent', action, ...extra }, platformUrl(p))
 }
 
 function requestLastResponse(p: AIPlatform, timeoutMs = 3000): Promise<string> {
@@ -542,7 +601,7 @@ window.addEventListener('message', (e: MessageEvent) => {
     | undefined
   if (!data || data.source !== 'aichatroom-content') return
 
-  if (data.event === 'ready' && (data.platform === 'chatgpt' || data.platform === 'gemini')) {
+  if (data.event === 'ready' && data.platform && allPlatforms().includes(data.platform)) {
     readyMap[data.platform] = true
     const waiters = readyWaiters[data.platform]
     readyWaiters[data.platform] = []
@@ -565,11 +624,16 @@ async function onSend() {
   // 目标优先级:atSelected(UI 选) > 文本里手打 @xxx(向后兼容) > 全发
   let targets: AIPlatform[]
   if (atSelected.size > 0) {
-    targets = [...atSelected]
+    targets = platformsWithCapability('supportsText', [...atSelected])
   } else {
-    const validKeys = new Set(activePlatforms())
+    const textPlatforms = platformsWithCapability('supportsText')
+    const validKeys = new Set(textPlatforms)
     const mentioned = parseAtMentions(text, validKeys)
-    targets = mentioned.length > 0 ? mentioned : activePlatforms()
+    targets = mentioned.length > 0 ? mentioned : textPlatforms
+  }
+  if (targets.length === 0) {
+    showToast('当前没有可发送文本的 AI', 'warn')
+    return
   }
 
   if (pendingAttachment?.classification.handling === 'file-upload') {
@@ -719,7 +783,7 @@ async function onSend() {
 
 // ---------- @ 弹层 / Chips ----------
 function getAllPanelMetas(): AIPlatformMeta[] {
-  return activePlatforms()
+  return platformsWithCapability('supportsText')
     .map((k) => getPlatformMeta(k))
     .filter((m): m is AIPlatformMeta => !!m)
 }
@@ -916,13 +980,18 @@ const MAX_TRANSFER_LENGTH = 50_000
 
 /**
  * 转移流程:点 panel A 的 .panel-transfer
- *   1) 候选 = activePlatforms().filter(p => p !== sourceKey)
+ *   1) 候选 = 支持文本输入的平台.filter(p => p !== sourceKey)
  *   2) N=2 → 直接 executeTransfer(source, candidate[0])
  *   3) N>2 → 复用 at-popup 单选模式
  *   4) N=1 → toast 报错
  */
 async function onTransfer(sourceKey: AIPlatform) {
-  const candidates = activePlatforms().filter((p) => p !== sourceKey)
+  if (!getPlatformCapabilities(sourceKey).supportsLastResponse) {
+    showToast(`${getPlatformMeta(sourceKey)?.label ?? sourceKey} 暂不支持读取回答`, 'warn')
+    return
+  }
+
+  const candidates = platformsWithCapability('supportsText').filter((p) => p !== sourceKey)
   if (candidates.length === 0) {
     showToast('没有可转移的目标', 'warn')
     return
@@ -1064,7 +1133,7 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform) {
       window.addEventListener('message', onMsg)
       srcWin.postMessage(
         { source: 'aichatroom-parent', action: 'get-state' },
-        OFFICIAL_URLS[sourceKey],
+        platformUrl(sourceKey),
       )
       setTimeout(() => { window.removeEventListener('message', onMsg); resolve({ status: 'unknown' }) }, 2000)
     })
@@ -1091,7 +1160,7 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform) {
       window.addEventListener('message', onMsg)
       srcWin.postMessage(
         { source: 'aichatroom-parent', action: 'get-last-response' },
-        OFFICIAL_URLS[sourceKey],
+        platformUrl(sourceKey),
       )
       setTimeout(() => { window.removeEventListener('message', onMsg); resolve('') }, 3000)
     })
@@ -1123,7 +1192,7 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform) {
           window.addEventListener('message', onMsg)
           tgtWin.postMessage(
             { source: 'aichatroom-parent', action: 'get-state' },
-            OFFICIAL_URLS[targetKey],
+            platformUrl(targetKey),
           )
           setTimeout(() => { window.removeEventListener('message', onMsg); resolve(null) }, 50)
         })
@@ -1150,7 +1219,7 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform) {
     showToast(`正在把 ${fromLabel} 的回答转移到 ${getPlatformMeta(targetKey)?.label ?? targetKey}…`, 'info', 2000)
     tgtWin?.postMessage(
       { source: 'aichatroom-parent', action: 'write-and-send', text: prompt },
-      OFFICIAL_URLS[targetKey],
+      platformUrl(targetKey),
     )
   } catch (e) {
     console.error('[AIChatRoom chat] transfer failed', e)
@@ -1158,10 +1227,10 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform) {
   } finally {
     if (srcBtn) {
       srcBtn.classList.remove('busy')
-      srcBtn.disabled = false
+      srcBtn.disabled = !getPlatformCapabilities(sourceKey).supportsLastResponse
       srcBtn.textContent = '转移 ➔'
     }
-    if (tgtBtn) tgtBtn.disabled = false
+    if (tgtBtn) tgtBtn.disabled = !getPlatformCapabilities(targetKey).supportsLastResponse
     closeAtPopup()
   }
 }
@@ -1397,7 +1466,7 @@ const SUMMARY_MODE_LABELS: Record<SummaryMode, string> = {
 }
 
 function pickSummaryTarget(): AIPlatform | null {
-  const active = activePlatforms()
+  const active = platformsWithCapability('supportsText')
   if (active.includes('chatgpt')) return 'chatgpt'
   if (active.includes('gemini')) return 'gemini'
   return null
@@ -1405,7 +1474,7 @@ function pickSummaryTarget(): AIPlatform | null {
 
 function renderSummaryTargets() {
   summaryTargetSelect.innerHTML = ''
-  for (const platform of activePlatforms()) {
+  for (const platform of platformsWithCapability('supportsText')) {
     const option = document.createElement('option')
     option.value = platform
     option.textContent = getPlatformMeta(platform)?.label ?? platform
@@ -1677,30 +1746,38 @@ function onDrop(e: DragEvent) {
 
 // ---------- 分隔条拖拽 ----------
 function setupSplitter() {
-  let dragging = false
+  let draggingSplitter: HTMLElement | null = null
   let startX = 0
   let leftStartWidth = 0
   let rightStartWidth = 0
   let leftPanel: HTMLElement | null = null
   let rightPanel: HTMLElement | null = null
 
-  splitter.addEventListener('mousedown', (e) => {
-    const previous = splitter.previousElementSibling
-    const next = splitter.nextElementSibling
-    if (!(previous instanceof HTMLElement) || !(next instanceof HTMLElement)) return
-    leftPanel = previous.closest<HTMLElement>('.panel')
-    rightPanel = next.closest<HTMLElement>('.panel')
-    if (!leftPanel || !rightPanel) return
+  const findVisiblePanel = (from: Element | null, direction: 'previous' | 'next'): HTMLElement | null => {
+    let current = from
+    while (current) {
+      if (current instanceof HTMLElement && current.classList.contains('panel') && !current.hidden) return current
+      current = direction === 'previous' ? current.previousElementSibling : current.nextElementSibling
+    }
+    return null
+  }
 
-    dragging = true
-    startX = e.clientX
-    leftStartWidth = leftPanel.getBoundingClientRect().width
-    rightStartWidth = rightPanel.getBoundingClientRect().width
-    splitter.classList.add('dragging')
-    e.preventDefault()
+  document.querySelectorAll<HTMLElement>('.splitter').forEach((splitterEl) => {
+    splitterEl.addEventListener('mousedown', (e) => {
+      leftPanel = findVisiblePanel(splitterEl.previousElementSibling, 'previous')
+      rightPanel = findVisiblePanel(splitterEl.nextElementSibling, 'next')
+      if (!leftPanel || !rightPanel) return
+
+      draggingSplitter = splitterEl
+      startX = e.clientX
+      leftStartWidth = leftPanel.getBoundingClientRect().width
+      rightStartWidth = rightPanel.getBoundingClientRect().width
+      splitterEl.classList.add('dragging')
+      e.preventDefault()
+    })
   })
   window.addEventListener('mousemove', (e) => {
-    if (!dragging || !leftPanel || !rightPanel) return
+    if (!draggingSplitter || !leftPanel || !rightPanel) return
     const total = leftStartWidth + rightStartWidth
     if (total <= 0) return
 
@@ -1713,11 +1790,11 @@ function setupSplitter() {
     rightPanel.style.flex = `0 0 ${rightWidth}px`
   })
   window.addEventListener('mouseup', () => {
-    if (dragging) {
-      dragging = false
+    if (draggingSplitter) {
+      draggingSplitter.classList.remove('dragging')
+      draggingSplitter = null
       leftPanel = null
       rightPanel = null
-      splitter.classList.remove('dragging')
     }
   })
 }
@@ -1727,8 +1804,7 @@ function setupOpenButtons() {
   for (const p of allPlatforms()) {
     document.querySelector<HTMLButtonElement>(`.panel-open[data-platform="${p}"]`)!
       .addEventListener('click', () => {
-        const url = OFFICIAL_URLS[p as keyof typeof OFFICIAL_URLS] ?? ''
-        chrome.tabs.create({ url })
+        chrome.tabs.create({ url: platformUrl(p) })
       })
   }
 }
