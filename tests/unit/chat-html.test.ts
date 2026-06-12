@@ -35,6 +35,8 @@ describe('chat.html', () => {
     expect(document.querySelector('.topbar')).toBeNull()
     expect(document.querySelectorAll('.panel')).toHaveLength(3)
     expect(document.querySelector('.panel[data-platform="doubao"]')).toBeTruthy()
+    expect(document.querySelector<HTMLButtonElement>('.panel-transfer[data-platform="doubao"]')?.title)
+      .toBe('把这里的回答转移到其它 AI')
     expect(document.querySelectorAll('.splitter')).toHaveLength(2)
     expect(document.querySelectorAll('#btn-quote')).toHaveLength(1)
     expect(document.querySelectorAll('#btn-summary')).toHaveLength(1)

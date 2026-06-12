@@ -76,7 +76,7 @@ export const AI_PLATFORMS: Record<AIPlatform, AIPlatformMeta> = {
       supportsText: true,
       supportsImageUpload: false,
       supportsFileUpload: false,
-      supportsLastResponse: false,
+      supportsLastResponse: true,
     },
   },
 }
