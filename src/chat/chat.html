@@ -212,6 +212,36 @@
     </section>
   </div>
 
+  <div class="summary-overlay transfer-overlay" id="transfer-overlay" hidden>
+    <section class="summary-dialog" role="dialog" aria-modal="true" aria-labelledby="transfer-title">
+      <header class="summary-header">
+        <h2 id="transfer-title">选择要转移的回答</h2>
+        <button id="btn-transfer-close" class="summary-close" type="button" title="关闭" aria-label="关闭">×</button>
+      </header>
+      <div class="summary-body">
+        <aside class="summary-list" id="transfer-list" aria-label="选择要转移的回答"></aside>
+        <main class="summary-options">
+          <div class="summary-config">
+            <p class="summary-lead" id="transfer-lead">默认选中最新一条回答。你可以多选，把多条回答一起转给目标 AI。</p>
+            <label class="summary-field">
+              <span>转移目标</span>
+              <select id="transfer-target"></select>
+            </label>
+            <div class="summary-selected" id="transfer-selected">已选择 0 条回答</div>
+            <div class="summary-actions">
+              <button id="btn-transfer-cancel" class="summary-secondary" type="button">取消</button>
+              <button id="btn-transfer-send" class="summary-primary" type="button">转移</button>
+            </div>
+          </div>
+          <section class="summary-preview" aria-label="已选择回答内容预览">
+            <h3>内容预览</h3>
+            <div id="transfer-preview" class="summary-preview-list"></div>
+          </section>
+        </main>
+      </div>
+    </section>
+  </div>
+
   <script type="module" src="./chat.ts"></script>
 </body>
 </html>

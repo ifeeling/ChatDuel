@@ -29,6 +29,18 @@ describe('chat.html', () => {
     expect(document.querySelector('#btn-summary-generate')).toBeTruthy()
   })
 
+  it('renders transfer source picker controls', () => {
+    document.body.innerHTML = html
+
+    expect(document.querySelector('#transfer-overlay')).toBeTruthy()
+    expect(document.querySelector('#transfer-title')).toBeTruthy()
+    expect(document.querySelector('#transfer-list')).toBeTruthy()
+    expect(document.querySelector('#transfer-target')).toBeTruthy()
+    expect(document.querySelector('#transfer-selected')).toBeTruthy()
+    expect(document.querySelector('#transfer-preview')).toBeTruthy()
+    expect(document.querySelector('#btn-transfer-send')).toBeTruthy()
+  })
+
   it('keeps primary controls compact for split-screen use', () => {
     document.body.innerHTML = html
 

@@ -57,6 +57,7 @@ import {
 import { formatBytes, formatSessionMarkdown, summarizeSessionTargets } from '../lib/history-format'
 import { buildSummaryPrompt, hasCapturedResponses } from '../lib/summary-builder'
 import { evaluateResponseCapture, type ResponseCaptureProgress } from '../lib/response-capture'
+import { buildTransferContent, buildTransferSourceOptions, type TransferSourceOption } from '../lib/transfer-source'
 
 // ---------- DOM 引用 ----------
 const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => document.querySelector<T>(sel)!
@@ -104,6 +105,15 @@ const summaryTargetSelect = $<HTMLSelectElement>('#summary-target')
 const summaryModeSelect = $<HTMLSelectElement>('#summary-mode')
 const summarySelected = $<HTMLDivElement>('#summary-selected')
 const summaryPreview = $<HTMLDivElement>('#summary-preview')
+const transferOverlay = $<HTMLDivElement>('#transfer-overlay')
+const transferTitle = $<HTMLHeadingElement>('#transfer-title')
+const btnTransferClose = $<HTMLButtonElement>('#btn-transfer-close')
+const btnTransferCancel = $<HTMLButtonElement>('#btn-transfer-cancel')
+const btnTransferSend = $<HTMLButtonElement>('#btn-transfer-send')
+const transferList = $<HTMLDivElement>('#transfer-list')
+const transferTargetSelect = $<HTMLSelectElement>('#transfer-target')
+const transferSelected = $<HTMLDivElement>('#transfer-selected')
+const transferPreview = $<HTMLDivElement>('#transfer-preview')
 const ATTACH_BUTTON_TITLE = `支持：${SUPPORTED_FILE_FORMATS_TEXT}。暂不支持 Word。`
 
 // ---------- 状态 ----------
@@ -117,6 +127,8 @@ let historySessions: Session[] = []
 let selectedHistoryId: string | null = null
 let summarySessions: Session[] = []
 const selectedSummaryIds: Set<string> = new Set()
+let transferSourcePlatform: AIPlatform | null = null
+let transferSourceOptions: TransferSourceOption[] = []
 
 // 待发送的附件(仅支持 1 个,后续 attach 会替换)
 interface PendingAttachment {
@@ -1001,9 +1013,8 @@ const MAX_TRANSFER_LENGTH = 50_000
 /**
  * 转移流程:点 panel A 的 .panel-transfer
  *   1) 候选 = 支持文本输入的平台.filter(p => p !== sourceKey)
- *   2) N=2 → 直接 executeTransfer(source, candidate[0])
- *   3) N>2 → 复用 at-popup 单选模式
- *   4) N=1 → toast 报错
+ *   2) 弹出回答选择器,默认选中最新回答
+ *   3) 用户可多选历史回答,再选择目标 AI 发送
  */
 async function onTransfer(sourceKey: AIPlatform) {
   if (!getPlatformCapabilities(sourceKey).supportsLastResponse) {
@@ -1016,111 +1027,161 @@ async function onTransfer(sourceKey: AIPlatform) {
     showToast('没有可转移的目标', 'warn')
     return
   }
-  if (candidates.length === 1) {
-    void executeTransfer(sourceKey, candidates[0] as AIPlatform)
-    return
-  }
-  // N>2:复用 at-popup 弹层
-  openAtPopupForTransfer(sourceKey, candidates)
+  await openTransferDialog(sourceKey, candidates)
 }
 
-/**
- * Transfer 模式的弹层:直接渲染候选(绕过 atSelected 逻辑),点候选 = executeTransfer。
- * 跟 at-popup 共用 DOM / 样式,但走独立点击处理。
- */
-let transferSourceKey: AIPlatform | null = null
-
-function openAtPopupForTransfer(sourceKey: AIPlatform, candidates: AIPlatform[]) {
-  transferSourceKey = sourceKey
-  atPopupCandidates = candidates
-    .map((k) => getPlatformMeta(k))
-    .filter((m): m is AIPlatformMeta => !!m)
-  atPopupIndex = 0
-  atPopupAnchor = null
-  if (!atPopupOpen) openAtPopup()
-  renderTransferPopup()
-  // 弹层外部 click / Esc 关掉时清状态
-  const onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      transferSourceKey = null
-      closeAtPopup()
-      window.removeEventListener('keydown', onKey, true)
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      moveAtPopup(1)
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      moveAtPopup(-1)
-    } else if (e.key === 'Enter') {
-      e.preventDefault()
-      const c = atPopupCandidates[atPopupIndex]
-      if (c) {
-        void executeTransfer(sourceKey, c.key as AIPlatform)
-        transferSourceKey = null
-        closeAtPopup()
-        window.removeEventListener('keydown', onKey, true)
-      }
-    } else if (/^[0-9]$/.test(e.key)) {
-      const idx = e.key === '0' ? 9 : parseInt(e.key, 10) - 1
-      if (idx >= 0 && idx < atPopupCandidates.length) {
-        e.preventDefault()
-        const c = atPopupCandidates[idx]
-        if (c) {
-          void executeTransfer(sourceKey, c.key as AIPlatform)
-          transferSourceKey = null
-          closeAtPopup()
-          window.removeEventListener('keydown', onKey, true)
-        }
-      }
-    }
+async function getCurrentTransferResponse(sourceKey: AIPlatform): Promise<string> {
+  const state = await requestConversationState(sourceKey, 2000)
+  if (!['idle', 'finished', 'error'].includes(state.status)) {
+    showToast(`源 AI 还在生成中,等一会儿再试(当前: ${state.status})`, 'warn', 4000)
+    return ''
   }
-  window.addEventListener('keydown', onKey, true)
+  return state.lastResponse?.trim() || await requestLastResponse(sourceKey, 3000)
 }
 
-/**
- * 渲染 transfer 模式的弹层(类似 at-popup,但每个 item 的 click 走 transfer)
- */
-function renderTransferPopup() {
-  atPopupEl.innerHTML = ''
-  if (atPopupCandidates.length === 0) {
+function renderTransferTargets(sourceKey: AIPlatform, candidates: AIPlatform[]) {
+  transferTargetSelect.innerHTML = ''
+  for (const platform of candidates) {
+    const option = document.createElement('option')
+    option.value = platform
+    option.textContent = getPlatformMeta(platform)?.label ?? platform
+    transferTargetSelect.appendChild(option)
+  }
+  const preferred = candidates.find((platform) => platform !== sourceKey)
+  if (preferred) transferTargetSelect.value = preferred
+}
+
+async function openTransferDialog(sourceKey: AIPlatform, candidates: AIPlatform[]) {
+  transferSourcePlatform = sourceKey
+  const sourceLabel = getPlatformMeta(sourceKey)?.label ?? sourceKey
+  transferTitle.textContent = `选择要转移的 ${sourceLabel} 回答`
+  transferOverlay.hidden = false
+  transferList.innerHTML = '<div class="history-empty">正在读取可转移回答…</div>'
+  transferPreview.innerHTML = ''
+  transferSelected.textContent = '已选择 0 条回答'
+  btnTransferSend.disabled = true
+  renderTransferTargets(sourceKey, candidates)
+
+  const [currentResponse, sessions] = await Promise.all([
+    getCurrentTransferResponse(sourceKey),
+    loadSessions(),
+  ])
+
+  if (transferSourcePlatform !== sourceKey || transferOverlay.hidden) return
+  transferSourceOptions = buildTransferSourceOptions(
+    sourceKey,
+    sessions.sort((a, b) => b.createdAt - a.createdAt),
+    { currentResponse },
+  )
+  renderTransferSourceList()
+}
+
+function closeTransferDialog() {
+  transferOverlay.hidden = true
+  transferSourcePlatform = null
+  transferSourceOptions = []
+  transferList.innerHTML = ''
+  transferPreview.innerHTML = ''
+}
+
+function selectedTransferSourceOptions(): TransferSourceOption[] {
+  return transferSourceOptions.filter((option) => option.selected)
+}
+
+function renderTransferSourceList() {
+  transferList.innerHTML = ''
+  if (transferSourceOptions.length === 0) {
     const empty = document.createElement('div')
-    empty.className = 'at-popup-empty'
-    empty.textContent = '没有可转移的目标'
-    atPopupEl.appendChild(empty)
+    empty.className = 'history-empty'
+    empty.textContent = '没有可转移的已记录回答'
+    transferList.appendChild(empty)
+    updateTransferSelectedCount()
     return
   }
-  atPopupCandidates.forEach((meta, idx) => {
-    const item = document.createElement('div')
-    item.className = 'at-popup-item' + (idx === atPopupIndex ? ' active' : '')
-    const key = shortcutKey(idx)
-    item.innerHTML =
-      `<span class="at-popup-key">${key ?? ' '}</span>` +
-      `<span class="at-popup-icon">${meta.icon}</span>` +
-      `<span class="at-popup-label">${meta.label}</span>`
-    item.addEventListener('mouseenter', () => {
-      atPopupIndex = idx
-      updateAtPopupActive()
+
+  for (const option of transferSourceOptions) {
+    const item = document.createElement('label')
+    item.className = 'summary-item'
+
+    const checkbox = document.createElement('input')
+    checkbox.type = 'checkbox'
+    checkbox.value = option.id
+    checkbox.checked = option.selected
+
+    const content = document.createElement('span')
+    const title = document.createElement('span')
+    title.className = 'summary-item-title'
+    title.textContent = option.source === 'current' ? '当前页面最新回答' : compactText(option.prompt)
+    const meta = document.createElement('span')
+    meta.className = 'summary-item-meta'
+    meta.textContent = `${formatTime(option.createdAt)} · ${option.source === 'current' ? '当前页面' : '历史记录'}`
+    const preview = document.createElement('span')
+    preview.className = 'summary-item-targets'
+    preview.textContent = compactText(option.text, 72)
+
+    content.append(title, meta, preview)
+    item.append(checkbox, content)
+    checkbox.addEventListener('change', () => {
+      option.selected = checkbox.checked
+      updateTransferSelectedCount()
     })
-    item.addEventListener('click', (ev) => {
-      ev.preventDefault()
-      if (!transferSourceKey) return
-      const target = transferSourceKey
-      transferSourceKey = null
-      void executeTransfer(target, meta.key as AIPlatform)
-      closeAtPopup()
-    })
-    // 防止 mousedown 抢焦点
-    item.addEventListener('mousedown', (e) => e.preventDefault())
-    atPopupEl.appendChild(item)
-  })
-  const hint = document.createElement('div')
-  hint.className = 'at-popup-hint'
-  hint.textContent = '↑↓ 选择 · Enter 确认 · Esc 取消'
-  atPopupEl.appendChild(hint)
-  positionAtPopup()
+    transferList.appendChild(item)
+  }
+  updateTransferSelectedCount()
 }
 
-async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform) {
+function updateTransferSelectedCount() {
+  const count = selectedTransferSourceOptions().length
+  transferSelected.textContent = `已选择 ${count} 条回答`
+  btnTransferSend.disabled = count === 0 || !transferSourcePlatform || !transferTargetSelect.value
+  renderTransferPreview()
+}
+
+function renderTransferPreview() {
+  transferPreview.innerHTML = ''
+  const sourceKey = transferSourcePlatform
+  const sourceLabel = sourceKey ? getPlatformMeta(sourceKey)?.label ?? sourceKey : '来源 AI'
+  const selected = selectedTransferSourceOptions()
+  if (selected.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'summary-preview-empty'
+    empty.textContent = '勾选左侧回答后，这里会显示转移内容'
+    transferPreview.appendChild(empty)
+    return
+  }
+
+  const card = document.createElement('article')
+  card.className = 'summary-preview-card'
+  const header = document.createElement('header')
+  header.className = 'summary-preview-card-header'
+  const title = document.createElement('h4')
+  title.className = 'summary-preview-title'
+  title.textContent = `${sourceLabel} · ${selected.length} 条回答`
+  const meta = document.createElement('div')
+  meta.className = 'summary-preview-meta'
+  meta.textContent = `将发送到 ${getPlatformMeta(transferTargetSelect.value)?.label ?? transferTargetSelect.value}`
+  header.append(title, meta)
+  card.appendChild(header)
+  appendSummaryPreviewSection(card, '转移内容', buildTransferContent(selected, sourceLabel))
+  transferPreview.appendChild(card)
+}
+
+async function onSendTransferSelection() {
+  if (!transferSourcePlatform) return
+  const target = transferTargetSelect.value as AIPlatform
+  const selected = selectedTransferSourceOptions()
+  if (!target || selected.length === 0) {
+    showToast('请选择要转移的回答和目标 AI', 'warn')
+    return
+  }
+  const sourceLabel = getPlatformMeta(transferSourcePlatform)?.label ?? transferSourcePlatform
+  const content = buildTransferContent(selected, sourceLabel)
+  const source = transferSourcePlatform
+  closeTransferDialog()
+  await executeTransfer(source, target, content)
+}
+
+async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform, selectedContent?: string) {
   // 找到源 panel header 按钮,设 busy
   const srcBtn = document.querySelector<HTMLButtonElement>(`.panel-transfer[data-platform="${sourceKey}"]`)
   const tgtBtn = document.querySelector<HTMLButtonElement>(`.panel-transfer[data-platform="${targetKey}"]`)
@@ -1132,58 +1193,61 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform) {
   if (tgtBtn) tgtBtn.disabled = true
 
   try {
-    // 1. 源状态检查
     const srcIframe = panelIframe(sourceKey)
     const srcWin = srcIframe.contentWindow
-    if (!srcWin) throw new Error('源 iframe 不可用')
-    const srcState = await new Promise<{ status: string }>((resolve) => {
-      const onMsg = (e: MessageEvent) => {
-        const d = e.data as { source?: string; type?: string; platform?: AIPlatform; state?: { status: string } } | undefined
-        if (
-          e.source === srcWin &&
-          d?.source === 'aichatroom-content' &&
-          d.type === 'state' &&
-          d.platform === sourceKey &&
-          d.state
-        ) {
-          window.removeEventListener('message', onMsg)
-          resolve(d.state)
-        }
-      }
-      window.addEventListener('message', onMsg)
-      srcWin.postMessage(
-        { source: 'aichatroom-parent', action: 'get-state' },
-        platformOrigin(sourceKey),
-      )
-      setTimeout(() => { window.removeEventListener('message', onMsg); resolve({ status: 'unknown' }) }, 2000)
-    })
+    if (!srcWin && !selectedContent) throw new Error('源 iframe 不可用')
 
-    if (!['idle', 'finished', 'error'].includes(srcState.status)) {
-      showToast(`源 AI 还在生成中,等一会儿再试(当前: ${srcState.status})`, 'warn', 4000)
-      return
+    let content = selectedContent?.trim() ?? ''
+    if (!content) {
+      if (!srcWin) throw new Error('源 iframe 不可用')
+      const srcState = await new Promise<{ status: string }>((resolve) => {
+        const onMsg = (e: MessageEvent) => {
+          const d = e.data as { source?: string; type?: string; platform?: AIPlatform; state?: { status: string } } | undefined
+          if (
+            e.source === srcWin &&
+            d?.source === 'aichatroom-content' &&
+            d.type === 'state' &&
+            d.platform === sourceKey &&
+            d.state
+          ) {
+            window.removeEventListener('message', onMsg)
+            resolve(d.state)
+          }
+        }
+        window.addEventListener('message', onMsg)
+        srcWin.postMessage(
+          { source: 'aichatroom-parent', action: 'get-state' },
+          platformOrigin(sourceKey),
+        )
+        setTimeout(() => { window.removeEventListener('message', onMsg); resolve({ status: 'unknown' }) }, 2000)
+      })
+
+      if (!['idle', 'finished', 'error'].includes(srcState.status)) {
+        showToast(`源 AI 还在生成中,等一会儿再试(当前: ${srcState.status})`, 'warn', 4000)
+        return
+      }
+
+      content = await new Promise<string>((resolve) => {
+        const onMsg = (e: MessageEvent) => {
+          const d = e.data as { source?: string; type?: string; platform?: AIPlatform; text?: string } | undefined
+          if (
+            e.source === srcWin &&
+            d?.source === 'aichatroom-content' &&
+            d.type === 'last-response' &&
+            d.platform === sourceKey
+          ) {
+            window.removeEventListener('message', onMsg)
+            resolve(d.text ?? '')
+          }
+        }
+        window.addEventListener('message', onMsg)
+        srcWin.postMessage(
+          { source: 'aichatroom-parent', action: 'get-last-response' },
+          platformOrigin(sourceKey),
+        )
+        setTimeout(() => { window.removeEventListener('message', onMsg); resolve('') }, 3000)
+      })
     }
-
-    // 2. 取源回答
-    const content = await new Promise<string>((resolve) => {
-      const onMsg = (e: MessageEvent) => {
-        const d = e.data as { source?: string; type?: string; platform?: AIPlatform; text?: string } | undefined
-        if (
-          e.source === srcWin &&
-          d?.source === 'aichatroom-content' &&
-          d.type === 'last-response' &&
-          d.platform === sourceKey
-        ) {
-          window.removeEventListener('message', onMsg)
-          resolve(d.text ?? '')
-        }
-      }
-      window.addEventListener('message', onMsg)
-      srcWin.postMessage(
-        { source: 'aichatroom-parent', action: 'get-last-response' },
-        platformOrigin(sourceKey),
-      )
-      setTimeout(() => { window.removeEventListener('message', onMsg); resolve('') }, 3000)
-    })
 
     if (!content || !content.trim()) {
       showToast('源 AI 还没有回答可转移', 'warn', 4000)
@@ -1858,6 +1922,13 @@ function bindEvents() {
   summaryOverlay.addEventListener('click', (e) => {
     if (e.target === summaryOverlay) closeSummaryDialog()
   })
+  btnTransferClose.addEventListener('click', closeTransferDialog)
+  btnTransferCancel.addEventListener('click', closeTransferDialog)
+  btnTransferSend.addEventListener('click', () => void onSendTransferSelection())
+  transferTargetSelect.addEventListener('change', updateTransferSelectedCount)
+  transferOverlay.addEventListener('click', (e) => {
+    if (e.target === transferOverlay) closeTransferDialog()
+  })
   btnQuote.addEventListener('click', onQuote)
   btnHistory.addEventListener('click', onHistory)
   btnHistoryClose.addEventListener('click', closeHistory)
@@ -1885,6 +1956,7 @@ function bindEvents() {
   })
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !summaryOverlay.hidden) closeSummaryDialog()
+    if (e.key === 'Escape' && !transferOverlay.hidden) closeTransferDialog()
     if (e.key === 'Escape' && !settingsOverlay.hidden) closeSettings()
   })
 
