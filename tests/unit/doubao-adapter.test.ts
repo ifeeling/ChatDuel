@@ -80,4 +80,57 @@ describe('doubao adapter', () => {
     expect(keySpy).toHaveBeenCalledTimes(1)
     expect(keySpy.mock.calls[0][0]).toMatchObject({ key: 'Enter', code: 'Enter' })
   })
+
+  it('reads the latest assistant response from the chat area', async () => {
+    document.body.innerHTML = `
+      <aside>
+        <a>历史对话里的旧标题</a>
+      </aside>
+      <main>
+        <div class="message user">你好</div>
+        <div class="message assistant">
+          <div class="markdown">你好！我是豆包，可以帮你整理资料。</div>
+        </div>
+      </main>
+      <textarea placeholder="发消息或按住空格说话...">下一条输入</textarea>
+    `
+
+    await expect(createDoubaoAdapter().getLastResponse()).resolves.toBe('你好！我是豆包，可以帮你整理资料。')
+  })
+
+  it('reports a finished state with the latest assistant response when one is visible', async () => {
+    document.body.innerHTML = `
+      <main>
+        <div class="message assistant">
+          <p>第一条回答</p>
+        </div>
+        <div class="message assistant">
+          <p>第二条回答</p>
+        </div>
+      </main>
+      <textarea placeholder="发消息..."></textarea>
+    `
+
+    await expect(createDoubaoAdapter().getConversationState()).resolves.toMatchObject({
+      status: 'finished',
+      lastResponse: '第二条回答',
+    })
+  })
+
+  it('ignores guide questions shown after the assistant response', async () => {
+    document.body.innerHTML = `
+      <main>
+        <div class="message user">你好</div>
+        <div class="message assistant">
+          <p>你好呀～有什么我能帮你的吗？</p>
+        </div>
+        <div class="message recommend-item">你能介绍一下自己吗？ →</div>
+        <div class="message recommend-item">你都有哪些功能？ →</div>
+        <div class="message recommend-item">你是如何学习的？ →</div>
+      </main>
+      <textarea placeholder="发消息或按住空格说话..."></textarea>
+    `
+
+    await expect(createDoubaoAdapter().getLastResponse()).resolves.toBe('你好呀～有什么我能帮你的吗？')
+  })
 })

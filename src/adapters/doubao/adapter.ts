@@ -16,6 +16,30 @@ const SEND_BUTTON_SELECTORS = [
   '[role="button"][title*="发送"]',
 ]
 
+const RESPONSE_SELECTORS = [
+  '[data-testid*="assistant" i]',
+  '[data-testid*="answer" i]',
+  '[data-testid*="message" i]',
+  '[class*="assistant" i]',
+  '[class*="answer" i]',
+  '[class*="markdown" i]',
+  '[class*="message" i]',
+  'article',
+  '[role="article"]',
+]
+
+const RESPONSE_EXCLUDE_ANCESTORS = [
+  'aside',
+  'nav',
+  'header',
+  'footer',
+  'textarea',
+  'input',
+  'button',
+  '[role="button"]',
+  '[contenteditable="true"]',
+].join(',')
+
 function queryFirst<T extends Element = Element>(selectors: string[]): T | null {
   for (const selector of selectors) {
     const el = document.querySelector<T>(selector)
@@ -80,6 +104,70 @@ function dispatchEnter(el: HTMLElement): void {
   el.dispatchEvent(new KeyboardEvent('keydown', init))
 }
 
+function normalizeText(text: string): string {
+  return text
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim()
+}
+
+function elementText(el: HTMLElement): string {
+  return normalizeText(el.innerText ?? el.textContent ?? '')
+}
+
+function isHidden(el: HTMLElement): boolean {
+  if (el.hidden || el.getAttribute('aria-hidden') === 'true') return true
+  const style = window.getComputedStyle?.(el)
+  return style?.display === 'none' || style?.visibility === 'hidden'
+}
+
+function isUserMessage(el: HTMLElement): boolean {
+  const marker = elementMarker(el)
+  return /\b(user|human|question|query)\b/i.test(marker) && !/\b(assistant|answer)\b/i.test(marker)
+}
+
+function elementMarker(el: HTMLElement): string {
+  return [
+    el.getAttribute('data-testid') ?? '',
+    el.getAttribute('data-role') ?? '',
+    el.className?.toString() ?? '',
+    el.getAttribute('aria-label') ?? '',
+  ].join(' ')
+}
+
+function responseCandidateScore(el: HTMLElement): number {
+  const marker = elementMarker(el)
+  let score = 0
+  if (/\b(assistant|answer|markdown)\b/i.test(marker) || el.matches('article, [role="article"]')) score += 100
+  if (/\b(recommend|suggest|guide|prompt|chip|card)\b/i.test(marker)) score -= 100
+  if (el.closest('main')) score += 10
+  return score
+}
+
+function getLatestResponseText(): string {
+  const seen = new Set<string>()
+  const candidates = [...document.querySelectorAll<HTMLElement>(RESPONSE_SELECTORS.join(','))]
+    .filter((el) => !isHidden(el))
+    .filter((el) => !el.closest(RESPONSE_EXCLUDE_ANCESTORS))
+    .filter((el) => !isUserMessage(el))
+    .map((el, index) => ({ text: elementText(el), score: responseCandidateScore(el), index }))
+    .filter((candidate) => candidate.text.length > 0)
+    .filter((candidate) => {
+      if (seen.has(candidate.text)) return false
+      seen.add(candidate.text)
+      return true
+    })
+    .sort((a, b) => {
+      if (a.score !== b.score) return a.score - b.score
+      return a.index - b.index
+    })
+
+  return candidates[candidates.length - 1]?.text ?? ''
+}
+
 export function createDoubaoAdapter(): AIAdapter {
   let lastEventHandler: ((e: StreamEvent) => void) | null = null
 
@@ -121,11 +209,13 @@ export function createDoubaoAdapter(): AIAdapter {
     },
 
     async getLastResponse() {
-      return ''
+      return getLatestResponseText()
     },
 
     async getConversationState(): Promise<ConversationState> {
       if (!queryFirst(INPUT_SELECTORS)) return { status: 'error', errorMessage: '豆包输入框未识别' }
+      const lastResponse = getLatestResponseText()
+      if (lastResponse) return { status: 'finished', lastResponse }
       return { status: 'idle' }
     },
 

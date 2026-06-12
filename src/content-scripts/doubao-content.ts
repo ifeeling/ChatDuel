@@ -62,6 +62,22 @@ window.addEventListener('message', (e: MessageEvent) => {
       .catch(() => replyToParent(e, getProbeState()))
     return
   }
+  if (data.action === 'get-last-response') {
+    adapter.getLastResponse()
+      .then((text) => {
+        e.source?.postMessage(
+          { source: 'aichatroom-content', type: 'last-response', platform: PLATFORM, text },
+          { targetOrigin: '*' },
+        )
+      })
+      .catch(() => {
+        e.source?.postMessage(
+          { source: 'aichatroom-content', type: 'last-response', platform: PLATFORM, text: '' },
+          { targetOrigin: '*' },
+        )
+      })
+    return
+  }
   if (data.action === 'write-and-send') {
     const text = (data as { text?: string }).text ?? ''
     adapter.sendMessage(text)
@@ -101,8 +117,15 @@ chrome.runtime.onMessage.addListener((msg: SwToContent, _sender, sendResponse) =
     return true
   }
   if (msg.type === 'get-last-response') {
-    const reply: ContentToSw = { type: 'last-response', platform: PLATFORM, text: '' }
-    sendResponse(reply)
+    adapter.getLastResponse()
+      .then((text) => {
+        const reply: ContentToSw = { type: 'last-response', platform: PLATFORM, text }
+        sendResponse(reply)
+      })
+      .catch(() => {
+        const reply: ContentToSw = { type: 'last-response', platform: PLATFORM, text: '' }
+        sendResponse(reply)
+      })
     return true
   }
   if (msg.type === 'write-and-send') {
