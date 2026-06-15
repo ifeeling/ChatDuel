@@ -18,6 +18,10 @@
 //   - 文件 → dataURL → postMessage 到 iframe → adapter 接管
 //   - ChatGPT 走原生 <input type=file>,Gemini 走 paste 事件 fallback
 //   - onSend 收集各平台结果,合并 toast;全部/部分失败时复制剪贴板兜底
+//
+// 历史与会话:
+//   - "历史"按每次用户提交保存问题、实际发送内容、附件和 AI 回复,用于回看、总结、转发。
+//   - "会话"只保存官方网页的具体会话 URL,用于回到旧对话继续聊,不保存 AI 回复正文。
 
 import type { AIPlatform, ConversationEntry, ConversationState, Session, SessionAttachment, SessionResponse, SessionSummary, SummaryMode } from '../types'
 import {
@@ -323,6 +327,7 @@ function selectSettingsTab(tab: string) {
   document.querySelectorAll<HTMLElement>('.settings-panel[data-settings-panel]').forEach((panel) => {
     panel.classList.toggle('active', panel.dataset.settingsPanel === tab)
   })
+  btnSettingsSave.hidden = tab === 'help'
 }
 
 function toggleInputExpanded() {

@@ -98,7 +98,7 @@
           <button class="settings-nav-item active" type="button" data-settings-tab="sites">显示站点</button>
           <button class="settings-nav-item" type="button" data-settings-tab="prompts">提示词</button>
           <button class="settings-nav-item" type="button" disabled>快捷键</button>
-          <button class="settings-nav-item" type="button" disabled>使用帮助</button>
+          <button class="settings-nav-item" type="button" data-settings-tab="help">使用帮助</button>
         </nav>
         <main class="settings-main">
           <div class="settings-panel active" data-settings-panel="sites">
@@ -153,6 +153,35 @@
             </label>
             <p class="settings-help">可用变量：{{historyBlock}} 表示最近一轮历史记录。</p>
             <button id="btn-reset-summary-template" class="settings-secondary" type="button">恢复默认总结提示词</button>
+          </div>
+          <div class="settings-panel" data-settings-panel="help">
+            <p class="settings-lead">常用功能说明</p>
+            <div class="help-grid">
+              <section class="help-card">
+                <h3>发送与指定 AI</h3>
+                <p>在底部共用输入框输入问题后点击发送，会同时发给当前启用的 AI。输入 @ 可以指定只发给某几个 AI。</p>
+              </section>
+              <section class="help-card">
+                <h3>附件</h3>
+                <p>点击 + 或直接粘贴图片可以附加文件。图片会尽量自动上传到支持的平台；TXT、Markdown、CSV、PDF、XLSX 会按当前能力处理。</p>
+              </section>
+              <section class="help-card">
+                <h3>转发</h3>
+                <p>每个 AI 顶部的“转发”按钮可以选择该 AI 以前的回答，再转给其它 AI。默认选最新回答，也可以多选。</p>
+              </section>
+              <section class="help-card">
+                <h3>总结</h3>
+                <p>“总结”会从历史记录中选择一条或多条问答记录，生成对比总结提示词，再发送给指定 AI。</p>
+              </section>
+              <section class="help-card">
+                <h3>历史</h3>
+                <p>“历史”保存每一次用户提交的问题、实际发送内容、附件和 AI 回复。它主要用于回看、复制 Markdown、总结和转发。</p>
+              </section>
+              <section class="help-card">
+                <h3>会话</h3>
+                <p>“会话”保存官方网页的会话链接，不保存 AI 回复正文。点击会话历史可以回到之前的官方对话继续聊。</p>
+              </section>
+            </div>
           </div>
           <button id="btn-settings-save" class="settings-save" type="button">保存</button>
         </main>

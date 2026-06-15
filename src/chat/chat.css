@@ -679,6 +679,27 @@ body { overflow: hidden; }
 .settings-secondary:hover {
   border-color: var(--accent);
 }
+.help-grid {
+  max-width: 840px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+.help-card {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-3);
+}
+.help-card h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+.help-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
 
 /* ---------- History ---------- */
 .history-overlay {

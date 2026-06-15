@@ -49,6 +49,23 @@ describe('chat.html', () => {
     expect(document.querySelector('#btn-conversation-close')).toBeTruthy()
   })
 
+  it('renders enabled help content in settings', () => {
+    document.body.innerHTML = html
+
+    const helpTab = document.querySelector<HTMLButtonElement>('[data-settings-tab="help"]')
+    const helpPanel = document.querySelector<HTMLElement>('[data-settings-panel="help"]')
+    const saveButton = document.querySelector<HTMLButtonElement>('#btn-settings-save')
+    const helpText = helpPanel?.textContent ?? ''
+
+    expect(helpTab).toBeTruthy()
+    expect(helpTab?.disabled).toBe(false)
+    expect(helpPanel?.contains(saveButton)).toBe(false)
+    expect(helpText).toContain('历史')
+    expect(helpText).toContain('每一次用户提交的问题')
+    expect(helpText).toContain('会话')
+    expect(helpText).toContain('官方网页的会话链接')
+  })
+
   it('renders transfer source picker controls', () => {
     document.body.innerHTML = html
 
