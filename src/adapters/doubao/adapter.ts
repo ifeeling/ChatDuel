@@ -40,6 +40,17 @@ const RESPONSE_EXCLUDE_ANCESTORS = [
   '[contenteditable="true"]',
 ].join(',')
 
+export interface DoubaoAttachmentProbeResult {
+  inputFound: boolean
+  explicitFileInputFound: boolean
+  imageFileInputFound: boolean
+  documentFileInputFound: boolean
+  misleadingCreationShortcutFound: boolean
+  canAutoUploadImage: false
+  canAutoUploadFile: false
+  reason: string
+}
+
 function queryFirst<T extends Element = Element>(selectors: string[]): T | null {
   for (const selector of selectors) {
     const el = document.querySelector<T>(selector)
@@ -112,6 +123,33 @@ function normalizeText(text: string): string {
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[ \t]{2,}/g, ' ')
     .trim()
+}
+
+function fileInputAccepts(input: HTMLInputElement, patterns: RegExp[]): boolean {
+  const accept = input.accept.toLowerCase()
+  if (!accept) return true
+  return patterns.some((pattern) => pattern.test(accept))
+}
+
+export function probeDoubaoAttachmentControls(): DoubaoAttachmentProbeResult {
+  const inputFound = !!queryFirst(INPUT_SELECTORS)
+  const fileInputs = [...document.querySelectorAll<HTMLInputElement>('input[type="file"]')]
+  const explicitFileInputFound = fileInputs.length > 0
+  const imageFileInputFound = fileInputs.some((input) => fileInputAccepts(input, [/image\/\*/, /image\//, /\.png/, /\.jpe?g/, /\.webp/, /\.gif/]))
+  const documentFileInputFound = fileInputs.some((input) => fileInputAccepts(input, [/\.pdf/, /\.xlsx/, /application\/pdf/, /spreadsheet/]))
+  const misleadingCreationShortcutFound = [...document.querySelectorAll<HTMLElement>('button, [role="button"], a')]
+    .some((el) => /图像生成|AI 创作|帮我写作|编程/.test(normalizeText(el.textContent ?? '')))
+
+  return {
+    inputFound,
+    explicitFileInputFound,
+    imageFileInputFound,
+    documentFileInputFound,
+    misleadingCreationShortcutFound,
+    canAutoUploadImage: false,
+    canAutoUploadFile: false,
+    reason: explicitFileInputFound ? '发现上传入口,但豆包自动上传流程尚未验证' : '未发现豆包可自动使用的上传入口',
+  }
 }
 
 function elementText(el: HTMLElement): string {
@@ -205,7 +243,8 @@ export function createDoubaoAdapter(): AIAdapter {
     },
 
     async attachImage() {
-      throw new Error('doubao image upload not supported')
+      const probe = probeDoubaoAttachmentControls()
+      throw new Error(`doubao image upload not supported: ${probe.reason}`)
     },
 
     async getLastResponse() {

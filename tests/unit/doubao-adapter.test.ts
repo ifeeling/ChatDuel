@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createDoubaoAdapter } from '../../src/adapters/doubao/adapter'
+import { createDoubaoAdapter, probeDoubaoAttachmentControls } from '../../src/adapters/doubao/adapter'
 
 describe('doubao adapter', () => {
   beforeEach(() => {
@@ -132,5 +132,46 @@ describe('doubao adapter', () => {
     `
 
     await expect(createDoubaoAdapter().getLastResponse()).resolves.toBe('你好呀～有什么我能帮你的吗？')
+  })
+
+  it('does not treat Doubao creation shortcuts as attachment upload support', () => {
+    document.body.innerHTML = `
+      <main>
+        <button>图像生成</button>
+        <button>帮我写作</button>
+        <button>更多</button>
+        <textarea placeholder="发消息或按住空格说话..."></textarea>
+      </main>
+    `
+
+    expect(probeDoubaoAttachmentControls()).toEqual({
+      inputFound: true,
+      explicitFileInputFound: false,
+      imageFileInputFound: false,
+      documentFileInputFound: false,
+      misleadingCreationShortcutFound: true,
+      canAutoUploadImage: false,
+      canAutoUploadFile: false,
+      reason: '未发现豆包可自动使用的上传入口',
+    })
+  })
+
+  it('detects explicit file inputs as probe evidence without enabling auto upload yet', () => {
+    document.body.innerHTML = `
+      <main>
+        <input type="file" accept="image/*,.pdf,.xlsx">
+        <textarea placeholder="发消息或按住空格说话..."></textarea>
+      </main>
+    `
+
+    expect(probeDoubaoAttachmentControls()).toMatchObject({
+      inputFound: true,
+      explicitFileInputFound: true,
+      imageFileInputFound: true,
+      documentFileInputFound: true,
+      canAutoUploadImage: false,
+      canAutoUploadFile: false,
+      reason: '发现上传入口,但豆包自动上传流程尚未验证',
+    })
   })
 })
