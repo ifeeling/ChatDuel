@@ -58,6 +58,7 @@ import { formatBytes, formatSessionMarkdown, summarizeSessionTargets } from '../
 import { buildSummaryPrompt, hasCapturedResponses } from '../lib/summary-builder'
 import { evaluateResponseCapture, type ResponseCaptureProgress } from '../lib/response-capture'
 import { buildTransferContent, buildTransferSourceOptions, type TransferSourceOption } from '../lib/transfer-source'
+import { bindComposerFocusRestorer } from '../lib/focus-restore'
 
 // ---------- DOM 引用 ----------
 const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => document.querySelector<T>(sel)!
@@ -1932,6 +1933,17 @@ function setupOpenButtons() {
 
 // ---------- 事件绑定 ----------
 function bindEvents() {
+  bindComposerFocusRestorer({
+    input: inputEl,
+    composer,
+    isBlocked: () => (
+      !settingsOverlay.hidden ||
+      !historyOverlay.hidden ||
+      !summaryOverlay.hidden ||
+      !transferOverlay.hidden
+    ),
+  })
+
   sendBtn.addEventListener('click', () => void onSend())
   inputEl.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !atPopupOpen) {
