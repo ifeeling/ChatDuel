@@ -69,11 +69,11 @@ describe('file limits', () => {
 })
 
 describe('supportsAutoUpload', () => {
-  it('allows image upload for ChatGPT and Gemini', () => {
+  it('allows image upload for ChatGPT, Gemini, and Doubao', () => {
     const image = classifyFile(new File(['x'], 'photo.png', { type: 'image/png' }))
     expect(supportsAutoUpload('chatgpt', image)).toBe(true)
     expect(supportsAutoUpload('gemini', image)).toBe(true)
-    expect(supportsAutoUpload('doubao', image)).toBe(false)
+    expect(supportsAutoUpload('doubao', image)).toBe(true)
   })
 
   it('does not auto-upload document files to ChatGPT in v1', () => {
@@ -85,22 +85,22 @@ describe('supportsAutoUpload', () => {
 })
 
 describe('buildAttachmentDeliveryPlan', () => {
-  it('keeps text delivery for platforms that cannot auto-upload the file', () => {
+  it('sends image uploads to all image-capable platforms', () => {
     const image = classifyFile(new File(['x'], 'photo.png', { type: 'image/png' }))
     const plan = buildAttachmentDeliveryPlan(['chatgpt', 'gemini', 'doubao'], image, true)
 
     expect(plan.sendTargets).toEqual(['chatgpt', 'gemini', 'doubao'])
-    expect(plan.autoUploadTargets).toEqual(['chatgpt', 'gemini'])
-    expect(plan.manualUploadTargets).toEqual(['doubao'])
+    expect(plan.autoUploadTargets).toEqual(['chatgpt', 'gemini', 'doubao'])
+    expect(plan.manualUploadTargets).toEqual([])
   })
 
   it('does not send an empty text-only message to unsupported platforms', () => {
-    const image = classifyFile(new File(['x'], 'photo.png', { type: 'image/png' }))
-    const plan = buildAttachmentDeliveryPlan(['doubao'], image, false)
+    const documentFile = classifyFile(new File(['x'], 'book.pdf', { type: 'application/pdf' }))
+    const plan = buildAttachmentDeliveryPlan(['chatgpt'], documentFile, false)
 
     expect(plan.sendTargets).toEqual([])
     expect(plan.autoUploadTargets).toEqual([])
-    expect(plan.manualUploadTargets).toEqual(['doubao'])
+    expect(plan.manualUploadTargets).toEqual(['chatgpt'])
   })
 
   it('keeps all targets when there is no upload attachment', () => {

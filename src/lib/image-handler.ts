@@ -17,11 +17,13 @@ export function buildDataTransferFromFile(file: File): DataTransfer {
 }
 
 export function dispatchPaste(target: HTMLElement, dt: DataTransfer, eventType: 'paste' | 'drop' = 'paste'): void {
-  const event = new ClipboardEvent(eventType, {
-    clipboardData: dt,
-    bubbles: true,
-    cancelable: true,
-  })
+  const event = typeof ClipboardEvent === 'undefined'
+    ? new Event(eventType, { bubbles: true, cancelable: true })
+    : new ClipboardEvent(eventType, {
+      clipboardData: dt,
+      bubbles: true,
+      cancelable: true,
+    })
   try {
     Object.defineProperty(event, 'clipboardData', { value: dt, configurable: true })
   } catch {

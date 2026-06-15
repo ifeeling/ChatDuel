@@ -53,7 +53,9 @@ function replyToParent(e: MessageEvent, state: ConversationState) {
 postReadyToParent()
 
 window.addEventListener('message', (e: MessageEvent) => {
-  const data = e.data as { source?: string; action?: string } | undefined
+  const data = e.data as
+    | { source?: string; action?: string; text?: string; imageDataUrl?: string; imageMime?: string; imageName?: string }
+    | undefined
   if (!data || data.source !== 'aichatroom-parent') return
 
   if (data.action === 'get-state') {
@@ -79,8 +81,11 @@ window.addEventListener('message', (e: MessageEvent) => {
     return
   }
   if (data.action === 'write-and-send') {
-    const text = (data as { text?: string }).text ?? ''
-    adapter.sendMessage(text)
+    const text = data.text ?? ''
+    const file = data.imageDataUrl
+      ? dataUrlToFile(data.imageDataUrl, data.imageMime || 'image/png', data.imageName || 'image.png')
+      : undefined
+    adapter.sendMessage(text, file)
       .then(() => {
         e.source?.postMessage(
           { source: 'aichatroom-content', event: 'result', action: 'write-and-send', platform: PLATFORM, ok: true },
@@ -102,6 +107,16 @@ window.addEventListener('message', (e: MessageEvent) => {
       })
   }
 })
+
+function dataUrlToFile(dataUrl: string, mime: string, name: string): File {
+  const commaIdx = dataUrl.indexOf(',')
+  const b64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl
+  const bin = atob(b64)
+  const len = bin.length
+  const bytes = new Uint8Array(len)
+  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i)
+  return new File([bytes], name, { type: mime })
+}
 
 chrome.runtime.onMessage.addListener((msg: SwToContent, _sender, sendResponse) => {
   if (msg.type === 'get-state') {

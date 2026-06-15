@@ -1,5 +1,24 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDoubaoAdapter, probeDoubaoAttachmentControls } from '../../src/adapters/doubao/adapter'
+
+beforeAll(() => {
+  if (typeof globalThis.DataTransfer === 'undefined') {
+    class DT {
+      items: { add: (f: File) => void }
+      files: File[]
+      constructor() {
+        const files: File[] = []
+        this.files = files
+        this.items = {
+          add: (f: File) => {
+            files.push(f)
+          },
+        }
+      }
+    }
+    ;(globalThis as unknown as { DataTransfer: typeof DataTransfer }).DataTransfer = DT as unknown as typeof DataTransfer
+  }
+})
 
 describe('doubao adapter', () => {
   beforeEach(() => {
@@ -156,7 +175,7 @@ describe('doubao adapter', () => {
     })
   })
 
-  it('detects explicit file inputs as probe evidence without enabling auto upload yet', () => {
+  it('detects explicit image file inputs as auto-upload evidence', () => {
     document.body.innerHTML = `
       <main>
         <input type="file" accept="image/*,.pdf,.xlsx">
@@ -169,9 +188,40 @@ describe('doubao adapter', () => {
       explicitFileInputFound: true,
       imageFileInputFound: true,
       documentFileInputFound: true,
-      canAutoUploadImage: false,
+      canAutoUploadImage: true,
       canAutoUploadFile: false,
-      reason: '发现上传入口,但豆包自动上传流程尚未验证',
+      reason: '发现图片上传入口',
     })
+  })
+
+  it('attaches an image through an explicit file input when Doubao exposes one', async () => {
+    document.body.innerHTML = '<input type="file" accept="image/*">'
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]')!
+    const changeSpy = vi.fn()
+    input.addEventListener('change', changeSpy)
+
+    const file = new File(['image'], 'kitty.png', { type: 'image/png' })
+    await createDoubaoAdapter().attachImage(file)
+
+    expect(input.files?.[0]?.name).toBe('kitty.png')
+    expect(changeSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to pasting an image into the composer when a preview appears', async () => {
+    document.body.innerHTML = `
+      <div class="composer">
+        <textarea placeholder="发消息或按住空格说话..."></textarea>
+      </div>
+    `
+    const composer = document.querySelector('.composer')!
+    const textarea = document.querySelector('textarea')!
+    textarea.addEventListener('paste', () => {
+      composer.append(document.createElement('img'))
+    })
+
+    const file = new File(['image'], 'kitty.png', { type: 'image/png' })
+    await createDoubaoAdapter().attachImage(file)
+
+    expect(composer.querySelector('img')).toBeTruthy()
   })
 })

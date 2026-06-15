@@ -1,5 +1,6 @@
 import type { AIAdapter } from '../base'
 import type { ConversationState, StreamEvent } from '../../types'
+import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
 
 const INPUT_SELECTORS = [
   'textarea[placeholder*="发消息"]',
@@ -46,8 +47,8 @@ export interface DoubaoAttachmentProbeResult {
   imageFileInputFound: boolean
   documentFileInputFound: boolean
   misleadingCreationShortcutFound: boolean
-  canAutoUploadImage: false
-  canAutoUploadFile: false
+  canAutoUploadImage: boolean
+  canAutoUploadFile: boolean
   reason: string
 }
 
@@ -57,6 +58,73 @@ function queryFirst<T extends Element = Element>(selectors: string[]): T | null 
     if (el) return el
   }
   return null
+}
+
+function findFileInput(): HTMLInputElement | null {
+  const candidates = [
+    "input[type='file'][accept*='image']",
+    "input[type='file'][aria-label*='upload' i]",
+    "input[type='file'][aria-label*='图片' i]",
+    "input[type='file'][aria-label*='附件' i]",
+    "input[type='file']",
+  ]
+  for (const selector of candidates) {
+    const input = document.querySelector<HTMLInputElement>(selector)
+    if (input) return input
+  }
+  return null
+}
+
+function composerScope(input: HTMLElement): HTMLElement {
+  let scope: HTMLElement = input
+  for (let depth = 0; scope.parentElement && depth < 5; depth += 1) {
+    scope = scope.parentElement
+    if (scope.querySelector('textarea, [contenteditable="true"], [role="textbox"]')) return scope
+  }
+  return input
+}
+
+function attachmentEvidenceCount(scope: HTMLElement, file: File): number {
+  const mediaCount = scope.querySelectorAll('img, video, canvas').length
+  const fileNameHit = normalizeText(scope.textContent ?? '').includes(file.name) ? 1 : 0
+  const uploadMarks = scope.querySelectorAll('[class*="upload" i], [class*="attachment" i], [class*="file" i], [data-testid*="upload" i]').length
+  return mediaCount + fileNameHit + uploadMarks
+}
+
+async function waitForAttachmentEvidence(scope: HTMLElement, file: File, baseline: number, maxMs = 1500): Promise<boolean> {
+  const start = Date.now()
+  while (Date.now() - start < maxMs) {
+    if (attachmentEvidenceCount(scope, file) > baseline) return true
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  return false
+}
+
+async function attachImageToFileInput(file: File): Promise<boolean> {
+  const input = findFileInput()
+  if (!input) return false
+  const dt = buildDataTransferFromFile(file)
+  try {
+    input.files = dt.files
+  } catch {
+    Object.defineProperty(input, 'files', { value: dt.files, configurable: true })
+  }
+  input.dispatchEvent(new Event('change', { bubbles: true }))
+  return true
+}
+
+async function pasteImageIntoComposer(file: File): Promise<boolean> {
+  const box = queryFirst<HTMLElement>(INPUT_SELECTORS)
+  if (!box) return false
+  const scope = composerScope(box)
+  const baseline = attachmentEvidenceCount(scope, file)
+  try {
+    box.focus()
+  } catch {
+    /* focus may be blocked in embedded frames */
+  }
+  dispatchPaste(box, buildDataTransferFromFile(file))
+  return waitForAttachmentEvidence(scope, file, baseline)
 }
 
 function writeNativeTextareaValue(el: HTMLTextAreaElement, text: string): void {
@@ -146,9 +214,9 @@ export function probeDoubaoAttachmentControls(): DoubaoAttachmentProbeResult {
     imageFileInputFound,
     documentFileInputFound,
     misleadingCreationShortcutFound,
-    canAutoUploadImage: false,
+    canAutoUploadImage: imageFileInputFound,
     canAutoUploadFile: false,
-    reason: explicitFileInputFound ? '发现上传入口,但豆包自动上传流程尚未验证' : '未发现豆包可自动使用的上传入口',
+    reason: imageFileInputFound ? '发现图片上传入口' : '未发现豆包可自动使用的上传入口',
   }
 }
 
@@ -242,9 +310,11 @@ export function createDoubaoAdapter(): AIAdapter {
       await this.triggerSend()
     },
 
-    async attachImage() {
+    async attachImage(file: File) {
+      if (await attachImageToFileInput(file)) return
+      if (await pasteImageIntoComposer(file)) return
       const probe = probeDoubaoAttachmentControls()
-      throw new Error(`doubao image upload not supported: ${probe.reason}`)
+      throw new Error(`doubao image upload failed: ${probe.reason}`)
     },
 
     async getLastResponse() {
