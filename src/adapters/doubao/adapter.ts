@@ -304,9 +304,11 @@ export function createDoubaoAdapter(): AIAdapter {
       dispatchEnter(box)
     },
 
-    async sendMessage(text: string) {
+    async sendMessage(text: string, image?: File) {
       await this.writeText(text)
       await new Promise((resolve) => setTimeout(resolve, 80))
+      if (image) await this.attachImage(image)
+      await new Promise((resolve) => setTimeout(resolve, 200))
       await this.triggerSend()
     },
 

@@ -224,4 +224,24 @@ describe('doubao adapter', () => {
 
     expect(composer.querySelector('img')).toBeTruthy()
   })
+
+  it('attaches an image before sending a message when image is provided', async () => {
+    document.body.innerHTML = `
+      <div class="composer">
+        <input type="file" accept="image/*">
+        <textarea placeholder="发消息或按住空格说话..."></textarea>
+        <button aria-label="发送">发送</button>
+      </div>
+    `
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]')!
+    const sendSpy = vi.fn()
+    document.querySelector('button')!.addEventListener('click', sendSpy)
+
+    const file = new File(['image'], 'kitty.png', { type: 'image/png' })
+    await createDoubaoAdapter().sendMessage('这是什么?', file)
+
+    expect(document.querySelector<HTMLTextAreaElement>('textarea')!.value).toBe('这是什么?')
+    expect(input.files?.[0]?.name).toBe('kitty.png')
+    expect(sendSpy).toHaveBeenCalledTimes(1)
+  })
 })
