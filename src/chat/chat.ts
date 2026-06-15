@@ -19,7 +19,7 @@
 //   - ChatGPT 走原生 <input type=file>,Gemini 走 paste 事件 fallback
 //   - onSend 收集各平台结果,合并 toast;全部/部分失败时复制剪贴板兜底
 
-import type { AIPlatform, ConversationState, Session, SessionAttachment, SessionResponse, SessionSummary, SummaryMode } from '../types'
+import type { AIPlatform, ConversationEntry, ConversationState, Session, SessionAttachment, SessionResponse, SessionSummary, SummaryMode } from '../types'
 import {
   FileTooLargeError,
   SUPPORTED_FILE_FORMATS_TEXT,
@@ -59,6 +59,8 @@ import { buildSummaryPrompt, hasCapturedResponses } from '../lib/summary-builder
 import { evaluateResponseCapture, type ResponseCaptureProgress } from '../lib/response-capture'
 import { buildTransferContent, buildTransferSourceOptions, type TransferSourceOption } from '../lib/transfer-source'
 import { bindComposerFocusRestorer } from '../lib/focus-restore'
+import { filterSessionsByTitle } from '../lib/history-search'
+import { deleteConversation, isSpecificConversationUrl, loadConversations, upsertConversation } from '../lib/conversation-store'
 
 // ---------- DOM 引用 ----------
 const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => document.querySelector<T>(sel)!
@@ -76,6 +78,7 @@ const composerToolbar = $<HTMLDivElement>('.composer-toolbar')
 const btnQuote = $<HTMLButtonElement>('#btn-quote')
 const btnSummary = $<HTMLButtonElement>('#btn-summary')
 const btnHistory = $<HTMLButtonElement>('#btn-history')
+const btnConversations = $<HTMLButtonElement>('#btn-conversations')
 const btnSettings = $<HTMLButtonElement>('#btn-settings')
 const btnExpandInput = $<HTMLButtonElement>('#btn-expand-input')
 const btnImage = $<HTMLButtonElement>('#btn-image')
@@ -95,8 +98,12 @@ const btnResetTransferTemplate = $<HTMLButtonElement>('#btn-reset-transfer-templ
 const btnResetSummaryTemplate = $<HTMLButtonElement>('#btn-reset-summary-template')
 const historyOverlay = $<HTMLDivElement>('#history-overlay')
 const btnHistoryClose = $<HTMLButtonElement>('#btn-history-close')
+const historySearchInput = $<HTMLInputElement>('#history-search')
 const historyList = $<HTMLDivElement>('#history-list')
 const historyDetail = $<HTMLDivElement>('#history-detail')
+const conversationOverlay = $<HTMLDivElement>('#conversation-overlay')
+const btnConversationClose = $<HTMLButtonElement>('#btn-conversation-close')
+const conversationList = $<HTMLDivElement>('#conversation-list')
 const summaryOverlay = $<HTMLDivElement>('#summary-overlay')
 const btnSummaryClose = $<HTMLButtonElement>('#btn-summary-close')
 const btnSummaryCancel = $<HTMLButtonElement>('#btn-summary-cancel')
@@ -125,6 +132,7 @@ const RESPONSE_BACKFILL_MAX_ATTEMPTS = 20
 const RESPONSE_STABLE_REQUIRED_POLLS = 2
 let userSettings: UserSettings = DEFAULT_USER_SETTINGS
 let historySessions: Session[] = []
+let conversationEntries: ConversationEntry[] = []
 let selectedHistoryId: string | null = null
 let summarySessions: Session[] = []
 const selectedSummaryIds: Set<string> = new Set()
@@ -563,6 +571,36 @@ function requestConversationState(p: AIPlatform, timeoutMs = 3000): Promise<Conv
   })
 }
 
+function requestPlatformLocation(p: AIPlatform, timeoutMs = 1500): Promise<string> {
+  const win = panelIframe(p).contentWindow
+  if (!win) return Promise.resolve('')
+  return new Promise<string>((resolve) => {
+    const onMsg = (e: MessageEvent) => {
+      const d = e.data as {
+        source?: string
+        type?: string
+        platform?: AIPlatform
+        href?: string
+      } | undefined
+      if (
+        e.source === win &&
+        d?.source === 'aichatroom-content' &&
+        d.type === 'location' &&
+        d.platform === p
+      ) {
+        window.removeEventListener('message', onMsg)
+        resolve(d.href ?? '')
+      }
+    }
+    window.addEventListener('message', onMsg)
+    postToIframe(p, 'get-location')
+    setTimeout(() => {
+      window.removeEventListener('message', onMsg)
+      resolve('')
+    }, timeoutMs)
+  })
+}
+
 async function captureResponseBaselines(targets: AIPlatform[]): Promise<Partial<Record<AIPlatform, string>>> {
   const entries = await Promise.all(
     targets.map(async (platform) => [platform, await requestLastResponse(platform, 1500)] as const),
@@ -791,6 +829,7 @@ async function onSend() {
       console.error('[AIChatRoom chat] failed to update session history', e)
     }
   }
+  scheduleConversationSnapshot(text, results.filter((r) => r.ok).map((r) => r.p))
 
   // 3. 根据结果给一个合并的 toast
   const okCount = results.filter((r) => r.ok).length
@@ -1397,7 +1436,16 @@ function renderHistoryList() {
     return
   }
 
-  for (const session of historySessions) {
+  const visibleSessions = filterSessionsByTitle(historySessions, historySearchInput.value)
+  if (visibleSessions.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'history-empty'
+    empty.textContent = '没有匹配的历史记录'
+    historyList.appendChild(empty)
+    return
+  }
+
+  for (const session of visibleSessions) {
     const item = document.createElement('button')
     item.type = 'button'
     item.className = `history-item${session.id === selectedHistoryId ? ' active' : ''}`
@@ -1424,6 +1472,13 @@ function renderHistoryList() {
     })
     historyList.appendChild(item)
   }
+}
+
+function selectFirstVisibleHistorySession() {
+  const visibleSessions = filterSessionsByTitle(historySessions, historySearchInput.value)
+  selectedHistoryId = visibleSessions[0]?.id ?? null
+  renderHistoryList()
+  renderHistoryDetail(visibleSessions[0])
 }
 
 function renderHistoryDetail(session?: Session) {
@@ -1538,9 +1593,7 @@ async function deleteHistorySession(id: string) {
   if (!confirm('确定删除这条历史记录吗？')) return
   await deleteSession(id)
   historySessions = historySessions.filter((s) => s.id !== id)
-  selectedHistoryId = historySessions[0]?.id ?? null
-  renderHistoryList()
-  renderHistoryDetail(historySessions[0])
+  selectFirstVisibleHistorySession()
   showToast('历史记录已删除', 'success', 1600)
 }
 
@@ -1566,6 +1619,7 @@ async function refreshSessionResponses(session: Session): Promise<Session> {
 
 async function openHistory() {
   historyOverlay.hidden = false
+  historySearchInput.value = ''
   historyDetail.innerHTML = '<div class="history-empty">正在刷新最新回答…</div>'
   historySessions = (await loadSessions()).sort((a, b) => b.createdAt - a.createdAt)
   if (historySessions[0]) {
@@ -1579,6 +1633,122 @@ async function openHistory() {
 
 function closeHistory() {
   historyOverlay.hidden = true
+}
+
+function conversationId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+  return `conversation-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function conversationPlatformLabels(entry: ConversationEntry): string {
+  return entry.enabledPlatforms
+    .filter((platform) => entry.platformUrls[platform])
+    .map((platform) => getPlatformMeta(platform)?.label ?? platform)
+    .join(' / ')
+}
+
+async function saveConversationSnapshot(title: string, platforms: AIPlatform[]) {
+  const entries = await Promise.all(
+    platforms.map(async (platform) => [platform, await requestPlatformLocation(platform)] as const),
+  )
+  const platformUrls = Object.fromEntries(
+    entries.filter(([platform, url]) => isSpecificConversationUrl(platform, url)),
+  ) as Partial<Record<AIPlatform, string>>
+  if (Object.keys(platformUrls).length === 0) return
+
+  await upsertConversation({
+    id: conversationId(),
+    title: compactText(title, 90),
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    enabledPlatforms: platforms,
+    platformUrls,
+  })
+}
+
+function scheduleConversationSnapshot(title: string, platforms: AIPlatform[]) {
+  const activeTargets = platforms.filter((platform) => getPlatformCapabilities(platform).supportsEmbed)
+  if (activeTargets.length === 0) return
+  setTimeout(() => void saveConversationSnapshot(title, activeTargets), 1500)
+  setTimeout(() => void saveConversationSnapshot(title, activeTargets), 4500)
+}
+
+function renderConversationList() {
+  conversationList.innerHTML = ''
+  if (conversationEntries.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'history-empty'
+    empty.textContent = '还没有会话历史'
+    conversationList.appendChild(empty)
+    return
+  }
+
+  for (const entry of conversationEntries) {
+    const item = document.createElement('button')
+    item.type = 'button'
+    item.className = 'conversation-item'
+
+    const main = document.createElement('span')
+    main.className = 'conversation-main'
+    const title = document.createElement('span')
+    title.className = 'conversation-item-title'
+    title.textContent = entry.title
+    const platforms = document.createElement('span')
+    platforms.className = 'conversation-item-platforms'
+    platforms.textContent = conversationPlatformLabels(entry)
+    main.append(title, platforms)
+
+    const time = document.createElement('span')
+    time.className = 'conversation-item-time'
+    time.textContent = formatTime(entry.updatedAt)
+
+    const deleteBtn = document.createElement('button')
+    deleteBtn.type = 'button'
+    deleteBtn.className = 'conversation-delete'
+    deleteBtn.title = '删除会话历史'
+    deleteBtn.textContent = '删'
+    deleteBtn.addEventListener('click', (event) => {
+      event.stopPropagation()
+      void deleteConversationEntry(entry.id)
+    })
+
+    item.append(main, time, deleteBtn)
+    item.addEventListener('click', () => restoreConversation(entry))
+    conversationList.appendChild(item)
+  }
+}
+
+async function deleteConversationEntry(id: string) {
+  if (!confirm('确定删除这条会话历史吗？')) return
+  await deleteConversation(id)
+  conversationEntries = conversationEntries.filter((entry) => entry.id !== id)
+  renderConversationList()
+  showToast('会话历史已删除', 'success', 1600)
+}
+
+function restoreConversation(entry: ConversationEntry) {
+  for (const [platform, url] of Object.entries(entry.platformUrls) as Array<[AIPlatform, string | undefined]>) {
+    if (!url) continue
+    const panel = platformPanel(platform)
+    if (!panel || panel.hidden) continue
+    readyMap[platform] = false
+    setStatus(platform, 'warn', '加载中…')
+    panelIframe(platform).src = url
+  }
+  closeConversationHistory()
+  showToast('已打开会话历史', 'success', 1600)
+  void refreshAllStatuses()
+}
+
+async function openConversationHistory() {
+  conversationOverlay.hidden = false
+  conversationList.innerHTML = '<div class="history-empty">正在读取会话历史…</div>'
+  conversationEntries = await loadConversations()
+  renderConversationList()
+}
+
+function closeConversationHistory() {
+  conversationOverlay.hidden = true
 }
 
 const SUMMARY_MODE_LABELS: Record<SummaryMode, string> = {
@@ -1939,6 +2109,7 @@ function bindEvents() {
     isBlocked: () => (
       !settingsOverlay.hidden ||
       !historyOverlay.hidden ||
+      !conversationOverlay.hidden ||
       !summaryOverlay.hidden ||
       !transferOverlay.hidden
     ),
@@ -1981,8 +2152,21 @@ function bindEvents() {
   btnQuote.addEventListener('click', onQuote)
   btnHistory.addEventListener('click', onHistory)
   btnHistoryClose.addEventListener('click', closeHistory)
+  historySearchInput.addEventListener('input', () => {
+    const visibleSessions = filterSessionsByTitle(historySessions, historySearchInput.value)
+    if (!visibleSessions.some((session) => session.id === selectedHistoryId)) {
+      selectedHistoryId = visibleSessions[0]?.id ?? null
+      renderHistoryDetail(visibleSessions[0])
+    }
+    renderHistoryList()
+  })
   historyOverlay.addEventListener('click', (e) => {
     if (e.target === historyOverlay) closeHistory()
+  })
+  btnConversations.addEventListener('click', () => void openConversationHistory())
+  btnConversationClose.addEventListener('click', closeConversationHistory)
+  conversationOverlay.addEventListener('click', (e) => {
+    if (e.target === conversationOverlay) closeConversationHistory()
   })
   btnSettings.addEventListener('click', openSettings)
   btnExpandInput.addEventListener('click', toggleInputExpanded)
@@ -2006,6 +2190,8 @@ function bindEvents() {
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !summaryOverlay.hidden) closeSummaryDialog()
     if (e.key === 'Escape' && !transferOverlay.hidden) closeTransferDialog()
+    if (e.key === 'Escape' && !historyOverlay.hidden) closeHistory()
+    if (e.key === 'Escape' && !conversationOverlay.hidden) closeConversationHistory()
     if (e.key === 'Escape' && !settingsOverlay.hidden) closeSettings()
   })
 

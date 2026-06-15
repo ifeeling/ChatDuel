@@ -29,6 +29,26 @@ describe('chat.html', () => {
     expect(document.querySelector('#btn-summary-generate')).toBeTruthy()
   })
 
+  it('renders a title search box in the history dialog', () => {
+    document.body.innerHTML = html
+
+    const search = document.querySelector<HTMLInputElement>('#history-search')
+
+    expect(search).toBeTruthy()
+    expect(search?.type).toBe('search')
+    expect(search?.placeholder).toContain('搜索历史标题')
+  })
+
+  it('renders conversation history controls separately from response history', () => {
+    document.body.innerHTML = html
+
+    expect(document.querySelector('#btn-conversations')?.textContent).toBe('会话')
+    expect(document.querySelector('#conversation-overlay')).toBeTruthy()
+    expect(document.querySelector('#conversation-list')).toBeTruthy()
+    expect(document.querySelector('#conversation-title')?.textContent).toBe('会话历史')
+    expect(document.querySelector('#btn-conversation-close')).toBeTruthy()
+  })
+
   it('renders transfer source picker controls', () => {
     document.body.innerHTML = html
 

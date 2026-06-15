@@ -45,6 +45,13 @@ window.addEventListener('message', (e: MessageEvent) => {
       })
       return
     }
+    if (data.action === 'get-location') {
+      e.source?.postMessage(
+        { source: 'aichatroom-content', type: 'location', platform: 'gemini', href: location.href },
+        { targetOrigin: '*' },
+      )
+      return
+    }
     return
   }
 

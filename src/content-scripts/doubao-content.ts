@@ -80,6 +80,13 @@ window.addEventListener('message', (e: MessageEvent) => {
       })
     return
   }
+  if (data.action === 'get-location') {
+    e.source?.postMessage(
+      { source: 'aichatroom-content', type: 'location', platform: PLATFORM, href: location.href },
+      { targetOrigin: '*' },
+    )
+    return
+  }
   if (data.action === 'write-and-send') {
     const text = data.text ?? ''
     const file = data.imageDataUrl

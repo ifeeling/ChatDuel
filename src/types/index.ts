@@ -44,6 +44,15 @@ export interface Session {
   stats?: SessionStats
 }
 
+export interface ConversationEntry {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  enabledPlatforms: AIPlatform[]
+  platformUrls: Partial<Record<AIPlatform, string>>
+}
+
 export interface SessionResponse {
   text: string
   status: 'pending' | 'captured' | 'failed'
