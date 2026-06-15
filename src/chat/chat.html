@@ -17,7 +17,7 @@
               <span class="dot"></span><span class="status-text">检测中…</span>
             </span>
           </span>
-          <button class="panel-transfer" data-platform="gemini" title="把这里的回答转移到其它 AI">转移 ➔</button>
+          <button class="panel-transfer" data-platform="gemini" title="把这里的回答转发给其它 AI">转发 ➔</button>
           <button class="panel-open" data-platform="gemini" title="在新标签页打开官方页面">↗</button>
         </header>
         <iframe class="panel-iframe" data-platform="gemini" src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
@@ -33,7 +33,7 @@
               <span class="dot"></span><span class="status-text">检测中…</span>
             </span>
           </span>
-          <button class="panel-transfer" data-platform="chatgpt" title="把这里的回答转移到其它 AI">转移 ➔</button>
+          <button class="panel-transfer" data-platform="chatgpt" title="把这里的回答转发给其它 AI">转发 ➔</button>
           <button class="panel-open" data-platform="chatgpt" title="在新标签页打开官方页面">↗</button>
         </header>
         <iframe class="panel-iframe" data-platform="chatgpt" src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
@@ -49,7 +49,7 @@
               <span class="dot"></span><span class="status-text">待接入</span>
             </span>
           </span>
-          <button class="panel-transfer" data-platform="doubao" title="把这里的回答转移到其它 AI">转移 ➔</button>
+          <button class="panel-transfer" data-platform="doubao" title="把这里的回答转发给其它 AI">转发 ➔</button>
           <button class="panel-open" data-platform="doubao" title="在新标签页打开官方页面">↗</button>
         </header>
         <iframe class="panel-iframe" data-platform="doubao" src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
@@ -141,10 +141,10 @@
           <div class="settings-panel" data-settings-panel="prompts">
             <p class="settings-lead">修改发送给目标 AI 的提示词</p>
             <label class="prompt-editor">
-              <span class="prompt-editor-label">转移提示词</span>
+              <span class="prompt-editor-label">转发提示词</span>
               <textarea id="setting-transfer-template" spellcheck="false"></textarea>
             </label>
-            <p class="settings-help">可用变量：{{fromLabel}} 表示来源 AI 名字，{{content}} 表示要转移的回答内容。</p>
+            <p class="settings-help">可用变量：{{fromLabel}} 表示来源 AI 名字，{{content}} 表示要转发的回答内容。</p>
             <button id="btn-reset-transfer-template" class="settings-secondary" type="button">恢复默认提示词</button>
             <label class="prompt-editor prompt-editor-spaced">
               <span class="prompt-editor-label">总结提示词</span>
@@ -215,22 +215,22 @@
   <div class="summary-overlay transfer-overlay" id="transfer-overlay" hidden>
     <section class="summary-dialog" role="dialog" aria-modal="true" aria-labelledby="transfer-title">
       <header class="summary-header">
-        <h2 id="transfer-title">选择要转移的回答</h2>
+        <h2 id="transfer-title">选择要转发的回答</h2>
         <button id="btn-transfer-close" class="summary-close" type="button" title="关闭" aria-label="关闭">×</button>
       </header>
       <div class="summary-body">
-        <aside class="summary-list" id="transfer-list" aria-label="选择要转移的回答"></aside>
+        <aside class="summary-list" id="transfer-list" aria-label="选择要转发的回答"></aside>
         <main class="summary-options">
           <div class="summary-config">
             <p class="summary-lead" id="transfer-lead">默认选中最新一条回答。你可以多选，把多条回答一起转给目标 AI。</p>
-            <label class="summary-field">
-              <span>转移目标</span>
-              <select id="transfer-target"></select>
+            <label class="summary-field transfer-target-field">
+              <span>转发目标</span>
+              <div class="transfer-target-list" id="transfer-target-list" role="group" aria-label="转发目标"></div>
             </label>
             <div class="summary-selected" id="transfer-selected">已选择 0 条回答</div>
             <div class="summary-actions">
               <button id="btn-transfer-cancel" class="summary-secondary" type="button">取消</button>
-              <button id="btn-transfer-send" class="summary-primary" type="button">转移</button>
+              <button id="btn-transfer-send" class="summary-primary" type="button">转发</button>
             </div>
           </div>
           <section class="summary-preview" aria-label="已选择回答内容预览">

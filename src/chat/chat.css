@@ -102,7 +102,7 @@ body { overflow: hidden; }
 }
 .panel-open:hover { color: var(--fg); }
 
-/* Panel header 转移按钮(把本 panel 的最后回答转到其它 AI) */
+/* Panel header 转发按钮(把本 panel 的最后回答发给其它 AI) */
 .panel-transfer {
   background: transparent;
   border: 1px solid var(--border);
@@ -988,6 +988,35 @@ body { overflow: hidden; }
   background: var(--bg-3);
   color: var(--fg);
   font: inherit;
+}
+.transfer-target-field {
+  width: min(360px, 100%);
+}
+.transfer-target-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.transfer-target-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  min-width: 108px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-3);
+  color: var(--fg);
+  cursor: pointer;
+}
+.transfer-target-item:hover,
+.transfer-target-item:has(input:checked) {
+  border-color: var(--accent);
+  background: rgba(79, 132, 255, 0.14);
+}
+.transfer-target-item input {
+  margin: 0;
 }
 .summary-selected {
   margin-top: 6px;

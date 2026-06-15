@@ -111,7 +111,7 @@ const btnTransferClose = $<HTMLButtonElement>('#btn-transfer-close')
 const btnTransferCancel = $<HTMLButtonElement>('#btn-transfer-cancel')
 const btnTransferSend = $<HTMLButtonElement>('#btn-transfer-send')
 const transferList = $<HTMLDivElement>('#transfer-list')
-const transferTargetSelect = $<HTMLSelectElement>('#transfer-target')
+const transferTargetList = $<HTMLDivElement>('#transfer-target-list')
 const transferSelected = $<HTMLDivElement>('#transfer-selected')
 const transferPreview = $<HTMLDivElement>('#transfer-preview')
 const ATTACH_BUTTON_TITLE = `支持：${SUPPORTED_FILE_FORMATS_TEXT}。暂不支持 Word。`
@@ -1007,11 +1007,11 @@ function onAtKeydown(e: KeyboardEvent) {
   }
 }
 
-// ---------- 转移(Transfer) ----------
+// ---------- 转发(Transfer) ----------
 const MAX_TRANSFER_LENGTH = 50_000
 
 /**
- * 转移流程:点 panel A 的 .panel-transfer
+ * 转发流程:点 panel A 的 .panel-transfer
  *   1) 候选 = 支持文本输入的平台.filter(p => p !== sourceKey)
  *   2) 弹出回答选择器,默认选中最新回答
  *   3) 用户可多选历史回答,再选择目标 AI 发送
@@ -1024,7 +1024,7 @@ async function onTransfer(sourceKey: AIPlatform) {
 
   const candidates = platformsWithCapability('supportsText').filter((p) => p !== sourceKey)
   if (candidates.length === 0) {
-    showToast('没有可转移的目标', 'warn')
+    showToast('没有可转发的目标', 'warn')
     return
   }
   await openTransferDialog(sourceKey, candidates)
@@ -1040,23 +1040,49 @@ async function getCurrentTransferResponse(sourceKey: AIPlatform): Promise<string
 }
 
 function renderTransferTargets(sourceKey: AIPlatform, candidates: AIPlatform[]) {
-  transferTargetSelect.innerHTML = ''
-  for (const platform of candidates) {
-    const option = document.createElement('option')
-    option.value = platform
-    option.textContent = getPlatformMeta(platform)?.label ?? platform
-    transferTargetSelect.appendChild(option)
+  transferTargetList.innerHTML = ''
+  candidates.forEach((platform, index) => {
+    const meta = getPlatformMeta(platform)
+    const item = document.createElement('label')
+    item.className = 'transfer-target-item'
+
+    const checkbox = document.createElement('input')
+    checkbox.type = 'checkbox'
+    checkbox.name = 'transfer-target'
+    checkbox.value = platform
+    checkbox.checked = index === 0
+
+    const text = document.createElement('span')
+    text.textContent = meta?.label ?? platform
+
+    item.append(checkbox, text)
+    transferTargetList.appendChild(item)
+  })
+}
+
+function selectedTransferTargets(): AIPlatform[] {
+  return [...transferTargetList.querySelectorAll<HTMLInputElement>('input[name="transfer-target"]:checked')]
+    .map((input) => input.value as AIPlatform)
+}
+
+function formatTransferTargetLabels(targets: AIPlatform[]): string {
+  return targets
+    .map((target) => getPlatformMeta(target)?.label ?? target)
+    .join('、')
+}
+
+async function executeTransferToTargets(sourceKey: AIPlatform, targetKeys: AIPlatform[], selectedContent: string) {
+  for (const targetKey of targetKeys) {
+    await executeTransfer(sourceKey, targetKey, selectedContent)
   }
-  const preferred = candidates.find((platform) => platform !== sourceKey)
-  if (preferred) transferTargetSelect.value = preferred
 }
 
 async function openTransferDialog(sourceKey: AIPlatform, candidates: AIPlatform[]) {
   transferSourcePlatform = sourceKey
   const sourceLabel = getPlatformMeta(sourceKey)?.label ?? sourceKey
-  transferTitle.textContent = `选择要转移的 ${sourceLabel} 回答`
+  transferTitle.textContent = `选择要转发的 ${sourceLabel} 回答`
   transferOverlay.hidden = false
-  transferList.innerHTML = '<div class="history-empty">正在读取可转移回答…</div>'
+  transferList.innerHTML = '<div class="history-empty">正在读取可转发回答…</div>'
   transferPreview.innerHTML = ''
   transferSelected.textContent = '已选择 0 条回答'
   btnTransferSend.disabled = true
@@ -1093,7 +1119,7 @@ function renderTransferSourceList() {
   if (transferSourceOptions.length === 0) {
     const empty = document.createElement('div')
     empty.className = 'history-empty'
-    empty.textContent = '没有可转移的已记录回答'
+    empty.textContent = '没有可转发的已记录回答'
     transferList.appendChild(empty)
     updateTransferSelectedCount()
     return
@@ -1133,7 +1159,7 @@ function renderTransferSourceList() {
 function updateTransferSelectedCount() {
   const count = selectedTransferSourceOptions().length
   transferSelected.textContent = `已选择 ${count} 条回答`
-  btnTransferSend.disabled = count === 0 || !transferSourcePlatform || !transferTargetSelect.value
+  btnTransferSend.disabled = count === 0 || !transferSourcePlatform || selectedTransferTargets().length === 0
   renderTransferPreview()
 }
 
@@ -1145,7 +1171,7 @@ function renderTransferPreview() {
   if (selected.length === 0) {
     const empty = document.createElement('div')
     empty.className = 'summary-preview-empty'
-    empty.textContent = '勾选左侧回答后，这里会显示转移内容'
+    empty.textContent = '勾选左侧回答后，这里会显示转发内容'
     transferPreview.appendChild(empty)
     return
   }
@@ -1159,26 +1185,29 @@ function renderTransferPreview() {
   title.textContent = `${sourceLabel} · ${selected.length} 条回答`
   const meta = document.createElement('div')
   meta.className = 'summary-preview-meta'
-  meta.textContent = `将发送到 ${getPlatformMeta(transferTargetSelect.value)?.label ?? transferTargetSelect.value}`
+  const targets = selectedTransferTargets()
+  meta.textContent = targets.length > 0
+    ? `将发送到 ${formatTransferTargetLabels(targets)}`
+    : '请选择转发目标'
   header.append(title, meta)
   card.appendChild(header)
-  appendSummaryPreviewSection(card, '转移内容', buildTransferContent(selected, sourceLabel))
+  appendSummaryPreviewSection(card, '转发内容', buildTransferContent(selected, sourceLabel))
   transferPreview.appendChild(card)
 }
 
 async function onSendTransferSelection() {
   if (!transferSourcePlatform) return
-  const target = transferTargetSelect.value as AIPlatform
+  const targets = selectedTransferTargets()
   const selected = selectedTransferSourceOptions()
-  if (!target || selected.length === 0) {
-    showToast('请选择要转移的回答和目标 AI', 'warn')
+  if (targets.length === 0 || selected.length === 0) {
+    showToast('请选择要转发的回答和目标 AI', 'warn')
     return
   }
   const sourceLabel = getPlatformMeta(transferSourcePlatform)?.label ?? transferSourcePlatform
   const content = buildTransferContent(selected, sourceLabel)
   const source = transferSourcePlatform
   closeTransferDialog()
-  await executeTransfer(source, target, content)
+  await executeTransferToTargets(source, targets, content)
 }
 
 async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform, selectedContent?: string) {
@@ -1188,7 +1217,7 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform, sel
   if (srcBtn) {
     srcBtn.classList.add('busy')
     srcBtn.disabled = true
-    srcBtn.textContent = '转移中…'
+    srcBtn.textContent = '转发中…'
   }
   if (tgtBtn) tgtBtn.disabled = true
 
@@ -1250,7 +1279,7 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform, sel
     }
 
     if (!content || !content.trim()) {
-      showToast('源 AI 还没有回答可转移', 'warn', 4000)
+      showToast('源 AI 还没有回答可转发', 'warn', 4000)
       return
     }
 
@@ -1300,19 +1329,19 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform, sel
     const prompt = renderTemplate(userSettings.promptTemplates.transfer, { fromLabel, content: finalContent })
 
     // 6. 发送到目标
-    showToast(`正在把 ${fromLabel} 的回答转移到 ${getPlatformMeta(targetKey)?.label ?? targetKey}…`, 'info', 2000)
+    showToast(`正在把 ${fromLabel} 的回答转发给 ${getPlatformMeta(targetKey)?.label ?? targetKey}…`, 'info', 2000)
     tgtWin?.postMessage(
       { source: 'aichatroom-parent', action: 'write-and-send', text: prompt },
       platformOrigin(targetKey),
     )
   } catch (e) {
     console.error('[AIChatRoom chat] transfer failed', e)
-    showToast(`转移失败: ${e instanceof Error ? e.message : String(e)}`, 'err', 5000)
+    showToast(`转发失败: ${e instanceof Error ? e.message : String(e)}`, 'err', 5000)
   } finally {
     if (srcBtn) {
       srcBtn.classList.remove('busy')
       srcBtn.disabled = !getPlatformCapabilities(sourceKey).supportsLastResponse
-      srcBtn.textContent = '转移 ➔'
+      srcBtn.textContent = '转发 ➔'
     }
     if (tgtBtn) tgtBtn.disabled = !getPlatformCapabilities(targetKey).supportsLastResponse
     closeAtPopup()
@@ -1776,7 +1805,7 @@ async function onGenerateSummary() {
 }
 
 // ---------- 工具按钮(暂作占位) ----------
-// 转移按钮(panel header 上的 .panel-transfer)由 setupTransferButtons() 单独绑定(动态 target)
+// 转发按钮(panel header 上的 .panel-transfer)由 setupTransferButtons() 单独绑定(动态 target)
 async function onSummary() {
   if (activePlatforms().length === 0) {
     showToast('没有可用的总结目标 AI', 'warn')
@@ -1925,7 +1954,7 @@ function bindEvents() {
   btnTransferClose.addEventListener('click', closeTransferDialog)
   btnTransferCancel.addEventListener('click', closeTransferDialog)
   btnTransferSend.addEventListener('click', () => void onSendTransferSelection())
-  transferTargetSelect.addEventListener('change', updateTransferSelectedCount)
+  transferTargetList.addEventListener('change', updateTransferSelectedCount)
   transferOverlay.addEventListener('click', (e) => {
     if (e.target === transferOverlay) closeTransferDialog()
   })

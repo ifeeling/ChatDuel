@@ -35,10 +35,23 @@ describe('chat.html', () => {
     expect(document.querySelector('#transfer-overlay')).toBeTruthy()
     expect(document.querySelector('#transfer-title')).toBeTruthy()
     expect(document.querySelector('#transfer-list')).toBeTruthy()
-    expect(document.querySelector('#transfer-target')).toBeTruthy()
+    expect(document.querySelector('#transfer-target-list')).toBeTruthy()
+    expect(document.querySelector('#transfer-target')).toBeNull()
     expect(document.querySelector('#transfer-selected')).toBeTruthy()
     expect(document.querySelector('#transfer-preview')).toBeTruthy()
     expect(document.querySelector('#btn-transfer-send')).toBeTruthy()
+  })
+
+  it('uses forward wording instead of transfer wording in the visible transfer UI', () => {
+    document.body.innerHTML = html
+
+    expect(document.querySelector<HTMLButtonElement>('.panel-transfer')?.textContent?.trim())
+      .toBe('转发 ➔')
+    expect(document.querySelector<HTMLButtonElement>('.panel-transfer')?.title)
+      .toBe('把这里的回答转发给其它 AI')
+    expect(document.querySelector('#transfer-title')?.textContent).toContain('转发')
+    expect(document.querySelector('#btn-transfer-send')?.textContent).toBe('转发')
+    expect(document.querySelector('#transfer-overlay')?.textContent).not.toContain('转移')
   })
 
   it('keeps primary controls compact for split-screen use', () => {
@@ -48,7 +61,7 @@ describe('chat.html', () => {
     expect(document.querySelectorAll('.panel')).toHaveLength(3)
     expect(document.querySelector('.panel[data-platform="doubao"]')).toBeTruthy()
     expect(document.querySelector<HTMLButtonElement>('.panel-transfer[data-platform="doubao"]')?.title)
-      .toBe('把这里的回答转移到其它 AI')
+      .toBe('把这里的回答转发给其它 AI')
     expect(document.querySelectorAll('.splitter')).toHaveLength(2)
     expect(document.querySelectorAll('#btn-quote')).toHaveLength(1)
     expect(document.querySelectorAll('#btn-summary')).toHaveLength(1)
@@ -64,5 +77,18 @@ describe('chat.html', () => {
 
   it('keeps hidden panels out of the split layout', () => {
     expect(css).toContain('[hidden] { display: none !important; }')
+  })
+
+  it('lays out transfer targets horizontally with wrapping', () => {
+    document.body.innerHTML = html
+    const targetListRule = css.match(/\.transfer-target-list\s*\{[^}]+\}/)?.[0] ?? ''
+    const targetFieldRule = css.match(/\.transfer-target-field\s*\{[^}]+\}/)?.[0] ?? ''
+    const targetField = document.querySelector('#transfer-target-list')?.closest('label')
+
+    expect(targetField?.classList.contains('summary-field')).toBe(true)
+    expect(targetField?.classList.contains('transfer-target-field')).toBe(true)
+    expect(targetFieldRule).toContain('width: min(360px, 100%);')
+    expect(targetListRule).toContain('display: flex;')
+    expect(targetListRule).toContain('flex-wrap: wrap;')
   })
 })

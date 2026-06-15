@@ -2,7 +2,7 @@
 //
 // 设计原则:
 //   - 元数据(key → label/icon/url/capabilities)在这里单点维护
-//   - @ 候选、总结目标、转移目标由 enabled platform + capabilities 派生
+//   - @ 候选、总结目标、转发目标由 enabled platform + capabilities 派生
 //     也就是"页面显示"和"能力可用"分开判断
 //   - 加新 AI 流程:
 //       1) types/index.ts 的 AIPlatform 联合加上新 key(让 TS 在 protocol 层卡住)
