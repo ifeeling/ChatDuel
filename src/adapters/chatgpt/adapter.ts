@@ -3,6 +3,7 @@ import type { ConversationState, StreamEvent } from '../../types'
 import selectorsJson from './selectors.json'
 
 const S = selectorsJson.selectors
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // chatgpt.com 的输入框是 contenteditable div(ProseMirror/TipTap 风格),
 // 不是 textarea。contenteditable 的内容本来就在 DOM 里,没有 React state
@@ -107,7 +108,7 @@ async function waitForUploadReady(maxMs = 3000): Promise<void> {
     const hasThumb = document.querySelector('img[src^="data:"]')
     const sendBtn = document.querySelector<HTMLButtonElement>("button[data-testid='send-button']")
     if (hasThumb && sendBtn && !sendBtn.disabled) return
-    await new Promise((r) => setTimeout(r, 100))
+    await sleep(100)
   }
 }
 
@@ -118,6 +119,44 @@ function hasStopGeneratingButton(): boolean {
     "button[aria-label*='停止' i]",
   ]
   return candidates.some((selector) => !!document.querySelector(selector))
+}
+
+function isButtonDisabled(btn: HTMLButtonElement): boolean {
+  return btn.disabled || btn.getAttribute('aria-disabled') === 'true' || btn.dataset.disabled === 'true'
+}
+
+function composerHasPendingContent(): boolean {
+  const box = document.querySelector<HTMLElement>(S.inputBox)
+  const text = box?.textContent?.replace(/\u200b/g, '').trim() ?? ''
+  const hasAttachmentPreview = !!document.querySelector(
+    [
+      "[data-testid*='attachment' i]",
+      "[data-testid*='file' i]",
+      "img[src^='data:']",
+      "img[alt*='upload' i]",
+      "img[alt*='上传' i]",
+    ].join(','),
+  )
+  return text.length > 0 || hasAttachmentPreview
+}
+
+async function waitForSendButtonReady(maxMs = 8000): Promise<HTMLButtonElement> {
+  const start = Date.now()
+  while (Date.now() - start < maxMs) {
+    const btn = document.querySelector<HTMLButtonElement>(S.sendButton)
+    if (btn && !isButtonDisabled(btn)) return btn
+    await sleep(100)
+  }
+  throw new Error('send button is not ready')
+}
+
+async function waitForSendAccepted(maxMs = 700): Promise<boolean> {
+  const start = Date.now()
+  while (Date.now() - start < maxMs) {
+    if (hasStopGeneratingButton() || !composerHasPendingContent()) return true
+    await sleep(100)
+  }
+  return hasStopGeneratingButton() || !composerHasPendingContent()
 }
 
 export function createChatGPTAdapter(): AIAdapter {
@@ -173,10 +212,7 @@ export function createChatGPTAdapter(): AIAdapter {
     },
 
     async triggerSend() {
-      const btn = q<HTMLButtonElement>(S.sendButton)
-      if (!btn) throw new Error('send button not found')
-      // 强制启用(有些情况下 disabled 属性残留)
-      if (btn.disabled) btn.disabled = false
+      const btn = await waitForSendButtonReady()
       btn.click()
     },
 
@@ -184,12 +220,19 @@ export function createChatGPTAdapter(): AIAdapter {
       await this.writeText(text)
       // 写完文字再附加图片(等 React/Quill 状态稳定)
       await new Promise((r) => setTimeout(r, 50))
-      if (image) await this.attachImage(image)
-      // 等上传组件把缩略图渲染进 input,并等 AI 网站自己的图片处理流水线跑完
-      // (ChatGPT/Gemini 在收到文件后还要走内部转码/特征抽取)
-      await waitForUploadReady()
+      if (image) {
+        await this.attachImage(image)
+        // 等上传组件把缩略图渲染进 input,并等 AI 网站自己的图片处理流水线跑完
+        // (ChatGPT/Gemini 在收到文件后还要走内部转码/特征抽取)
+        await waitForUploadReady()
+      }
       // 给 React/ProseMirror 一个微任务让状态更新,再点发送按钮
-      await this.triggerSend()
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await this.triggerSend()
+        if (await waitForSendAccepted()) return
+        await sleep(250)
+      }
+      throw new Error('message was not accepted by ChatGPT composer')
     },
 
     async attachImage(file: File) {

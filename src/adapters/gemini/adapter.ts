@@ -3,6 +3,7 @@ import type { ConversationState, StreamEvent } from '../../types'
 import selectorsJson from './selectors.json'
 
 const S = selectorsJson.selectors
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // gemini.google.com 的输入框是 div.ql-editor(Quill 富文本)。
 //
@@ -68,7 +69,7 @@ async function pasteImageIntoEditor(file: File): Promise<boolean> {
   // 必须 focus,Quill 的 paste 监听依赖光标位置
   editor.focus()
   // 等一个 tick
-  await new Promise((r) => setTimeout(r, 50))
+  await sleep(50)
 
   // 构造 DataTransfer,把 file 放进去
   const dt = new DataTransfer()
@@ -149,7 +150,7 @@ async function attachImageToFileInput(_unusedSel: string, file: File): Promise<b
       input.dispatchEvent(new Event('change', { bubbles: true }))
       return true
     }
-    await new Promise((r) => setTimeout(r, 250))
+    await sleep(250)
   }
   return false
 }
@@ -164,7 +165,7 @@ async function waitForUploadReady(maxMs = 3000): Promise<void> {
     // Gemini 把上传的图片以 <img> 节点插入 ql-editor
     const hasImg = editor.querySelector('img')
     if (hasImg) return
-    await new Promise((r) => setTimeout(r, 100))
+    await sleep(100)
   }
 }
 
@@ -175,6 +176,20 @@ function hasStopGeneratingButton(): boolean {
     'button.stop',
   ]
   return candidates.some((selector) => !!document.querySelector(selector))
+}
+
+function editorHasPendingContent(editor: HTMLElement): boolean {
+  const text = editor.textContent?.replace(/\u200b/g, '').trim() ?? ''
+  return text.length > 0 || !!editor.querySelector('img')
+}
+
+async function waitForSendAccepted(editor: HTMLElement, maxMs = 700): Promise<boolean> {
+  const start = Date.now()
+  while (Date.now() - start < maxMs) {
+    if (hasStopGeneratingButton() || !editorHasPendingContent(editor)) return true
+    await sleep(100)
+  }
+  return hasStopGeneratingButton() || !editorHasPendingContent(editor)
 }
 
 export function createGeminiAdapter(): AIAdapter {
@@ -233,26 +248,31 @@ export function createGeminiAdapter(): AIAdapter {
       // Gemini send = keydown Enter(用户实测有效)
       const box = q<HTMLElement>(S.inputBox)
       if (box) {
-        dispatchEnterKey(box)
-        return
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          dispatchEnterKey(box)
+          if (await waitForSendAccepted(box)) return
+          await sleep(250)
+        }
+        throw new Error('message was not accepted by Gemini editor')
       }
       // 退路:button.click
       const btn = q<HTMLButtonElement>('button.submit') ?? q<HTMLButtonElement>(S.sendButton)
       if (!btn) throw new Error('send button not found')
-      if (btn.disabled) btn.disabled = false
       btn.click()
     },
 
     async sendMessage(text: string, image?: File) {
       await this.writeText(text)
       // 写完文字再附加图片(等 React/Quill 状态稳定)
-      await new Promise((r) => setTimeout(r, 50))
-      if (image) await this.attachImage(image)
-      // 等上传组件把缩略图渲染进 input,并等 AI 网站自己的图片处理流水线跑完
-      // (ChatGPT/Gemini 在收到文件后还要走内部转码/特征抽取)
-      await waitForUploadReady()
+      await sleep(50)
+      if (image) {
+        await this.attachImage(image)
+        // 等上传组件把缩略图渲染进 input,并等 AI 网站自己的图片处理流水线跑完
+        // (ChatGPT/Gemini 在收到文件后还要走内部转码/特征抽取)
+        await waitForUploadReady()
+      }
       // Quill 同步需要时间
-      await new Promise((r) => setTimeout(r, 200))
+      await sleep(200)
       await this.triggerSend()
     },
 
