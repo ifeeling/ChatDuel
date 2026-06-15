@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   FileTooLargeError,
   UnsupportedFileTypeError,
+  buildAttachmentDeliveryPlan,
   classifyFile,
   getUnsupportedFileMessage,
   inlineTextFile,
@@ -80,6 +81,34 @@ describe('supportsAutoUpload', () => {
     expect(supportsAutoUpload('chatgpt', documentFile)).toBe(false)
     expect(supportsAutoUpload('gemini', documentFile)).toBe(true)
     expect(supportsAutoUpload('doubao', documentFile)).toBe(false)
+  })
+})
+
+describe('buildAttachmentDeliveryPlan', () => {
+  it('keeps text delivery for platforms that cannot auto-upload the file', () => {
+    const image = classifyFile(new File(['x'], 'photo.png', { type: 'image/png' }))
+    const plan = buildAttachmentDeliveryPlan(['chatgpt', 'gemini', 'doubao'], image, true)
+
+    expect(plan.sendTargets).toEqual(['chatgpt', 'gemini', 'doubao'])
+    expect(plan.autoUploadTargets).toEqual(['chatgpt', 'gemini'])
+    expect(plan.manualUploadTargets).toEqual(['doubao'])
+  })
+
+  it('does not send an empty text-only message to unsupported platforms', () => {
+    const image = classifyFile(new File(['x'], 'photo.png', { type: 'image/png' }))
+    const plan = buildAttachmentDeliveryPlan(['doubao'], image, false)
+
+    expect(plan.sendTargets).toEqual([])
+    expect(plan.autoUploadTargets).toEqual([])
+    expect(plan.manualUploadTargets).toEqual(['doubao'])
+  })
+
+  it('keeps all targets when there is no upload attachment', () => {
+    const plan = buildAttachmentDeliveryPlan(['chatgpt', 'doubao'], null, false)
+
+    expect(plan.sendTargets).toEqual(['chatgpt', 'doubao'])
+    expect(plan.autoUploadTargets).toEqual([])
+    expect(plan.manualUploadTargets).toEqual([])
   })
 })
 

@@ -19,6 +19,12 @@ export interface InlineTextResult {
   sentPrompt: string
 }
 
+export interface AttachmentDeliveryPlan {
+  sendTargets: AIPlatform[]
+  autoUploadTargets: AIPlatform[]
+  manualUploadTargets: AIPlatform[]
+}
+
 export class UnsupportedFileTypeError extends Error {
   constructor(name: string) {
     super(`Unsupported file type: ${name}`)
@@ -62,6 +68,28 @@ export function supportsAutoUpload(platform: AIPlatform, classification: FileCla
   const capabilities = getPlatformCapabilities(platform)
   if (classification.kind === 'image') return capabilities.supportsImageUpload
   return capabilities.supportsFileUpload
+}
+
+export function buildAttachmentDeliveryPlan(
+  targets: AIPlatform[],
+  classification: FileClassification | null,
+  hasText: boolean,
+): AttachmentDeliveryPlan {
+  if (!classification || classification.handling !== 'file-upload') {
+    return {
+      sendTargets: [...targets],
+      autoUploadTargets: [],
+      manualUploadTargets: [],
+    }
+  }
+
+  const autoUploadTargets = targets.filter((p) => supportsAutoUpload(p, classification))
+  const manualUploadTargets = targets.filter((p) => !supportsAutoUpload(p, classification))
+  return {
+    sendTargets: hasText ? [...targets] : autoUploadTargets,
+    autoUploadTargets,
+    manualUploadTargets,
+  }
 }
 
 export function assertFileWithinLimit(file: File, classification = classifyFile(file)): void {

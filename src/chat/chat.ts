@@ -26,10 +26,10 @@ import {
   UnsupportedFileTypeError,
   assertFileWithinLimit,
   buildInlineTextPrompt,
+  buildAttachmentDeliveryPlan,
   classifyFile,
   getUnsupportedFileMessage,
   inlineTextFile,
-  supportsAutoUpload,
   type FileClassification,
 } from '../lib/file-handler'
 import {
@@ -668,12 +668,19 @@ async function onSend() {
     return
   }
 
+  const deliveryPlan = buildAttachmentDeliveryPlan(
+    targets,
+    pendingAttachment?.classification ?? null,
+    text.length > 0,
+  )
+  targets = deliveryPlan.sendTargets
   if (pendingAttachment?.classification.handling === 'file-upload') {
-    const unsupportedTargets = targets.filter((p) => !supportsAutoUpload(p, pendingAttachment!.classification))
-    targets = targets.filter((p) => supportsAutoUpload(p, pendingAttachment!.classification))
-    if (unsupportedTargets.length > 0) {
-      const labels = unsupportedTargets.map((p) => getPlatformMeta(p)?.label ?? p).join(' / ')
-      showToast(`${labels} 暂不支持自动上传这个文件类型,已跳过;可手动上传`, 'warn', 6000)
+    if (deliveryPlan.manualUploadTargets.length > 0) {
+      const labels = deliveryPlan.manualUploadTargets.map((p) => getPlatformMeta(p)?.label ?? p).join(' / ')
+      const message = text.length > 0
+        ? `${labels} 暂不支持自动上传这个文件类型,将只发送文字;可手动上传文件`
+        : `${labels} 暂不支持自动上传这个文件类型,已跳过;可手动上传`
+      showToast(message, 'warn', 6000)
     }
     if (targets.length === 0) {
       showToast('当前目标都不支持自动上传这个文件类型,请手动上传或改用 .md/.txt', 'warn', 6000)
@@ -751,11 +758,12 @@ async function onSend() {
             }
           }
           window.addEventListener('message', onMsg)
+          const shouldUploadFile = deliveryPlan.autoUploadTargets.includes(p)
           postToIframe(p, 'write-and-send', {
             text: textToSend,
-            imageDataUrl,
-            imageMime,
-            imageName,
+            imageDataUrl: shouldUploadFile ? imageDataUrl : undefined,
+            imageMime: shouldUploadFile ? imageMime : undefined,
+            imageName: shouldUploadFile ? imageName : undefined,
           })
           // 8 秒兜底:iframe 没回 result 也算 ok(可能 result 已发过)
           setTimeout(() => {
