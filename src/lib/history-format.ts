@@ -11,6 +11,15 @@ function firstLine(text: string, max = 60): string {
   return line.length > max ? `${line.slice(0, max)}...` : line
 }
 
+function safeFilename(text: string, max = 40): string {
+  const name = firstLine(text, max)
+    .replace(/[\\/:*?"<>|]+/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+  return name || '未命名记录'
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
@@ -66,4 +75,12 @@ export function formatSessionMarkdown(session: Session): string {
   }
 
   return parts.join('\n')
+}
+
+export function buildSessionMarkdownExport(session: Session): { filename: string; mime: string; content: string } {
+  return {
+    filename: `AIChatRoom-${safeFilename(session.prompt)}.md`,
+    mime: 'text/markdown;charset=utf-8',
+    content: formatSessionMarkdown(session),
+  }
 }

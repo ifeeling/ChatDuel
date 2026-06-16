@@ -91,7 +91,9 @@ body { overflow: hidden; }
 
 .panel-title { font-weight: 500; color: var(--fg); }
 
-.panel-open {
+.panel-open,
+.panel-switch,
+.panel-close {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--muted);
@@ -100,7 +102,10 @@ body { overflow: hidden; }
   cursor: pointer;
   font-size: 12px;
 }
-.panel-open:hover { color: var(--fg); }
+.panel-open:hover,
+.panel-switch:hover { color: var(--fg); border-color: var(--accent); }
+.panel-switch { margin-right: 4px; }
+.panel-close:hover { color: #ff8a8a; border-color: var(--err); }
 
 /* Panel header 转发按钮(把本 panel 的最后回答发给其它 AI) */
 .panel-transfer {
@@ -320,7 +325,7 @@ body { overflow: hidden; }
   position: fixed;
   top: 50px;
   right: 16px;
-  z-index: 1000;
+  z-index: 1300;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -435,6 +440,41 @@ body { overflow: hidden; }
   padding: 4px 12px 6px 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
   color: rgba(255, 255, 255, 0.4);
+  font-size: 11px;
+}
+
+.panel-switch-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 150px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-2);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.4);
+}
+.panel-switch-menu button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.panel-switch-menu button:hover,
+.panel-switch-menu button.active {
+  border-color: var(--accent);
+  background: rgba(79, 140, 255, 0.14);
+}
+.panel-switch-menu .switch-menu-status {
+  margin-left: auto;
+  color: var(--muted);
   font-size: 11px;
 }
 
@@ -631,8 +671,11 @@ body { overflow: hidden; }
   display: block;
   max-width: 760px;
 }
+.prompt-kind-field {
+  max-width: 360px;
+}
 .prompt-editor-spaced {
-  margin-top: 24px;
+  margin-top: 18px;
 }
 .prompt-editor-label {
   display: block;
@@ -640,8 +683,7 @@ body { overflow: hidden; }
   color: var(--fg);
   font-weight: 600;
 }
-#setting-transfer-template,
-#setting-summary-template {
+#setting-prompt-template {
   display: block;
   width: 100%;
   min-height: 220px;
@@ -654,8 +696,7 @@ body { overflow: hidden; }
   font: inherit;
   line-height: 1.6;
 }
-#setting-transfer-template:focus,
-#setting-summary-template:focus {
+#setting-prompt-template:focus {
   outline: none;
   border-color: var(--accent);
 }
@@ -873,11 +914,34 @@ body { overflow: hidden; }
 .history-section {
   margin-top: 18px;
 }
+.history-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
 .history-section h3 {
   margin: 0 0 8px;
   font-size: 13px;
   color: var(--muted);
   font-weight: 600;
+}
+.history-section-header h3 { margin: 0; }
+.history-block-copy {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.history-block-copy:hover {
+  color: var(--fg);
+  border-color: var(--accent);
 }
 .history-block {
   margin: 0;

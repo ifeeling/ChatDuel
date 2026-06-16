@@ -50,6 +50,7 @@ export interface ConversationEntry {
   createdAt: number
   updatedAt: number
   enabledPlatforms: AIPlatform[]
+  platformOrder?: AIPlatform[]
   platformUrls: Partial<Record<AIPlatform, string>>
 }
 
@@ -88,7 +89,7 @@ export interface SessionSummary {
 }
 
 export type SummaryRange = 'latest-1' | 'latest-3' | 'latest-5' | 'manual'
-export type SummaryMode = 'final-answer' | 'differences' | 'short-summary'
+export type SummaryMode = 'final-answer' | 'differences' | 'short-summary' | 'opinion-digest'
 
 export type StreamEvent =
   | { type: 'started'; platform: AIPlatform; timestamp: number }

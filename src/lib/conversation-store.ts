@@ -67,6 +67,7 @@ export async function upsertConversation(next: ConversationEntry): Promise<Conve
         ...all[idx],
         updatedAt: next.updatedAt,
         enabledPlatforms: next.enabledPlatforms,
+        platformOrder: next.platformOrder,
         platformUrls: {
           ...all[idx].platformUrls,
           ...specificUrls,

@@ -61,6 +61,7 @@ describe('conversation-store', () => {
       createdAt: 3000,
       updatedAt: 3000,
       enabledPlatforms: ['chatgpt', 'doubao'],
+      platformOrder: ['doubao', 'chatgpt', 'gemini'],
       platformUrls: {
         chatgpt: 'https://chatgpt.com/c/same',
         doubao: 'https://www.doubao.com/chat/38430589934872834',
@@ -75,6 +76,7 @@ describe('conversation-store', () => {
       title: '旧标题',
       updatedAt: 3000,
       enabledPlatforms: ['chatgpt', 'doubao'],
+      platformOrder: ['doubao', 'chatgpt', 'gemini'],
       platformUrls: {
         chatgpt: 'https://chatgpt.com/c/same',
         doubao: 'https://www.doubao.com/chat/38430589934872834',

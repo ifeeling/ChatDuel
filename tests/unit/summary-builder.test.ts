@@ -42,6 +42,52 @@ describe('summary-builder', () => {
     expect(prompt).toContain('先保存用户问题。')
   })
 
+  it('can build a summary prompt from only selected AI responses', () => {
+    const threeAiSession: Session = {
+      ...session,
+      targetPlatforms: ['chatgpt', 'gemini', 'doubao'],
+      responses: {
+        chatgpt: { text: 'ChatGPT 内容。', status: 'captured' },
+        gemini: { text: 'Gemini 内容。', status: 'captured' },
+        doubao: { text: '豆包内容。', status: 'captured' },
+      },
+    }
+
+    const prompt = buildSummaryPrompt('请总结：\n{{historyBlock}}', threeAiSession, {
+      includedPlatforms: ['chatgpt', 'gemini'],
+    })
+
+    expect(prompt).toContain('ChatGPT 内容。')
+    expect(prompt).toContain('Gemini 内容。')
+    expect(prompt).not.toContain('豆包内容。')
+  })
+
+  it('adds an opinion digest instruction for suggestion aggregation mode', () => {
+    const prompt = buildSummaryPrompt('请总结：\n{{modeInstruction}}\n{{historyBlock}}', session, {
+      mode: 'opinion-digest',
+      modeLabel: '汇总意见',
+    })
+
+    expect(prompt).toContain('只提取各 AI 提出的意见、建议、风险提醒和待确认点')
+    expect(prompt).toContain('不要保留寒暄、客套话')
+    expect(prompt).toContain('Gemini')
+    expect(prompt).toContain('ChatGPT')
+  })
+
+  it('adds mode-specific instructions for differences and short summaries', () => {
+    const differences = buildSummaryPrompt('请总结：\n{{modeInstruction}}\n{{historyBlock}}', session, {
+      mode: 'differences',
+      modeLabel: '只看分歧',
+    })
+    const shortSummary = buildSummaryPrompt('请总结：\n{{modeInstruction}}\n{{historyBlock}}', session, {
+      mode: 'short-summary',
+      modeLabel: '简短摘要',
+    })
+
+    expect(differences).toContain('只输出各 AI 之间不一致、互相补充或重点不同的地方')
+    expect(shortSummary).toContain('用尽量短的篇幅给出结论')
+  })
+
   it('builds a history block from selected sessions', () => {
     const second: Session = {
       ...session,

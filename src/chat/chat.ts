@@ -49,7 +49,15 @@ import {
 } from '../lib/ai-platforms'
 import { detectAtInput, filterCandidates, parseAtMentions } from '../lib/at-parser'
 import { getDefaultTemplates, renderTemplate } from '../lib/prompt-template'
-import { DEFAULT_USER_SETTINGS, loadUserSettings, saveUserSettings, type UserSettings } from '../lib/user-settings'
+import {
+  DEFAULT_USER_SETTINGS,
+  loadUserSettings,
+  saveUserSettings,
+  swapPlatformOrder,
+  type UserPromptTemplateKey,
+  type UserPromptTemplates,
+  type UserSettings,
+} from '../lib/user-settings'
 import { addSession, deleteSession, getSession, loadSessions, updateSession } from '../lib/session-store'
 import {
   applyCapturedResponses,
@@ -58,8 +66,8 @@ import {
   createSummarySessionRecord,
   isNewCapturedResponse,
 } from '../lib/session-record'
-import { formatBytes, formatSessionMarkdown, summarizeSessionTargets } from '../lib/history-format'
-import { buildSummaryPrompt, hasCapturedResponses } from '../lib/summary-builder'
+import { buildSessionMarkdownExport, formatBytes, formatSessionMarkdown, summarizeSessionTargets } from '../lib/history-format'
+import { buildSummaryPrompt } from '../lib/summary-builder'
 import { evaluateResponseCapture, type ResponseCaptureProgress } from '../lib/response-capture'
 import { buildTransferContent, buildTransferSourceOptions, type TransferSourceOption } from '../lib/transfer-source'
 import { bindComposerFocusRestorer } from '../lib/focus-restore'
@@ -77,12 +85,14 @@ const panelIframe = (p: AIPlatform): HTMLIFrameElement =>
 
 const inputEl = $<HTMLTextAreaElement>('#input')
 const sendBtn = $<HTMLButtonElement>('#btn-send')
+const panelsContainer = $<HTMLElement>('.panels')
 const composer = $<HTMLElement>('.composer')
 const composerToolbar = $<HTMLDivElement>('.composer-toolbar')
 const btnQuote = $<HTMLButtonElement>('#btn-quote')
 const btnSummary = $<HTMLButtonElement>('#btn-summary')
 const btnHistory = $<HTMLButtonElement>('#btn-history')
 const btnConversations = $<HTMLButtonElement>('#btn-conversations')
+const btnAddPanel = $<HTMLButtonElement>('#btn-add-panel')
 const btnSettings = $<HTMLButtonElement>('#btn-settings')
 const btnExpandInput = $<HTMLButtonElement>('#btn-expand-input')
 const btnImage = $<HTMLButtonElement>('#btn-image')
@@ -96,15 +106,17 @@ const toastContainer = $<HTMLDivElement>('#toast-container')
 const settingsOverlay = $<HTMLDivElement>('#settings-overlay')
 const btnSettingsClose = $<HTMLButtonElement>('#btn-settings-close')
 const btnSettingsSave = $<HTMLButtonElement>('#btn-settings-save')
-const settingTransferTemplate = $<HTMLTextAreaElement>('#setting-transfer-template')
-const settingSummaryTemplate = $<HTMLTextAreaElement>('#setting-summary-template')
-const btnResetTransferTemplate = $<HTMLButtonElement>('#btn-reset-transfer-template')
-const btnResetSummaryTemplate = $<HTMLButtonElement>('#btn-reset-summary-template')
+const settingPromptKind = $<HTMLSelectElement>('#setting-prompt-kind')
+const settingPromptLabel = $<HTMLSpanElement>('#setting-prompt-label')
+const settingPromptTemplate = $<HTMLTextAreaElement>('#setting-prompt-template')
+const settingPromptHelp = $<HTMLParagraphElement>('#setting-prompt-help')
+const btnResetPromptTemplate = $<HTMLButtonElement>('#btn-reset-prompt-template')
 const historyOverlay = $<HTMLDivElement>('#history-overlay')
 const btnHistoryClose = $<HTMLButtonElement>('#btn-history-close')
 const historySearchInput = $<HTMLInputElement>('#history-search')
 const historyList = $<HTMLDivElement>('#history-list')
 const historyDetail = $<HTMLDivElement>('#history-detail')
+const panelSwitchMenu = $<HTMLDivElement>('#panel-switch-menu')
 const conversationOverlay = $<HTMLDivElement>('#conversation-overlay')
 const btnConversationClose = $<HTMLButtonElement>('#btn-conversation-close')
 const conversationList = $<HTMLDivElement>('#conversation-list')
@@ -115,6 +127,7 @@ const btnSummaryGenerate = $<HTMLButtonElement>('#btn-summary-generate')
 const summaryList = $<HTMLDivElement>('#summary-list')
 const summaryTargetSelect = $<HTMLSelectElement>('#summary-target')
 const summaryModeSelect = $<HTMLSelectElement>('#summary-mode')
+const summarySourceList = $<HTMLDivElement>('#summary-source-list')
 const summarySelected = $<HTMLDivElement>('#summary-selected')
 const summaryPreview = $<HTMLDivElement>('#summary-preview')
 const transferOverlay = $<HTMLDivElement>('#transfer-overlay')
@@ -135,11 +148,14 @@ const RESPONSE_BACKFILL_INTERVAL_MS = 3000
 const RESPONSE_BACKFILL_MAX_ATTEMPTS = 20
 const RESPONSE_STABLE_REQUIRED_POLLS = 2
 let userSettings: UserSettings = DEFAULT_USER_SETTINGS
+let selectedPromptTemplateKey: UserPromptTemplateKey = 'transfer'
+let promptTemplateDrafts: UserPromptTemplates = { ...DEFAULT_USER_SETTINGS.promptTemplates }
 let historySessions: Session[] = []
 let conversationEntries: ConversationEntry[] = []
 let selectedHistoryId: string | null = null
 let summarySessions: Session[] = []
 const selectedSummaryIds: Set<string> = new Set()
+const selectedSummaryPlatforms: Set<AIPlatform> = new Set()
 let transferSourcePlatform: AIPlatform | null = null
 let transferSourceOptions: TransferSourceOption[] = []
 
@@ -252,6 +268,10 @@ function selectedSettingsPlatforms(): AIPlatform[] {
     .map((input) => input.dataset.platform as AIPlatform)
 }
 
+function enabledPlatformKeys(settings: UserSettings = userSettings): AIPlatform[] {
+  return allPlatforms().filter((platform) => settings.enabledPlatforms[platform])
+}
+
 function syncSplitters() {
   const hasVisiblePanelBefore = (el: HTMLElement): boolean => {
     let current = el.previousElementSibling
@@ -275,8 +295,27 @@ function syncSplitters() {
   })
 }
 
+function applyPanelOrder(order: AIPlatform[]) {
+  const panels = new Map<AIPlatform, HTMLElement>()
+  for (const platform of allPlatforms()) {
+    const panel = platformPanel(platform)
+    if (panel) panels.set(platform, panel)
+  }
+  const splitters = [...panelsContainer.querySelectorAll<HTMLElement>('.splitter')]
+  const orderedPanels = order
+    .map((platform) => panels.get(platform))
+    .filter((panel): panel is HTMLElement => !!panel)
+
+  for (const [index, panel] of orderedPanels.entries()) {
+    panelsContainer.appendChild(panel)
+    const splitter = splitters[index]
+    if (splitter && index < orderedPanels.length - 1) panelsContainer.appendChild(splitter)
+  }
+}
+
 function applyUserSettings(settings: UserSettings) {
   userSettings = settings
+  applyPanelOrder(settings.platformOrder)
   for (const p of allPlatforms()) {
     const enabled = settings.enabledPlatforms[p]
     const panel = platformPanel(p)
@@ -293,6 +332,7 @@ function applyUserSettings(settings: UserSettings) {
   }
 
   syncSplitters()
+  btnAddPanel.hidden = false
   const canTransfer = platformsWithCapability('supportsLastResponse').length >= 1 && platformsWithCapability('supportsText').length >= 2
   document.querySelectorAll<HTMLButtonElement>('.panel-transfer').forEach((btn) => {
     const platform = btn.dataset.platform as AIPlatform | undefined
@@ -302,13 +342,49 @@ function applyUserSettings(settings: UserSettings) {
   renderChips()
 }
 
+const PROMPT_TEMPLATE_META: Record<UserPromptTemplateKey, { label: string; help: string }> = {
+  transfer: {
+    label: '转发提示词',
+    help: '可用变量：{{fromLabel}} 表示来源 AI 名字，{{content}} 表示要转发的回答内容。',
+  },
+  summaryFinalAnswer: {
+    label: '总结：最终结论',
+    help: '可用变量：{{historyBlock}} 表示历史记录内容，{{modeInstruction}} 表示当前总结方式的补充要求。',
+  },
+  summaryDifferences: {
+    label: '总结：只看分歧',
+    help: '可用变量：{{historyBlock}} 表示历史记录内容，{{modeInstruction}} 表示当前总结方式的补充要求。',
+  },
+  summaryShort: {
+    label: '总结：简短摘要',
+    help: '可用变量：{{historyBlock}} 表示历史记录内容，{{modeInstruction}} 表示当前总结方式的补充要求。',
+  },
+  summaryOpinionDigest: {
+    label: '总结：汇总意见',
+    help: '可用变量：{{historyBlock}} 表示历史记录内容，{{modeInstruction}} 表示当前总结方式的补充要求。',
+  },
+}
+
+function syncCurrentPromptDraft() {
+  promptTemplateDrafts[selectedPromptTemplateKey] = settingPromptTemplate.value
+}
+
+function renderPromptTemplateEditor() {
+  const meta = PROMPT_TEMPLATE_META[selectedPromptTemplateKey]
+  settingPromptKind.value = selectedPromptTemplateKey
+  settingPromptLabel.textContent = meta.label
+  settingPromptTemplate.value = promptTemplateDrafts[selectedPromptTemplateKey]
+  settingPromptHelp.textContent = meta.help
+}
+
 function renderSettingsForm() {
   for (const input of settingPlatformInputs()) {
     const platform = input.dataset.platform as AIPlatform
     input.checked = !!userSettings.enabledPlatforms[platform]
   }
-  settingTransferTemplate.value = userSettings.promptTemplates.transfer
-  settingSummaryTemplate.value = userSettings.promptTemplates.summary
+  promptTemplateDrafts = { ...userSettings.promptTemplates }
+  selectedPromptTemplateKey = settingPromptKind.value as UserPromptTemplateKey || 'transfer'
+  renderPromptTemplateEditor()
 }
 
 function openSettings() {
@@ -367,12 +443,11 @@ async function onSaveSettings() {
     return
   }
 
+  syncCurrentPromptDraft()
   const next: UserSettings = {
     enabledPlatforms,
-    promptTemplates: {
-      transfer: settingTransferTemplate.value,
-      summary: settingSummaryTemplate.value,
-    },
+    platformOrder: userSettings.platformOrder,
+    promptTemplates: promptTemplateDrafts,
   }
 
   btnSettingsSave.disabled = true
@@ -1515,12 +1590,17 @@ function renderHistoryDetail(session?: Session) {
   copyBtn.className = 'history-action'
   copyBtn.textContent = '复制 Markdown'
   copyBtn.addEventListener('click', () => void copySessionMarkdown(session))
+  const exportBtn = document.createElement('button')
+  exportBtn.type = 'button'
+  exportBtn.className = 'history-action'
+  exportBtn.textContent = '导出 Markdown'
+  exportBtn.addEventListener('click', () => exportSessionMarkdown(session))
   const deleteBtn = document.createElement('button')
   deleteBtn.type = 'button'
   deleteBtn.className = 'history-action danger'
   deleteBtn.textContent = '删除'
   deleteBtn.addEventListener('click', () => void deleteHistorySession(session.id))
-  actions.append(copyBtn, deleteBtn)
+  actions.append(copyBtn, exportBtn, deleteBtn)
   header.append(headingWrap, actions)
   historyDetail.appendChild(header)
 
@@ -1547,13 +1627,32 @@ function renderHistoryDetail(session?: Session) {
 function appendHistorySection(titleText: string, bodyText: string) {
   const section = document.createElement('section')
   section.className = 'history-section'
+  const header = document.createElement('div')
+  header.className = 'history-section-header'
   const title = document.createElement('h3')
   title.textContent = titleText
+  const copyBtn = document.createElement('button')
+  copyBtn.type = 'button'
+  copyBtn.className = 'history-block-copy'
+  copyBtn.title = `复制${titleText}`
+  copyBtn.textContent = '复制'
+  copyBtn.addEventListener('click', () => void copyHistoryBlockText(bodyText))
   const body = document.createElement('pre')
   body.className = 'history-block'
   body.textContent = bodyText
-  section.append(title, body)
+  header.append(title, copyBtn)
+  section.append(header, body)
   historyDetail.appendChild(section)
+}
+
+async function copyHistoryBlockText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    showToast('已复制内容', 'success', 1200)
+  } catch (e) {
+    console.error('[AIChatRoom chat] failed to copy history block', e)
+    showToast('复制失败,请稍后重试', 'err', 3000)
+  }
 }
 
 function formatSummaryHistoryInfo(summary: SessionSummary): string {
@@ -1592,6 +1691,20 @@ async function copySessionMarkdown(session: Session) {
     console.error('[AIChatRoom chat] failed to copy history markdown', e)
     showToast('复制失败,请稍后重试', 'err', 3000)
   }
+}
+
+function exportSessionMarkdown(session: Session) {
+  const report = buildSessionMarkdownExport(session)
+  const blob = new Blob([report.content], { type: report.mime })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = report.filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+  showToast('已导出 Markdown 报告', 'success', 1600)
 }
 
 async function deleteHistorySession(id: string) {
@@ -1667,6 +1780,7 @@ async function saveConversationSnapshot(title: string, platforms: AIPlatform[]) 
     createdAt: Date.now(),
     updatedAt: Date.now(),
     enabledPlatforms: platforms,
+    platformOrder: userSettings.platformOrder,
     platformUrls,
   })
 }
@@ -1718,7 +1832,7 @@ function renderConversationList() {
     })
 
     item.append(main, time, deleteBtn)
-    item.addEventListener('click', () => restoreConversation(entry))
+    item.addEventListener('click', () => void restoreConversation(entry))
     conversationList.appendChild(item)
   }
 }
@@ -1731,11 +1845,33 @@ async function deleteConversationEntry(id: string) {
   showToast('会话历史已删除', 'success', 1600)
 }
 
-function restoreConversation(entry: ConversationEntry) {
+function conversationRestoreOrder(entry: ConversationEntry): AIPlatform[] {
+  const base = entry.platformOrder ?? entry.enabledPlatforms
+  const result: AIPlatform[] = []
+  for (const platform of base) {
+    if (!result.includes(platform)) result.push(platform)
+  }
+  for (const platform of allPlatforms()) {
+    if (!result.includes(platform)) result.push(platform)
+  }
+  return result
+}
+
+async function restoreConversation(entry: ConversationEntry) {
+  const enabledPlatforms = Object.fromEntries(
+    allPlatforms().map((platform) => [platform, entry.enabledPlatforms.includes(platform)]),
+  ) as Record<AIPlatform, boolean>
+  const saved = await saveUserSettings({
+    enabledPlatforms,
+    platformOrder: conversationRestoreOrder(entry),
+    promptTemplates: userSettings.promptTemplates,
+  })
+  applyUserSettings(saved)
+
   for (const [platform, url] of Object.entries(entry.platformUrls) as Array<[AIPlatform, string | undefined]>) {
     if (!url) continue
     const panel = platformPanel(platform)
-    if (!panel || panel.hidden) continue
+    if (!panel) continue
     readyMap[platform] = false
     setStatus(platform, 'warn', '加载中…')
     panelIframe(platform).src = url
@@ -1760,6 +1896,14 @@ const SUMMARY_MODE_LABELS: Record<SummaryMode, string> = {
   'final-answer': '最终结论',
   differences: '只看分歧',
   'short-summary': '简短摘要',
+  'opinion-digest': '汇总意见',
+}
+
+const SUMMARY_MODE_TEMPLATE_KEYS: Record<SummaryMode, UserPromptTemplateKey> = {
+  'final-answer': 'summaryFinalAnswer',
+  differences: 'summaryDifferences',
+  'short-summary': 'summaryShort',
+  'opinion-digest': 'summaryOpinionDigest',
 }
 
 function pickSummaryTarget(): AIPlatform | null {
@@ -1817,6 +1961,7 @@ function renderSummaryList() {
     checkbox.addEventListener('change', () => {
       if (checkbox.checked) selectedSummaryIds.add(session.id)
       else selectedSummaryIds.delete(session.id)
+      resetSummarySourceSelection()
       updateSummarySelectedCount()
     })
     summaryList.appendChild(item)
@@ -1827,7 +1972,57 @@ function renderSummaryList() {
 function updateSummarySelectedCount() {
   summarySelected.textContent = `已选择 ${selectedSummaryIds.size} 条历史`
   btnSummaryGenerate.disabled = selectedSummaryIds.size === 0
+  renderSummarySourceOptions()
   renderSummaryPreview()
+}
+
+function availableSummaryPlatforms(): AIPlatform[] {
+  const selected = selectedSummarySessions()
+  const seen = new Set<AIPlatform>()
+  const result: AIPlatform[] = []
+  for (const platform of allPlatforms()) {
+    if (!selected.some((session) => session.targetPlatforms.includes(platform))) continue
+    if (seen.has(platform)) continue
+    seen.add(platform)
+    result.push(platform)
+  }
+  return result
+}
+
+function resetSummarySourceSelection() {
+  selectedSummaryPlatforms.clear()
+  for (const platform of availableSummaryPlatforms()) {
+    selectedSummaryPlatforms.add(platform)
+  }
+}
+
+function renderSummarySourceOptions() {
+  summarySourceList.innerHTML = ''
+  const platforms = availableSummaryPlatforms()
+  if (platforms.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'summary-preview-empty'
+    empty.textContent = '先选择包含 AI 回复的历史'
+    summarySourceList.appendChild(empty)
+    return
+  }
+  for (const platform of platforms) {
+    const label = document.createElement('label')
+    label.className = 'transfer-target-item'
+    const input = document.createElement('input')
+    input.type = 'checkbox'
+    input.value = platform
+    input.checked = selectedSummaryPlatforms.has(platform)
+    input.addEventListener('change', () => {
+      if (input.checked) selectedSummaryPlatforms.add(platform)
+      else selectedSummaryPlatforms.delete(platform)
+      renderSummaryPreview()
+    })
+    const text = document.createElement('span')
+    text.textContent = getPlatformMeta(platform)?.label ?? platform
+    label.append(input, text)
+    summarySourceList.appendChild(label)
+  }
 }
 
 function renderSummaryPreview() {
@@ -1861,6 +2056,7 @@ function renderSummaryPreview() {
       appendSummaryPreviewSection(card, '实际发送内容', session.sentPrompt)
     }
     for (const platform of session.targetPlatforms) {
+      if (!selectedSummaryPlatforms.has(platform)) continue
       const label = getPlatformMeta(platform)?.label ?? platform
       const response = session.responses[platform]
       const text = response?.status === 'captured' && response.text.trim()
@@ -1894,6 +2090,7 @@ async function openSummaryDialog() {
   summaryOverlay.hidden = false
   summaryList.innerHTML = '<div class="history-empty">正在读取历史记录…</div>'
   selectedSummaryIds.clear()
+  selectedSummaryPlatforms.clear()
   renderSummaryTargets()
   summaryModeSelect.value = 'final-answer'
 
@@ -1903,6 +2100,7 @@ async function openSummaryDialog() {
     summarySessions = summarySessions.map((s) => (s.id === refreshed.id ? refreshed : s))
     selectedSummaryIds.add(refreshed.id)
   }
+  resetSummarySourceSelection()
   renderSummaryList()
 }
 
@@ -1914,6 +2112,13 @@ function selectedSummarySessions(): Session[] {
   return summarySessions
     .filter((session) => selectedSummaryIds.has(session.id))
     .sort((a, b) => a.createdAt - b.createdAt)
+}
+
+function hasCapturedResponseFromPlatforms(session: Session, platforms: AIPlatform[]): boolean {
+  return platforms.some((platform) => {
+    const response = session.responses[platform]
+    return response?.status === 'captured' && response.text.trim().length > 0
+  })
 }
 
 function summarySessionTitle(sessions: Session[], mode: SummaryMode): string {
@@ -1935,16 +2140,23 @@ async function onGenerateSummary() {
     showToast('请至少选择一条历史记录', 'warn')
     return
   }
-  const incomplete = sessions.filter((session) => !hasCapturedResponses(session))
+  const includedPlatforms = [...selectedSummaryPlatforms]
+  if (includedPlatforms.length === 0) {
+    showToast('请至少选择一个参与总结的 AI', 'warn')
+    return
+  }
+  const incomplete = sessions.filter((session) => !hasCapturedResponseFromPlatforms(session, includedPlatforms))
   if (incomplete.length > 0) {
     showToast(`有 ${incomplete.length} 条历史还没有可用回答,等 AI 回答完成后再试`, 'warn', 5000)
     return
   }
 
   const mode = summaryModeSelect.value as SummaryMode
-  const prompt = buildSummaryPrompt(userSettings.promptTemplates.summary, sessions, {
+  const prompt = buildSummaryPrompt(userSettings.promptTemplates[SUMMARY_MODE_TEMPLATE_KEYS[mode]], sessions, {
     targetLabel: getPlatformMeta(target)?.label ?? target,
+    mode,
     modeLabel: SUMMARY_MODE_LABELS[mode],
+    includedPlatforms,
   })
   const summary: SessionSummary = {
     id: `summary-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -2106,6 +2318,184 @@ function setupOpenButtons() {
   }
 }
 
+function closePanelSwitchMenu() {
+  panelSwitchMenu.hidden = true
+  delete panelSwitchMenu.dataset.sourcePlatform
+  delete panelSwitchMenu.dataset.mode
+}
+
+function positionPanelSwitchMenu(anchor: HTMLElement) {
+  const rect = anchor.getBoundingClientRect()
+  const wasHidden = panelSwitchMenu.hidden
+  if (wasHidden) {
+    panelSwitchMenu.hidden = false
+    panelSwitchMenu.style.visibility = 'hidden'
+  }
+
+  const menuWidth = panelSwitchMenu.offsetWidth || 170
+  const menuHeight = panelSwitchMenu.offsetHeight || 180
+  const belowTop = rect.bottom + 6
+  const aboveTop = rect.top - menuHeight - 6
+  const top = belowTop + menuHeight > window.innerHeight
+    ? Math.max(8, aboveTop)
+    : belowTop
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuWidth - 8))
+
+  panelSwitchMenu.style.left = `${left}px`
+  panelSwitchMenu.style.top = `${top}px`
+  if (wasHidden) {
+    panelSwitchMenu.style.visibility = ''
+    panelSwitchMenu.hidden = true
+  }
+}
+
+function appendPanelMenuItem(platform: AIPlatform, active: boolean, statusText: string, onClick: () => void) {
+  const meta = getPlatformMeta(platform)
+  const item = document.createElement('button')
+  item.type = 'button'
+  item.className = active ? 'active' : ''
+  item.dataset.platform = platform
+  const icon = document.createElement('span')
+  icon.textContent = meta?.icon ?? ''
+  const label = document.createElement('span')
+  label.textContent = meta?.label ?? platform
+  const status = document.createElement('span')
+  status.className = 'switch-menu-status'
+  status.textContent = statusText
+  item.append(icon, label, status)
+  item.addEventListener('click', onClick)
+  panelSwitchMenu.appendChild(item)
+}
+
+function renderPanelSwitchMenu(source: AIPlatform) {
+  panelSwitchMenu.innerHTML = ''
+  panelSwitchMenu.dataset.mode = 'switch'
+  panelSwitchMenu.dataset.sourcePlatform = source
+  for (const platform of allPlatforms()) {
+    appendPanelMenuItem(
+      platform,
+      platform === source,
+      userSettings.enabledPlatforms[platform] ? '已显示' : '未显示',
+      () => void onSwitchPanel(source, platform),
+    )
+  }
+}
+
+function renderPanelAddMenu() {
+  panelSwitchMenu.innerHTML = ''
+  panelSwitchMenu.dataset.mode = 'add'
+  const hiddenPlatforms = allPlatforms().filter((platform) => !userSettings.enabledPlatforms[platform])
+  for (const platform of hiddenPlatforms) {
+    appendPanelMenuItem(platform, false, '添加', () => void onAddPanel(platform))
+  }
+  if (hiddenPlatforms.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'at-popup-empty'
+    empty.textContent = '没有可添加的 AI'
+    panelSwitchMenu.appendChild(empty)
+  }
+}
+
+function openPanelSwitchMenu(source: AIPlatform, anchor: HTMLElement) {
+  renderPanelSwitchMenu(source)
+  positionPanelSwitchMenu(anchor)
+  panelSwitchMenu.hidden = false
+}
+
+function openPanelAddMenu(anchor: HTMLElement) {
+  const hiddenPlatforms = allPlatforms().filter((platform) => !userSettings.enabledPlatforms[platform])
+  if (hiddenPlatforms.length === 0) {
+    closePanelSwitchMenu()
+    showToast('当前所有 AI 都已显示', 'info', 1800)
+    return
+  }
+  renderPanelAddMenu()
+  positionPanelSwitchMenu(anchor)
+  panelSwitchMenu.hidden = false
+}
+
+async function savePanelSettings(next: UserSettings, successMessage: string, errorMessage: string) {
+  try {
+    const saved = await saveUserSettings(next)
+    applyUserSettings(saved)
+    await refreshAllStatuses()
+    showToast(successMessage, 'success', 1600)
+  } catch (e) {
+    console.error('[AIChatRoom chat] panel settings failed', e)
+    showToast(errorMessage, 'err', 3000)
+  }
+}
+
+async function onSwitchPanel(source: AIPlatform, target: AIPlatform) {
+  closePanelSwitchMenu()
+  if (source === target) return
+  const enabledPlatforms = { ...userSettings.enabledPlatforms }
+  if (!enabledPlatforms[target]) {
+    enabledPlatforms[target] = true
+    enabledPlatforms[source] = false
+  }
+  const next: UserSettings = {
+    enabledPlatforms,
+    platformOrder: swapPlatformOrder(userSettings.platformOrder, source, target),
+    promptTemplates: userSettings.promptTemplates,
+  }
+
+  await savePanelSettings(next, 'AI 面板位置已更新', '切换失败,请稍后重试')
+}
+
+async function onAddPanel(platform: AIPlatform) {
+  closePanelSwitchMenu()
+  const enabledPlatforms = { ...userSettings.enabledPlatforms }
+  if (enabledPlatformKeys().length >= MAX_ACTIVE_PLATFORMS) {
+    showToast(`最多同时显示 ${MAX_ACTIVE_PLATFORMS} 个 AI`, 'warn')
+    return
+  }
+  enabledPlatforms[platform] = true
+  await savePanelSettings({
+    enabledPlatforms,
+    platformOrder: userSettings.platformOrder,
+    promptTemplates: userSettings.promptTemplates,
+  }, 'AI 面板已添加', '添加失败,请稍后重试')
+}
+
+async function onClosePanel(platform: AIPlatform) {
+  const active = enabledPlatformKeys()
+  if (active.length <= MIN_ACTIVE_PLATFORMS) {
+    showToast(`至少保留 ${MIN_ACTIVE_PLATFORMS} 个 AI`, 'warn')
+    return
+  }
+  const enabledPlatforms = { ...userSettings.enabledPlatforms, [platform]: false }
+  await savePanelSettings({
+    enabledPlatforms,
+    platformOrder: userSettings.platformOrder,
+    promptTemplates: userSettings.promptTemplates,
+  }, 'AI 面板已关闭', '关闭失败,请稍后重试')
+}
+
+function setupPanelSwitchButtons() {
+  document.querySelectorAll<HTMLButtonElement>('.panel-switch').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const source = btn.dataset.platform as AIPlatform | undefined
+      if (!source) return
+      if (!panelSwitchMenu.hidden && panelSwitchMenu.dataset.sourcePlatform === source) {
+        closePanelSwitchMenu()
+        return
+      }
+      openPanelSwitchMenu(source, btn)
+    })
+  })
+}
+
+function setupPanelCloseButtons() {
+  document.querySelectorAll<HTMLButtonElement>('.panel-close').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const platform = btn.dataset.platform as AIPlatform | undefined
+      if (platform) void onClosePanel(platform)
+    })
+  })
+}
+
 // ---------- 事件绑定 ----------
 function bindEvents() {
   bindComposerFocusRestorer({
@@ -2154,6 +2544,11 @@ function bindEvents() {
   transferOverlay.addEventListener('click', (e) => {
     if (e.target === transferOverlay) closeTransferDialog()
   })
+  document.addEventListener('click', (e) => {
+    const target = e.target
+    if (!(target instanceof Node)) return
+    if (!panelSwitchMenu.hidden && !panelSwitchMenu.contains(target)) closePanelSwitchMenu()
+  })
   btnQuote.addEventListener('click', onQuote)
   btnHistory.addEventListener('click', onHistory)
   btnHistoryClose.addEventListener('click', closeHistory)
@@ -2169,6 +2564,14 @@ function bindEvents() {
     if (e.target === historyOverlay) closeHistory()
   })
   btnConversations.addEventListener('click', () => void openConversationHistory())
+  btnAddPanel.addEventListener('click', (e) => {
+    e.stopPropagation()
+    if (!panelSwitchMenu.hidden && panelSwitchMenu.dataset.mode === 'add') {
+      closePanelSwitchMenu()
+      return
+    }
+    openPanelAddMenu(btnAddPanel)
+  })
   btnConversationClose.addEventListener('click', closeConversationHistory)
   conversationOverlay.addEventListener('click', (e) => {
     if (e.target === conversationOverlay) closeConversationHistory()
@@ -2177,11 +2580,14 @@ function bindEvents() {
   btnExpandInput.addEventListener('click', toggleInputExpanded)
   btnSettingsClose.addEventListener('click', closeSettings)
   btnSettingsSave.addEventListener('click', () => void onSaveSettings())
-  btnResetTransferTemplate.addEventListener('click', () => {
-    settingTransferTemplate.value = DEFAULT_USER_SETTINGS.promptTemplates.transfer
+  settingPromptKind.addEventListener('change', () => {
+    syncCurrentPromptDraft()
+    selectedPromptTemplateKey = settingPromptKind.value as UserPromptTemplateKey
+    renderPromptTemplateEditor()
   })
-  btnResetSummaryTemplate.addEventListener('click', () => {
-    settingSummaryTemplate.value = DEFAULT_USER_SETTINGS.promptTemplates.summary
+  btnResetPromptTemplate.addEventListener('click', () => {
+    settingPromptTemplate.value = DEFAULT_USER_SETTINGS.promptTemplates[selectedPromptTemplateKey]
+    syncCurrentPromptDraft()
   })
   document.querySelectorAll<HTMLButtonElement>('.settings-nav-item[data-settings-tab]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -2193,6 +2599,7 @@ function bindEvents() {
     if (e.target === settingsOverlay) closeSettings()
   })
   window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !panelSwitchMenu.hidden) closePanelSwitchMenu()
     if (e.key === 'Escape' && !summaryOverlay.hidden) closeSummaryDialog()
     if (e.key === 'Escape' && !transferOverlay.hidden) closeTransferDialog()
     if (e.key === 'Escape' && !historyOverlay.hidden) closeHistory()
@@ -2224,6 +2631,8 @@ window.addEventListener('DOMContentLoaded', () => {
     await initializeSettings()
     setupSplitter()
     setupOpenButtons()
+    setupPanelSwitchButtons()
+    setupPanelCloseButtons()
     setupTransferButtons()
     bindEvents()
     await bootstrap()

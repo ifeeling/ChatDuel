@@ -221,7 +221,7 @@ export function probeDoubaoAttachmentControls(): DoubaoAttachmentProbeResult {
 }
 
 function elementText(el: HTMLElement): string {
-  return normalizeText(el.innerText ?? el.textContent ?? '')
+  return removeTrailingSuggestionLines(normalizeText(el.innerText ?? el.textContent ?? ''))
 }
 
 function isHidden(el: HTMLElement): boolean {
@@ -242,6 +242,29 @@ function elementMarker(el: HTMLElement): string {
     el.className?.toString() ?? '',
     el.getAttribute('aria-label') ?? '',
   ].join(' ')
+}
+
+function isLikelySuggestionLine(line: string): boolean {
+  const text = line.trim()
+  if (!text) return false
+  if (/^[\d一二三四五六七八九十]+[.)、]/.test(text)) return false
+  if (/^[•\-*]/.test(text)) return false
+  return text.length <= 36 && (/[?？]$/.test(text) || /[→↗>]$/.test(text))
+}
+
+function removeTrailingSuggestionLines(text: string): string {
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean)
+  if (lines.length <= 1) return text
+
+  let trailingSuggestionCount = 0
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (!isLikelySuggestionLine(lines[index])) break
+    trailingSuggestionCount += 1
+  }
+
+  if (trailingSuggestionCount < 2) return text
+  const keepCount = Math.max(1, lines.length - trailingSuggestionCount)
+  return lines.slice(0, keepCount).join('\n')
 }
 
 function responseCandidateScore(el: HTMLElement): number {

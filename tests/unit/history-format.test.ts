@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatSessionMarkdown, summarizeSessionTargets } from '../../src/lib/history-format'
+import { buildSessionMarkdownExport, formatSessionMarkdown, summarizeSessionTargets } from '../../src/lib/history-format'
 import type { Session } from '../../src/types'
 
 const makeSession = (): Session => ({
@@ -42,5 +42,16 @@ describe('history-format', () => {
     expect(markdown).toContain('你好！')
     expect(markdown).toContain('## Gemini 回答')
     expect(markdown).toContain('待回填')
+  })
+
+  it('builds a downloadable markdown report payload', () => {
+    const report = buildSessionMarkdownExport({
+      ...makeSession(),
+      prompt: '你好 / Gemini?',
+    })
+
+    expect(report.filename).toBe('AIChatRoom-你好-Gemini.md')
+    expect(report.mime).toBe('text/markdown;charset=utf-8')
+    expect(report.content).toContain('# 你好 / Gemini?')
   })
 })

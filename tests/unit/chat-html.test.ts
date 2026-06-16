@@ -25,6 +25,9 @@ describe('chat.html', () => {
     expect(document.querySelector('#summary-list')).toBeTruthy()
     expect(document.querySelector('#summary-target')).toBeTruthy()
     expect(document.querySelector('#summary-mode')).toBeTruthy()
+    expect(document.querySelector<HTMLOptionElement>('#summary-mode option[value="opinion-digest"]')?.textContent)
+      .toBe('汇总意见')
+    expect(document.querySelector('#summary-source-list')).toBeTruthy()
     expect(document.querySelector('#summary-preview')).toBeTruthy()
     expect(document.querySelector('#btn-summary-generate')).toBeTruthy()
   })
@@ -66,6 +69,18 @@ describe('chat.html', () => {
     expect(helpText).toContain('官方网页的会话链接')
   })
 
+  it('edits one prompt template at a time in settings', () => {
+    document.body.innerHTML = html
+
+    expect(document.querySelector('#setting-prompt-kind')).toBeTruthy()
+    expect(document.querySelector('#setting-prompt-template')).toBeTruthy()
+    expect(document.querySelector('#setting-transfer-template')).toBeNull()
+    expect(document.querySelector('#setting-summary-template')).toBeNull()
+    expect(document.querySelectorAll('#setting-prompt-kind option')).toHaveLength(5)
+    expect(document.querySelector<HTMLOptionElement>('#setting-prompt-kind option[value="summaryOpinionDigest"]')?.textContent)
+      .toContain('汇总意见')
+  })
+
   it('renders transfer source picker controls', () => {
     document.body.innerHTML = html
 
@@ -99,10 +114,14 @@ describe('chat.html', () => {
     expect(document.querySelector('.panel[data-platform="doubao"]')).toBeTruthy()
     expect(document.querySelector<HTMLButtonElement>('.panel-transfer[data-platform="doubao"]')?.title)
       .toBe('把这里的回答转发给其它 AI')
+    expect(document.querySelectorAll('.panel-switch')).toHaveLength(3)
+    expect(document.querySelectorAll('.panel-close')).toHaveLength(3)
+    expect(document.querySelector('#panel-switch-menu')).toBeTruthy()
     expect(document.querySelectorAll('.splitter')).toHaveLength(2)
     expect(document.querySelectorAll('#btn-quote')).toHaveLength(1)
     expect(document.querySelectorAll('#btn-summary')).toHaveLength(1)
     expect(document.querySelectorAll('#btn-history')).toHaveLength(1)
+    expect(document.querySelectorAll('#btn-add-panel')).toHaveLength(1)
     expect(document.querySelector('.composer-input #btn-quote')).toBeTruthy()
     expect(document.querySelector('.composer-input #btn-summary')).toBeTruthy()
     expect(document.querySelector('.composer-input #btn-history')).toBeTruthy()
@@ -114,6 +133,12 @@ describe('chat.html', () => {
 
   it('keeps hidden panels out of the split layout', () => {
     expect(css).toContain('[hidden] { display: none !important; }')
+  })
+
+  it('keeps toast notifications above modal overlays', () => {
+    const toastRule = css.match(/\.toast-container\s*\{[^}]+\}/)?.[0] ?? ''
+
+    expect(toastRule).toContain('z-index: 1300;')
   })
 
   it('lays out transfer targets horizontally with wrapping', () => {

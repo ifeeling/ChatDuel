@@ -18,7 +18,9 @@
             </span>
           </span>
           <button class="panel-transfer" data-platform="gemini" title="把这里的回答转发给其它 AI">转发 ➔</button>
+          <button class="panel-switch" data-platform="gemini" title="切换这个位置的 AI" type="button">切换</button>
           <button class="panel-open" data-platform="gemini" title="在新标签页打开官方页面">↗</button>
+          <button class="panel-close" data-platform="gemini" title="关闭这个 AI 面板" type="button">×</button>
         </header>
         <iframe class="panel-iframe" data-platform="gemini" src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
       </section>
@@ -34,7 +36,9 @@
             </span>
           </span>
           <button class="panel-transfer" data-platform="chatgpt" title="把这里的回答转发给其它 AI">转发 ➔</button>
+          <button class="panel-switch" data-platform="chatgpt" title="切换这个位置的 AI" type="button">切换</button>
           <button class="panel-open" data-platform="chatgpt" title="在新标签页打开官方页面">↗</button>
+          <button class="panel-close" data-platform="chatgpt" title="关闭这个 AI 面板" type="button">×</button>
         </header>
         <iframe class="panel-iframe" data-platform="chatgpt" src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
       </section>
@@ -50,7 +54,9 @@
             </span>
           </span>
           <button class="panel-transfer" data-platform="doubao" title="把这里的回答转发给其它 AI">转发 ➔</button>
+          <button class="panel-switch" data-platform="doubao" title="切换这个位置的 AI" type="button">切换</button>
           <button class="panel-open" data-platform="doubao" title="在新标签页打开官方页面">↗</button>
+          <button class="panel-close" data-platform="doubao" title="关闭这个 AI 面板" type="button">×</button>
         </header>
         <iframe class="panel-iframe" data-platform="doubao" src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
       </section>
@@ -72,6 +78,7 @@
         <button id="btn-summary" class="input-action-btn" title="对比总结" type="button">总结</button>
         <button id="btn-history" class="input-action-btn" title="查看历史" type="button">历史</button>
         <button id="btn-conversations" class="input-action-btn" title="继续历史会话" type="button">会话</button>
+        <button id="btn-add-panel" class="input-action-btn" title="添加 AI 面板" type="button">添加 AI</button>
         <button id="btn-refresh" class="input-tool-btn compact" title="刷新状态" type="button" aria-label="刷新状态">↻</button>
         <input type="file" id="file-input" accept="image/*,.txt,.md,.csv,.pdf,.xlsx" hidden>
         <textarea id="input" rows="1"
@@ -81,6 +88,7 @@
       </div>
       <!-- @ 候选弹层(绝对定位,由 chat.ts 算坐标) -->
       <div class="at-popup" id="at-popup" hidden role="listbox" aria-label="选择 AI 目标"></div>
+      <div class="panel-switch-menu" id="panel-switch-menu" hidden role="menu" aria-label="切换 AI 面板"></div>
     </footer>
   </div>
 
@@ -141,18 +149,22 @@
           </div>
           <div class="settings-panel" data-settings-panel="prompts">
             <p class="settings-lead">修改发送给目标 AI 的提示词</p>
-            <label class="prompt-editor">
-              <span class="prompt-editor-label">转发提示词</span>
-              <textarea id="setting-transfer-template" spellcheck="false"></textarea>
+            <label class="summary-field prompt-kind-field">
+              <span>提示词类型</span>
+              <select id="setting-prompt-kind">
+                <option value="transfer">转发提示词</option>
+                <option value="summaryFinalAnswer">总结：最终结论</option>
+                <option value="summaryDifferences">总结：只看分歧</option>
+                <option value="summaryShort">总结：简短摘要</option>
+                <option value="summaryOpinionDigest">总结：汇总意见</option>
+              </select>
             </label>
-            <p class="settings-help">可用变量：{{fromLabel}} 表示来源 AI 名字，{{content}} 表示要转发的回答内容。</p>
-            <button id="btn-reset-transfer-template" class="settings-secondary" type="button">恢复默认提示词</button>
             <label class="prompt-editor prompt-editor-spaced">
-              <span class="prompt-editor-label">总结提示词</span>
-              <textarea id="setting-summary-template" spellcheck="false"></textarea>
+              <span class="prompt-editor-label" id="setting-prompt-label">转发提示词</span>
+              <textarea id="setting-prompt-template" spellcheck="false"></textarea>
             </label>
-            <p class="settings-help">可用变量：{{historyBlock}} 表示最近一轮历史记录。</p>
-            <button id="btn-reset-summary-template" class="settings-secondary" type="button">恢复默认总结提示词</button>
+            <p class="settings-help" id="setting-prompt-help">可用变量：{{fromLabel}} 表示来源 AI 名字，{{content}} 表示要转发的回答内容。</p>
+            <button id="btn-reset-prompt-template" class="settings-secondary" type="button">恢复当前提示词默认值</button>
           </div>
           <div class="settings-panel" data-settings-panel="help">
             <p class="settings-lead">常用功能说明</p>
@@ -170,16 +182,20 @@
                 <p>每个 AI 顶部的“转发”按钮可以选择该 AI 以前的回答，再转给其它 AI。默认选最新回答，也可以多选。</p>
               </section>
               <section class="help-card">
+                <h3>面板管理</h3>
+                <p>每个 AI 顶部可以“切换”或“关闭”当前面板；底部“添加 AI”可以把隐藏的 AI 加回来。切换到已显示的 AI 时会交换位置。</p>
+              </section>
+              <section class="help-card">
                 <h3>总结</h3>
-                <p>“总结”会从历史记录中选择一条或多条问答记录，生成对比总结提示词，再发送给指定 AI。</p>
+                <p>“总结”会从历史记录中选择一条或多条问答记录，也可以勾选哪些 AI 的回答参与总结，再发送给指定 AI。“汇总意见”会尽量只提取各 AI 的建议和风险点。</p>
               </section>
               <section class="help-card">
                 <h3>历史</h3>
-                <p>“历史”保存每一次用户提交的问题、实际发送内容、附件和 AI 回复。它主要用于回看、复制 Markdown、总结和转发。</p>
+                <p>“历史”保存每一次用户提交的问题、实际发送内容、附件和 AI 回复。它主要用于回看、单块复制、复制或导出 Markdown、总结和转发。</p>
               </section>
               <section class="help-card">
                 <h3>会话</h3>
-                <p>“会话”保存官方网页的会话链接，不保存 AI 回复正文。点击会话历史可以回到之前的官方对话继续聊。</p>
+                <p>“会话”保存官方网页的会话链接和当时显示的 AI 状态，不保存 AI 回复正文。点击会话历史可以还原面板并继续聊。</p>
               </section>
             </div>
           </div>
@@ -215,7 +231,7 @@
       </header>
       <div class="conversation-body">
         <div class="conversation-list" id="conversation-list" aria-label="会话历史列表"></div>
-        <div class="conversation-note">只保存官方页面的会话链接，不保存 AI 回复正文。点击一条会话后，会把对应 AI 面板切回当时的官方会话页面。</div>
+        <div class="conversation-note">只保存官方页面的会话链接和当时显示的 AI 状态，不保存 AI 回复正文。点击一条会话后，会还原面板并切回当时的官方会话页面。</div>
       </div>
     </section>
   </div>
@@ -241,7 +257,12 @@
                 <option value="final-answer">最终结论</option>
                 <option value="differences">只看分歧</option>
                 <option value="short-summary">简短摘要</option>
+                <option value="opinion-digest">汇总意见</option>
               </select>
+            </label>
+            <label class="summary-field transfer-target-field">
+              <span>参与总结的 AI</span>
+              <div class="transfer-target-list" id="summary-source-list" role="group" aria-label="参与总结的 AI"></div>
             </label>
             <div class="summary-selected" id="summary-selected">已选择 0 条历史</div>
             <div class="summary-actions">

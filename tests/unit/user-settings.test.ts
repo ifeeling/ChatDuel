@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { DEFAULT_USER_SETTINGS, loadUserSettings, saveUserSettings } from '../../src/lib/user-settings'
+import { DEFAULT_USER_SETTINGS, loadUserSettings, saveUserSettings, swapPlatformOrder } from '../../src/lib/user-settings'
 
 beforeEach(() => {
   const store: Record<string, unknown> = {}
@@ -26,8 +26,30 @@ describe('user-settings', () => {
     })
     expect(saved.enabledPlatforms).toEqual({ chatgpt: false, gemini: true, doubao: true })
     expect(saved.promptTemplates.transfer).toBe(DEFAULT_USER_SETTINGS.promptTemplates.transfer)
-    expect(saved.promptTemplates.summary).toBe(DEFAULT_USER_SETTINGS.promptTemplates.summary)
+    expect(saved.promptTemplates.summaryFinalAnswer).toBe(DEFAULT_USER_SETTINGS.promptTemplates.summaryFinalAnswer)
     await expect(loadUserSettings()).resolves.toEqual(saved)
+  })
+
+  it('saves platform display order', async () => {
+    const saved = await saveUserSettings({
+      platformOrder: ['gemini', 'doubao', 'chatgpt'],
+    })
+
+    expect(saved.platformOrder).toEqual(['gemini', 'doubao', 'chatgpt'])
+    await expect(loadUserSettings()).resolves.toEqual(saved)
+  })
+
+  it('normalizes missing platform order entries', async () => {
+    const saved = await saveUserSettings({
+      platformOrder: ['doubao', 'chatgpt'],
+    })
+
+    expect(saved.platformOrder).toEqual(['doubao', 'chatgpt', 'gemini'])
+  })
+
+  it('swaps platform display order when changing a panel to an active platform', () => {
+    expect(swapPlatformOrder(['gemini', 'chatgpt', 'doubao'], 'chatgpt', 'doubao'))
+      .toEqual(['gemini', 'doubao', 'chatgpt'])
   })
 
   it('fills missing platform preferences from defaults', async () => {
@@ -51,11 +73,28 @@ describe('user-settings', () => {
     expect(saved.promptTemplates.transfer).toBe('请审查 {{fromLabel}}：{{content}}')
   })
 
-  it('saves summary prompt template', async () => {
+  it('saves separate summary prompt templates', async () => {
     const saved = await saveUserSettings({
-      promptTemplates: { summary: '总结：{{historyBlock}}' },
+      promptTemplates: {
+        summaryFinalAnswer: '最终：{{historyBlock}}',
+        summaryDifferences: '分歧：{{historyBlock}}',
+        summaryShort: '简短：{{historyBlock}}',
+        summaryOpinionDigest: '意见：{{historyBlock}}',
+      },
     })
-    expect(saved.promptTemplates.summary).toBe('总结：{{historyBlock}}')
+    expect(saved.promptTemplates.summaryFinalAnswer).toBe('最终：{{historyBlock}}')
+    expect(saved.promptTemplates.summaryDifferences).toBe('分歧：{{historyBlock}}')
+    expect(saved.promptTemplates.summaryShort).toBe('简短：{{historyBlock}}')
+    expect(saved.promptTemplates.summaryOpinionDigest).toBe('意见：{{historyBlock}}')
+  })
+
+  it('migrates a legacy summary prompt to the final-answer template', async () => {
+    const saved = await saveUserSettings({
+      promptTemplates: { summary: '旧总结：{{historyBlock}}' },
+    })
+
+    expect(saved.promptTemplates.summaryFinalAnswer).toBe('旧总结：{{historyBlock}}')
+    expect(saved.promptTemplates.summaryDifferences).toBe(DEFAULT_USER_SETTINGS.promptTemplates.summaryDifferences)
   })
 
   it('falls back when transfer prompt is empty', async () => {
@@ -65,10 +104,10 @@ describe('user-settings', () => {
     expect(saved.promptTemplates.transfer).toBe(DEFAULT_USER_SETTINGS.promptTemplates.transfer)
   })
 
-  it('falls back when summary prompt is empty', async () => {
+  it('falls back when a summary prompt is empty', async () => {
     const saved = await saveUserSettings({
-      promptTemplates: { summary: '   ' },
+      promptTemplates: { summaryOpinionDigest: '   ' },
     })
-    expect(saved.promptTemplates.summary).toBe(DEFAULT_USER_SETTINGS.promptTemplates.summary)
+    expect(saved.promptTemplates.summaryOpinionDigest).toBe(DEFAULT_USER_SETTINGS.promptTemplates.summaryOpinionDigest)
   })
 })

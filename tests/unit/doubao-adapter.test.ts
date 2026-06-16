@@ -153,6 +153,23 @@ describe('doubao adapter', () => {
     await expect(createDoubaoAdapter().getLastResponse()).resolves.toBe('你好呀～有什么我能帮你的吗？')
   })
 
+  it('removes Doubao follow-up suggestion chips from a captured response block', async () => {
+    document.body.innerHTML = `
+      <main>
+        <div class="message user">你们好</div>
+        <div class="message assistant">
+          <p>你好呀～有什么我能帮你的吗？</p>
+          <div>你们是做什么的？ →</div>
+          <div>你们有哪些产品或服务？ →</div>
+          <div>你们的优势是什么？ →</div>
+        </div>
+      </main>
+      <textarea placeholder="发消息或按住空格说话..."></textarea>
+    `
+
+    await expect(createDoubaoAdapter().getLastResponse()).resolves.toBe('你好呀～有什么我能帮你的吗？')
+  })
+
   it('does not treat Doubao creation shortcuts as attachment upload support', () => {
     document.body.innerHTML = `
       <main>
