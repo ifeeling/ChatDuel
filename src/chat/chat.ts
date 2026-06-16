@@ -89,6 +89,7 @@ const inputEl = $<HTMLTextAreaElement>('#input')
 const sendBtn = $<HTMLButtonElement>('#btn-send')
 const panelsContainer = $<HTMLElement>('.panels')
 const composer = $<HTMLElement>('.composer')
+const composerTextbox = $<HTMLDivElement>('#composer-textbox')
 const composerToolbar = $<HTMLDivElement>('.composer-toolbar')
 const btnSummary = $<HTMLButtonElement>('#btn-summary')
 const btnHistory = $<HTMLButtonElement>('#btn-history')
@@ -134,6 +135,9 @@ const summarySelected = $<HTMLDivElement>('#summary-selected')
 const summaryPreview = $<HTMLDivElement>('#summary-preview')
 const transferOverlay = $<HTMLDivElement>('#transfer-overlay')
 const transferTitle = $<HTMLHeadingElement>('#transfer-title')
+const transferLead = $<HTMLParagraphElement>('#transfer-lead')
+const transferTargetLabel = $<HTMLSpanElement>('#transfer-target-label')
+const transferPreviewTitle = $<HTMLHeadingElement>('#transfer-preview-title')
 const btnTransferClose = $<HTMLButtonElement>('#btn-transfer-close')
 const btnTransferCancel = $<HTMLButtonElement>('#btn-transfer-cancel')
 const btnTransferSend = $<HTMLButtonElement>('#btn-transfer-send')
@@ -184,6 +188,18 @@ function setElementTitle(selector: string, title: string) {
   }
 }
 
+function formatUiText(language: UserLanguage, key: string, values: Record<string, string | number>): string {
+  let text = t(language, key)
+  for (const [name, value] of Object.entries(values)) {
+    text = text.replaceAll(`{${name}}`, String(value))
+  }
+  return text
+}
+
+function uiText(key: string, values: Record<string, string | number> = {}): string {
+  return formatUiText(userSettings.language, key, values)
+}
+
 function applyStaticUiLanguage(language: UserLanguage) {
   document.documentElement.lang = language
   setElementTitle('#btn-settings', t(language, 'app.settings'))
@@ -211,11 +227,28 @@ function applyStaticUiLanguage(language: UserLanguage) {
   setElementText('.settings-field span', t(language, 'settings.language'))
   setElementText('#btn-refresh', t(language, 'settings.refreshStatus'))
   setElementTitle('#btn-refresh', t(language, 'settings.refreshStatusTitle'))
+  setElementText('#settings-note-prefix', t(language, 'settings.notePrefix'))
+  setElementText('#settings-note-body', t(language, 'settings.noteBody'))
+  document.querySelectorAll<HTMLElement>('[data-site-owner]').forEach((owner) => {
+    const platform = owner.dataset.siteOwner
+    if (platform) owner.textContent = t(language, `site.owner.${platform}`)
+  })
+  document.querySelectorAll<HTMLAnchorElement>('.site-open').forEach((link) => {
+    const row = link.closest<HTMLElement>('.site-row')
+    const platform = row?.querySelector<HTMLInputElement>('input[data-platform]')?.dataset.platform
+    if (platform) link.title = t(language, `site.open.${platform}`)
+  })
   setElementText('#history-title', t(language, 'toolbar.records'))
   historySearchInput.placeholder = t(language, 'history.search')
   setElementText('#conversation-title', t(language, 'toolbar.officialChats'))
   setElementText('#summary-title', t(language, 'toolbar.summaryTitle'))
   setElementText('#transfer-title', t(language, 'transfer.title'))
+  transferLead.textContent = t(language, 'transfer.lead')
+  transferTargetLabel.textContent = t(language, 'transfer.targetLabel')
+  transferTargetList.setAttribute('aria-label', t(language, 'transfer.targetLabel'))
+  transferPreviewTitle.textContent = t(language, 'transfer.previewTitle')
+  btnTransferCancel.textContent = t(language, 'common.cancel')
+  btnTransferSend.textContent = t(language, 'panel.transfer').replace(/\s*[-➔>]+$/, '')
   setElementTitle('#btn-settings-close', t(language, 'common.close'))
   setElementTitle('#btn-history-close', t(language, 'common.close'))
   setElementTitle('#btn-conversation-close', t(language, 'common.close'))
@@ -270,7 +303,7 @@ const atChipsEl = $<HTMLDivElement>('#at-chips')
 const atPopupEl = $<HTMLDivElement>('#at-popup')
 
 function updateComposerToolbarVisibility() {
-  composerToolbar.classList.toggle('has-content', !atChipsEl.hidden || !imagePreview.hidden)
+  composerToolbar.classList.toggle('has-content', !imagePreview.hidden)
 }
 
 function setStatus(p: AIPlatform, state: 'ok' | 'err' | 'warn', text: string) {
@@ -1058,8 +1091,17 @@ function renderChips() {
     const chip = document.createElement('span')
     chip.className = 'at-chip'
     chip.dataset.platform = p
-    chip.innerHTML = `<span class="at-chip-icon">${meta.icon}</span><span>${meta.label}</span><span class="at-chip-remove" title="移除">×</span>`
-    chip.querySelector('.at-chip-remove')!.addEventListener('click', (ev) => {
+    const icon = document.createElement('span')
+    icon.className = 'at-chip-icon'
+    icon.textContent = meta.icon
+    const label = document.createElement('span')
+    label.textContent = `@${meta.label}`
+    const remove = document.createElement('span')
+    remove.className = 'at-chip-remove'
+    remove.title = t(userSettings.language, 'at.remove')
+    remove.textContent = '×'
+    chip.append(icon, label, remove)
+    remove.addEventListener('click', (ev) => {
       ev.stopPropagation()
       atSelected.delete(p)
       renderChips()
@@ -1128,7 +1170,7 @@ function renderAtPopup() {
  * 弹层定位:贴 textarea,下方放不下就翻到上方;用真实 offsetHeight 决定
  */
 function positionAtPopup() {
-  const rect = inputEl.getBoundingClientRect()
+  const rect = composerTextbox.getBoundingClientRect()
   const margin = 4
   const popupHeight = atPopupEl.offsetHeight || 100  // 兜底,防 0
   const belowTop = rect.bottom + margin
@@ -1240,13 +1282,13 @@ const MAX_TRANSFER_LENGTH = 50_000
  */
 async function onTransfer(sourceKey: AIPlatform) {
   if (!getPlatformCapabilities(sourceKey).supportsLastResponse) {
-    showToast(`${getPlatformMeta(sourceKey)?.label ?? sourceKey} 暂不支持读取回答`, 'warn')
+    showToast(uiText('transfer.unsupportedSource', { sourceLabel: getPlatformMeta(sourceKey)?.label ?? sourceKey }), 'warn')
     return
   }
 
   const candidates = platformsWithCapability('supportsText').filter((p) => p !== sourceKey)
   if (candidates.length === 0) {
-    showToast('没有可转发的目标', 'warn')
+    showToast(uiText('transfer.noTarget'), 'warn')
     return
   }
   await openTransferDialog(sourceKey, candidates)
@@ -1255,7 +1297,7 @@ async function onTransfer(sourceKey: AIPlatform) {
 async function getCurrentTransferResponse(sourceKey: AIPlatform): Promise<string> {
   const state = await requestConversationState(sourceKey, 2000)
   if (!['idle', 'finished', 'error'].includes(state.status)) {
-    showToast(`源 AI 还在生成中,等一会儿再试(当前: ${state.status})`, 'warn', 4000)
+    showToast(uiText('transfer.sourceBusy', { status: state.status }), 'warn', 4000)
     return ''
   }
   return state.lastResponse?.trim() || await requestLastResponse(sourceKey, 3000)
@@ -1290,7 +1332,7 @@ function selectedTransferTargets(): AIPlatform[] {
 function formatTransferTargetLabels(targets: AIPlatform[]): string {
   return targets
     .map((target) => getPlatformMeta(target)?.label ?? target)
-    .join('、')
+    .join(userSettings.language === 'zh-CN' ? '、' : ', ')
 }
 
 async function executeTransferToTargets(sourceKey: AIPlatform, targetKeys: AIPlatform[], selectedContent: string) {
@@ -1302,11 +1344,15 @@ async function executeTransferToTargets(sourceKey: AIPlatform, targetKeys: AIPla
 async function openTransferDialog(sourceKey: AIPlatform, candidates: AIPlatform[]) {
   transferSourcePlatform = sourceKey
   const sourceLabel = getPlatformMeta(sourceKey)?.label ?? sourceKey
-  transferTitle.textContent = `选择要转发的 ${sourceLabel} 回答`
+  transferTitle.textContent = uiText('transfer.dialogTitle', { sourceLabel })
   transferOverlay.hidden = false
-  transferList.innerHTML = '<div class="history-empty">正在读取可转发回答…</div>'
+  transferList.innerHTML = ''
+  const loading = document.createElement('div')
+  loading.className = 'history-empty'
+  loading.textContent = uiText('transfer.loading')
+  transferList.appendChild(loading)
   transferPreview.innerHTML = ''
-  transferSelected.textContent = '已选择 0 条回答'
+  transferSelected.textContent = uiText('transfer.selectedCount', { count: 0 })
   btnTransferSend.disabled = true
   renderTransferTargets(sourceKey, candidates)
 
@@ -1341,7 +1387,7 @@ function renderTransferSourceList() {
   if (transferSourceOptions.length === 0) {
     const empty = document.createElement('div')
     empty.className = 'history-empty'
-    empty.textContent = '没有可转发的已记录回答'
+    empty.textContent = uiText('transfer.empty')
     transferList.appendChild(empty)
     updateTransferSelectedCount()
     return
@@ -1359,10 +1405,10 @@ function renderTransferSourceList() {
     const content = document.createElement('span')
     const title = document.createElement('span')
     title.className = 'summary-item-title'
-    title.textContent = option.source === 'current' ? '当前页面最新回答' : compactText(option.prompt)
+    title.textContent = option.source === 'current' ? uiText('transfer.currentResponse') : compactText(option.prompt)
     const meta = document.createElement('span')
     meta.className = 'summary-item-meta'
-    meta.textContent = `${formatTime(option.createdAt)} · ${option.source === 'current' ? '当前页面' : '历史记录'}`
+    meta.textContent = `${formatTime(option.createdAt)} · ${option.source === 'current' ? uiText('transfer.currentPage') : uiText('transfer.historyRecord')}`
     const preview = document.createElement('span')
     preview.className = 'summary-item-targets'
     preview.textContent = compactText(option.text, 72)
@@ -1380,7 +1426,7 @@ function renderTransferSourceList() {
 
 function updateTransferSelectedCount() {
   const count = selectedTransferSourceOptions().length
-  transferSelected.textContent = `已选择 ${count} 条回答`
+  transferSelected.textContent = uiText('transfer.selectedCount', { count })
   btnTransferSend.disabled = count === 0 || !transferSourcePlatform || selectedTransferTargets().length === 0
   renderTransferPreview()
 }
@@ -1388,12 +1434,12 @@ function updateTransferSelectedCount() {
 function renderTransferPreview() {
   transferPreview.innerHTML = ''
   const sourceKey = transferSourcePlatform
-  const sourceLabel = sourceKey ? getPlatformMeta(sourceKey)?.label ?? sourceKey : '来源 AI'
+  const sourceLabel = sourceKey ? getPlatformMeta(sourceKey)?.label ?? sourceKey : t(userSettings.language, 'transfer.title')
   const selected = selectedTransferSourceOptions()
   if (selected.length === 0) {
     const empty = document.createElement('div')
     empty.className = 'summary-preview-empty'
-    empty.textContent = '勾选左侧回答后，这里会显示转发内容'
+    empty.textContent = uiText('transfer.previewEmpty')
     transferPreview.appendChild(empty)
     return
   }
@@ -1404,16 +1450,16 @@ function renderTransferPreview() {
   header.className = 'summary-preview-card-header'
   const title = document.createElement('h4')
   title.className = 'summary-preview-title'
-  title.textContent = `${sourceLabel} · ${selected.length} 条回答`
+  title.textContent = uiText('transfer.previewSummary', { sourceLabel, count: selected.length })
   const meta = document.createElement('div')
   meta.className = 'summary-preview-meta'
   const targets = selectedTransferTargets()
   meta.textContent = targets.length > 0
-    ? `将发送到 ${formatTransferTargetLabels(targets)}`
-    : '请选择转发目标'
+    ? uiText('transfer.sendTo', { targets: formatTransferTargetLabels(targets) })
+    : uiText('transfer.chooseTargets')
   header.append(title, meta)
   card.appendChild(header)
-  appendSummaryPreviewSection(card, '转发内容', buildTransferContent(selected, sourceLabel))
+  appendSummaryPreviewSection(card, uiText('transfer.contentSection'), buildTransferContent(selected, sourceLabel))
   transferPreview.appendChild(card)
 }
 
@@ -1422,7 +1468,7 @@ async function onSendTransferSelection() {
   const targets = selectedTransferTargets()
   const selected = selectedTransferSourceOptions()
   if (targets.length === 0 || selected.length === 0) {
-    showToast('请选择要转发的回答和目标 AI', 'warn')
+    showToast(uiText('transfer.needSelection'), 'warn')
     return
   }
   const sourceLabel = getPlatformMeta(transferSourcePlatform)?.label ?? transferSourcePlatform
@@ -1439,7 +1485,7 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform, sel
   if (srcBtn) {
     srcBtn.classList.add('busy')
     srcBtn.disabled = true
-    srcBtn.textContent = '转发中…'
+    srcBtn.textContent = uiText('transfer.sending')
   }
   if (tgtBtn) tgtBtn.disabled = true
 
@@ -1474,7 +1520,7 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform, sel
       })
 
       if (!['idle', 'finished', 'error'].includes(srcState.status)) {
-        showToast(`源 AI 还在生成中,等一会儿再试(当前: ${srcState.status})`, 'warn', 4000)
+        showToast(uiText('transfer.sourceBusy', { status: srcState.status }), 'warn', 4000)
         return
       }
 
@@ -1501,7 +1547,7 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform, sel
     }
 
     if (!content || !content.trim()) {
-      showToast('源 AI 还没有回答可转发', 'warn', 4000)
+      showToast(uiText('transfer.noSourceResponse'), 'warn', 4000)
       return
     }
 
@@ -1532,7 +1578,7 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform, sel
           setTimeout(() => { window.removeEventListener('message', onMsg); resolve(null) }, 50)
         })
         if (tgtState && !['idle', 'finished', 'error'].includes(tgtState.status)) {
-          showToast(`目标 AI 还在生成中,等一会儿再试(当前: ${tgtState.status})`, 'warn', 4000)
+          showToast(uiText('transfer.targetBusy', { status: tgtState.status }), 'warn', 4000)
           return
         }
       } catch { /* 预检失败不阻塞 */ }
@@ -1542,8 +1588,8 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform, sel
     let finalContent = content
     if (content.length > MAX_TRANSFER_LENGTH) {
       finalContent = content.slice(0, MAX_TRANSFER_LENGTH) +
-        `\n\n[...已截断,原回答共 ${content.length} 字符]`
-      showToast(`源回答过长,已截断到 ${MAX_TRANSFER_LENGTH} 字符`, 'warn', 4000)
+        `\n\n${uiText('transfer.truncatedSuffix', { length: content.length })}`
+      showToast(uiText('transfer.truncated', { max: MAX_TRANSFER_LENGTH }), 'warn', 4000)
     }
 
     // 5. 渲染模板
@@ -1551,14 +1597,17 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform, sel
     const prompt = renderTemplate(userSettings.promptTemplates.transfer, { fromLabel, content: finalContent })
 
     // 6. 发送到目标
-    showToast(`正在把 ${fromLabel} 的回答转发给 ${getPlatformMeta(targetKey)?.label ?? targetKey}…`, 'info', 2000)
+    showToast(uiText('transfer.sendingToast', {
+      fromLabel,
+      targetLabel: getPlatformMeta(targetKey)?.label ?? targetKey,
+    }), 'info', 2000)
     tgtWin?.postMessage(
       { source: 'aichatroom-parent', action: 'write-and-send', text: prompt },
       platformOrigin(targetKey),
     )
   } catch (e) {
     console.error('[AIChatRoom chat] transfer failed', e)
-    showToast(`转发失败: ${e instanceof Error ? e.message : String(e)}`, 'err', 5000)
+    showToast(uiText('transfer.failed', { message: e instanceof Error ? e.message : String(e) }), 'err', 5000)
   } finally {
     if (srcBtn) {
       srcBtn.classList.remove('busy')

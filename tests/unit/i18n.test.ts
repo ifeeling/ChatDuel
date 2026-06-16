@@ -21,6 +21,22 @@ describe('i18n', () => {
     expect(t('en-US', 'input.placeholder')).toContain('Type your question here')
   })
 
+  it('provides English settings and transfer dialog text without Chinese fallback', () => {
+    const keys = [
+      'settings.noteBody',
+      'site.owner.doubao',
+      'transfer.loading',
+      'transfer.selectedCount',
+      'transfer.contentSection',
+      'transfer.previewEmpty',
+    ]
+
+    for (const key of keys) {
+      expect(t('en-US', key), key).not.toMatch(/[\u4e00-\u9fff]/)
+    }
+    expect(t('en-US', 'site.owner.doubao')).toBe('ByteDance')
+  })
+
   it('falls back to Chinese only for unknown keys, not known English keys', () => {
     expect(t('en-US', 'app.settings')).toBe('Settings')
     expect(t('en-US', 'missing.key')).toBe('missing.key')

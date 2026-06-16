@@ -96,6 +96,28 @@ describe('chat.html', () => {
     expect(language?.querySelector('option[value="nl-NL"]')?.textContent).toContain('Nederlands')
   })
 
+  it('keeps selected AI mention chips inside the input box', () => {
+    document.body.innerHTML = html
+
+    const chips = document.querySelector('#at-chips')
+    const textbox = document.querySelector('#composer-textbox')
+
+    expect(textbox).toBeTruthy()
+    expect(textbox?.contains(chips)).toBe(true)
+    expect(textbox?.contains(document.querySelector('#input'))).toBe(true)
+    expect(document.querySelector('.composer-toolbar #at-chips')).toBeNull()
+    expect(css).toContain('.composer-textbox:focus-within')
+  })
+
+  it('does not show unverified capability hints in the Doubao site row', () => {
+    document.body.innerHTML = html
+
+    const doubaoPanel = document.querySelector<HTMLElement>('#setting-doubao')?.closest('.site-row')
+
+    expect(doubaoPanel?.textContent).toContain('字节跳动')
+    expect(doubaoPanel?.textContent).not.toContain('文本能力待验证')
+  })
+
   it('renders transfer source picker controls', () => {
     document.body.innerHTML = html
 

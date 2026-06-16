@@ -1,6 +1,6 @@
 import type { AIPlatform } from '../types'
 import { MIN_ACTIVE_PLATFORMS, SUPPORTED_PLATFORMS } from './ai-platforms'
-import { isSupportedLanguage, type UserLanguage } from './i18n'
+import { isSupportedLanguage, SUPPORTED_LANGUAGE_CODES, type UserLanguage } from './i18n'
 import { getDefaultTemplatesForLanguage } from './prompt-template'
 
 export type UserPromptTemplateKey =
@@ -147,6 +147,30 @@ const DEFAULT_PROMPT_CUSTOMIZATIONS: UserPromptTemplateCustomizations = {
   summaryOpinionDigest: false,
 }
 
+function isKnownDefaultPromptTemplate(key: UserPromptTemplateKey, value: string): boolean {
+  return SUPPORTED_LANGUAGE_CODES.some((language) => getDefaultUserPromptTemplates(language)[key] === value)
+}
+
+function normalizePromptTemplateCustomizations(
+  providedPromptTemplates: Partial<UserPromptTemplates & { summary: string }>,
+  providedCustomizations: Partial<UserPromptTemplateCustomizations> | undefined,
+): UserPromptTemplateCustomizations {
+  const customizations = {
+    ...DEFAULT_PROMPT_CUSTOMIZATIONS,
+    ...(providedCustomizations ?? {}),
+  }
+
+  if (providedCustomizations) return customizations
+
+  for (const key of Object.keys(DEFAULT_PROMPT_CUSTOMIZATIONS) as UserPromptTemplateKey[]) {
+    const provided = providedPromptTemplates[key]
+    if (typeof provided !== 'string') continue
+    customizations[key] = !isKnownDefaultPromptTemplate(key, provided)
+  }
+
+  return customizations
+}
+
 export const DEFAULT_USER_SETTINGS: UserSettings = {
   enabledPlatforms: {
     chatgpt: true,
@@ -197,15 +221,14 @@ function normalizeSettings(value: PartialUserSettings | undefined): UserSettings
     : DEFAULT_USER_SETTINGS.language
   const defaultPromptTemplates = getDefaultUserPromptTemplates(language)
   const providedPromptTemplates = value?.promptTemplates ?? {}
-  const promptTemplateCustomizations = {
-    ...DEFAULT_PROMPT_CUSTOMIZATIONS,
-    ...Object.fromEntries(
-      Object.keys(providedPromptTemplates).map((key) => [key, true]),
-    ),
-    ...(value?.promptTemplateCustomizations ?? {}),
-  } as UserPromptTemplateCustomizations
+  const promptTemplateCustomizations = normalizePromptTemplateCustomizations(
+    providedPromptTemplates,
+    value?.promptTemplateCustomizations,
+  )
   const legacySummary = value?.promptTemplates?.summary
-  if (legacySummary) promptTemplateCustomizations.summaryFinalAnswer = true
+  if (legacySummary) {
+    promptTemplateCustomizations.summaryFinalAnswer = !isKnownDefaultPromptTemplate('summaryFinalAnswer', legacySummary)
+  }
   const promptTemplates = { ...defaultPromptTemplates }
   for (const key of Object.keys(defaultPromptTemplates) as UserPromptTemplateKey[]) {
     const provided = key === 'summaryFinalAnswer' && legacySummary

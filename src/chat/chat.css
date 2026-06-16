@@ -177,27 +177,49 @@ body { overflow: hidden; }
   padding: 12px;
 }
 
-#input {
+.composer-textbox {
   flex: 1;
-  resize: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 40px;
   background: var(--bg-3);
-  color: var(--fg);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 8px 12px;
+  padding: 4px 8px;
+}
+.composer.expanded .composer-textbox {
+  align-items: flex-start;
+  min-height: min(34vh, 300px);
+  padding: 8px 10px;
+}
+.composer-textbox:focus-within {
+  border-color: var(--accent);
+}
+
+#input {
+  flex: 1;
+  min-width: 120px;
+  resize: none;
+  background: transparent;
+  color: var(--fg);
+  border: 0;
+  border-radius: 0;
+  padding: 6px 4px;
   font-size: 16px;       /* 跟 ChatGPT/Gemini 输入框一致 */
   line-height: 20px;
-  min-height: 40px;
+  min-height: 28px;
   max-height: 200px;
   font-family: inherit;
 }
 .composer.expanded #input {
-  min-height: min(34vh, 300px);
-  max-height: min(34vh, 300px);
-  padding: 14px 16px;
+  min-height: calc(min(34vh, 300px) - 16px);
+  max-height: calc(min(34vh, 300px) - 16px);
+  padding: 4px 6px;
 }
 #input::placeholder { color: var(--muted); }
-#input:focus { outline: none; border-color: var(--accent); }
+#input:focus { outline: none; }
 
 #btn-send {
   background: var(--accent);
@@ -359,6 +381,8 @@ body { overflow: hidden; }
   flex-wrap: wrap;
   gap: 4px;
   align-items: center;
+  flex: 0 0 auto;
+  max-width: min(320px, 42%);
 }
 .at-chip {
   display: inline-flex;

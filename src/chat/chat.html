@@ -64,7 +64,6 @@
 
     <footer class="composer">
       <div class="composer-toolbar">
-        <span class="at-chips" id="at-chips" hidden></span>
         <span class="image-preview" id="image-preview" hidden>
           <img id="preview-img" alt="预览">
           <span class="image-meta" id="image-meta"></span>
@@ -79,8 +78,11 @@
         <button id="btn-conversations" class="input-action-btn" title="打开官网会话链接继续聊" type="button">官网会话</button>
         <button id="btn-add-panel" class="input-action-btn" title="添加 AI 面板" type="button">+ AI</button>
         <input type="file" id="file-input" accept="image/*,.txt,.md,.csv,.pdf,.xlsx" hidden>
-        <textarea id="input" rows="1"
-          placeholder="在这里输入你的问题 或 输入 @ 和指定AI对话... (Ctrl+V 粘贴图片)"></textarea>
+        <div class="composer-textbox" id="composer-textbox">
+          <span class="at-chips" id="at-chips" hidden></span>
+          <textarea id="input" rows="1"
+            placeholder="在这里输入你的问题 或 输入 @ 和指定AI对话... (Ctrl+V 粘贴图片)"></textarea>
+        </div>
         <button id="btn-expand-input" class="input-tool-btn" title="展开输入框" type="button" aria-label="展开输入框">⛶</button>
         <button id="btn-send" title="发送" aria-label="发送">➤</button>
       </div>
@@ -132,7 +134,7 @@
                 </span>
                 <span class="site-icon">✨</span>
                 <span class="site-name">ChatGPT</span>
-                <span class="site-owner">OpenAI</span>
+                <span class="site-owner" data-site-owner="chatgpt">OpenAI</span>
                 <a class="site-open" href="https://chatgpt.com/" target="_blank" rel="noreferrer" title="打开 ChatGPT">↗</a>
               </label>
               <label class="site-row">
@@ -142,7 +144,7 @@
                 </span>
                 <span class="site-icon">✦</span>
                 <span class="site-name">Gemini</span>
-                <span class="site-owner">Google</span>
+                <span class="site-owner" data-site-owner="gemini">Google</span>
                 <a class="site-open" href="https://gemini.google.com/" target="_blank" rel="noreferrer" title="打开 Gemini">↗</a>
               </label>
               <label class="site-row">
@@ -152,12 +154,12 @@
                 </span>
                 <span class="site-icon">豆</span>
                 <span class="site-name">豆包</span>
-                <span class="site-owner">字节跳动 · 文本能力待验证</span>
+                <span class="site-owner" data-site-owner="doubao">字节跳动</span>
                 <a class="site-open" href="https://www.doubao.com/chat/" target="_blank" rel="noreferrer" title="打开豆包">↗</a>
               </label>
             </div>
             <div class="settings-note">
-              <strong>注意：</strong>使用前请先确保官网可以访问，并且已经登录。打开多个官方页面会占用更多内存，建议先保持 2 个以内。
+              <strong id="settings-note-prefix">注意：</strong><span id="settings-note-body">使用前请先确保官网可以访问，并且已经登录。打开多个官方页面会占用更多内存，建议先保持 2 个以内。</span>
             </div>
           </div>
           <div class="settings-panel" data-settings-panel="prompts">
@@ -304,7 +306,7 @@
           <div class="summary-config">
             <p class="summary-lead" id="transfer-lead">默认选中最新一条回答。你可以多选，把多条回答一起转给目标 AI。</p>
             <label class="summary-field transfer-target-field">
-              <span>转发目标</span>
+              <span id="transfer-target-label">转发目标</span>
               <div class="transfer-target-list" id="transfer-target-list" role="group" aria-label="转发目标"></div>
             </label>
             <div class="summary-selected" id="transfer-selected">已选择 0 条回答</div>
@@ -314,7 +316,7 @@
             </div>
           </div>
           <section class="summary-preview" aria-label="已选择回答内容预览">
-            <h3>内容预览</h3>
+            <h3 id="transfer-preview-title">内容预览</h3>
             <div id="transfer-preview" class="summary-preview-list"></div>
           </section>
         </main>

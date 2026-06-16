@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { DEFAULT_USER_SETTINGS, loadUserSettings, saveUserSettings, swapPlatformOrder } from '../../src/lib/user-settings'
+import { DEFAULT_USER_SETTINGS, getDefaultUserPromptTemplates, loadUserSettings, saveUserSettings, swapPlatformOrder } from '../../src/lib/user-settings'
 
 beforeEach(() => {
   const store: Record<string, unknown> = {}
@@ -62,6 +62,27 @@ describe('user-settings', () => {
     expect(saved.promptTemplates.transfer).toBe('Custom {{content}}')
     expect(saved.promptTemplateCustomizations.transfer).toBe(true)
     expect(saved.promptTemplateCustomizations.summaryFinalAnswer).toBe(false)
+  })
+
+  it('does not keep legacy saved default prompts as custom prompts after language changes', async () => {
+    const saved = await saveUserSettings({
+      language: 'en-US',
+      promptTemplates: DEFAULT_USER_SETTINGS.promptTemplates,
+    })
+
+    expect(saved.promptTemplates.transfer).toBe(getDefaultUserPromptTemplates('en-US').transfer)
+    expect(saved.promptTemplates.transfer).not.toMatch(/[\u4e00-\u9fff]/)
+    expect(saved.promptTemplateCustomizations.transfer).toBe(false)
+  })
+
+  it('keeps legacy saved prompts when they are different from known defaults', async () => {
+    const saved = await saveUserSettings({
+      language: 'en-US',
+      promptTemplates: { transfer: 'Custom legacy prompt {{content}}' },
+    })
+
+    expect(saved.promptTemplates.transfer).toBe('Custom legacy prompt {{content}}')
+    expect(saved.promptTemplateCustomizations.transfer).toBe(true)
   })
 
   it('normalizes missing platform order entries', async () => {
