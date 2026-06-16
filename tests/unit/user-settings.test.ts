@@ -39,6 +39,15 @@ describe('user-settings', () => {
     await expect(loadUserSettings()).resolves.toEqual(saved)
   })
 
+  it('saves the preferred language', async () => {
+    const saved = await saveUserSettings({
+      language: 'en-US',
+    })
+
+    expect(saved.language).toBe('en-US')
+    await expect(loadUserSettings()).resolves.toEqual(saved)
+  })
+
   it('normalizes missing platform order entries', async () => {
     const saved = await saveUserSettings({
       platformOrder: ['doubao', 'chatgpt'],

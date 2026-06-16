@@ -2,6 +2,8 @@ import type { AIPlatform } from '../types'
 import { MIN_ACTIVE_PLATFORMS, SUPPORTED_PLATFORMS } from './ai-platforms'
 import { getDefaultTemplates } from './prompt-template'
 
+export type UserLanguage = 'zh-CN' | 'en-US'
+
 export type UserPromptTemplateKey =
   | 'transfer'
   | 'summaryFinalAnswer'
@@ -14,6 +16,7 @@ export type UserPromptTemplates = Record<UserPromptTemplateKey, string>
 export interface UserSettings {
   enabledPlatforms: Record<AIPlatform, boolean>
   platformOrder: AIPlatform[]
+  language: UserLanguage
   promptTemplates: UserPromptTemplates
 }
 
@@ -24,6 +27,7 @@ type PartialUserSettings = Partial<Omit<UserSettings, 'enabledPlatforms' | 'prom
 }
 
 const STORAGE_KEY = 'userSettings'
+const SUPPORTED_LANGUAGES: UserLanguage[] = ['zh-CN', 'en-US']
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
   enabledPlatforms: {
@@ -32,6 +36,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
     doubao: false,
   },
   platformOrder: ['gemini', 'chatgpt', 'doubao'],
+  language: 'zh-CN',
   promptTemplates: {
     transfer: getDefaultTemplates().transfer,
     summaryFinalAnswer: getDefaultTemplates().summary,
@@ -118,6 +123,9 @@ function normalizeSettings(value: PartialUserSettings | undefined): UserSettings
     ...(value?.enabledPlatforms ?? {}),
   } as Record<AIPlatform, boolean>
   const platformOrder = normalizePlatformOrder(value?.platformOrder)
+  const language = SUPPORTED_LANGUAGES.includes(value?.language as UserLanguage)
+    ? value?.language as UserLanguage
+    : DEFAULT_USER_SETTINGS.language
   const legacySummary = value?.promptTemplates?.summary
   const promptTemplates = {
     ...DEFAULT_USER_SETTINGS.promptTemplates,
@@ -141,7 +149,7 @@ function normalizeSettings(value: PartialUserSettings | undefined): UserSettings
     }
   }
 
-  return { enabledPlatforms, platformOrder, promptTemplates }
+  return { enabledPlatforms, platformOrder, language, promptTemplates }
 }
 
 export async function loadUserSettings(): Promise<UserSettings> {

@@ -54,4 +54,20 @@ describe('history-format', () => {
     expect(report.mime).toBe('text/markdown;charset=utf-8')
     expect(report.content).toContain('# 你好 / Gemini?')
   })
+
+  it('restores simple headings and paragraph breaks in captured markdown-like text', () => {
+    const markdown = formatSessionMarkdown({
+      ...makeSession(),
+      responses: {
+        chatgpt: {
+          status: 'captured',
+          text: '第一段内容。 ## 重点结论 这里是结论。 ### 风险提醒 这里是风险。',
+        },
+        gemini: { text: '', status: 'pending' },
+      },
+    })
+
+    expect(markdown).toContain('第一段内容。\n\n## 重点结论\n\n这里是结论。')
+    expect(markdown).toContain('\n\n### 风险提醒\n\n这里是风险。')
+  })
 })

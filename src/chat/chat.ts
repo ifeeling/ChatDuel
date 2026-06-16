@@ -54,6 +54,7 @@ import {
   loadUserSettings,
   saveUserSettings,
   swapPlatformOrder,
+  type UserLanguage,
   type UserPromptTemplateKey,
   type UserPromptTemplates,
   type UserSettings,
@@ -66,7 +67,7 @@ import {
   createSummarySessionRecord,
   isNewCapturedResponse,
 } from '../lib/session-record'
-import { buildSessionMarkdownExport, formatBytes, formatSessionMarkdown, summarizeSessionTargets } from '../lib/history-format'
+import { buildSessionMarkdownExport, formatBytes, formatCapturedMarkdownText, formatSessionMarkdown, summarizeSessionTargets } from '../lib/history-format'
 import { buildSummaryPrompt } from '../lib/summary-builder'
 import { evaluateResponseCapture, type ResponseCaptureProgress } from '../lib/response-capture'
 import { buildTransferContent, buildTransferSourceOptions, type TransferSourceOption } from '../lib/transfer-source'
@@ -88,7 +89,6 @@ const sendBtn = $<HTMLButtonElement>('#btn-send')
 const panelsContainer = $<HTMLElement>('.panels')
 const composer = $<HTMLElement>('.composer')
 const composerToolbar = $<HTMLDivElement>('.composer-toolbar')
-const btnQuote = $<HTMLButtonElement>('#btn-quote')
 const btnSummary = $<HTMLButtonElement>('#btn-summary')
 const btnHistory = $<HTMLButtonElement>('#btn-history')
 const btnConversations = $<HTMLButtonElement>('#btn-conversations')
@@ -106,6 +106,7 @@ const toastContainer = $<HTMLDivElement>('#toast-container')
 const settingsOverlay = $<HTMLDivElement>('#settings-overlay')
 const btnSettingsClose = $<HTMLButtonElement>('#btn-settings-close')
 const btnSettingsSave = $<HTMLButtonElement>('#btn-settings-save')
+const settingLanguage = $<HTMLSelectElement>('#setting-language')
 const settingPromptKind = $<HTMLSelectElement>('#setting-prompt-kind')
 const settingPromptLabel = $<HTMLSpanElement>('#setting-prompt-label')
 const settingPromptTemplate = $<HTMLTextAreaElement>('#setting-prompt-template')
@@ -140,6 +141,7 @@ const transferTargetList = $<HTMLDivElement>('#transfer-target-list')
 const transferSelected = $<HTMLDivElement>('#transfer-selected')
 const transferPreview = $<HTMLDivElement>('#transfer-preview')
 const ATTACH_BUTTON_TITLE = `支持：${SUPPORTED_FILE_FORMATS_TEXT}。暂不支持 Word。`
+const ATTACH_BUTTON_TITLE_EN = `Supported: images, TXT, Markdown, CSV, PDF, Excel (XLSX). Word is not supported yet.`
 
 // ---------- 状态 ----------
 const readyMap: Record<AIPlatform, boolean> = { chatgpt: false, gemini: false, doubao: false }
@@ -168,6 +170,119 @@ interface PendingAttachment {
 
 let pendingAttachment: PendingAttachment | null = null
 let pendingImageObjectUrl: string | null = null
+
+const UI_TEXT: Record<UserLanguage, Record<string, string>> = {
+  'zh-CN': {
+    settings: '设置',
+    attach: '添加附件',
+    attachTitle: ATTACH_BUTTON_TITLE,
+    summary: '总结',
+    summaryTitle: '对比总结',
+    records: '记录',
+    recordsTitle: '查看已保存的问答记录',
+    officialConversations: '官网会话',
+    officialConversationsTitle: '打开官网会话链接继续聊',
+    addAi: '+ AI',
+    addAiTitle: '添加 AI 面板',
+    expandInput: '展开输入框',
+    send: '发送',
+    sitesTab: '显示站点',
+    promptsTab: '提示词',
+    shortcutsTab: '快捷键',
+    helpTab: '使用帮助',
+    sitesLead: '选择要在主界面同时显示的站点',
+    languageLabel: '界面语言',
+    refreshStatus: '重新检测状态',
+    refreshStatusTitle: '重新检测每个 AI 页面是否已经打开',
+    historyTitle: '历史记录',
+    historySearch: '搜索历史标题...',
+    conversationTitle: '官网会话',
+    summaryDialogTitle: '对比总结',
+    transferTitle: '选择要转发的回答',
+    close: '关闭',
+    save: '保存',
+  },
+  'en-US': {
+    settings: 'Settings',
+    attach: 'Add attachment',
+    attachTitle: ATTACH_BUTTON_TITLE_EN,
+    summary: 'Summary',
+    summaryTitle: 'Compare and summarize saved responses',
+    records: 'Records',
+    recordsTitle: 'View saved Q&A records',
+    officialConversations: 'Official chats',
+    officialConversationsTitle: 'Open official chat links and continue there',
+    addAi: '+ AI',
+    addAiTitle: 'Add an AI panel',
+    expandInput: 'Expand input',
+    send: 'Send',
+    sitesTab: 'Sites',
+    promptsTab: 'Prompts',
+    shortcutsTab: 'Shortcuts',
+    helpTab: 'Help',
+    sitesLead: 'Choose which sites to show in the main view',
+    languageLabel: 'Language',
+    refreshStatus: 'Check status again',
+    refreshStatusTitle: 'Check whether each AI page is open',
+    historyTitle: 'Records',
+    historySearch: 'Search record titles...',
+    conversationTitle: 'Official chats',
+    summaryDialogTitle: 'Compare summary',
+    transferTitle: 'Choose responses to forward',
+    close: 'Close',
+    save: 'Save',
+  },
+}
+
+function setElementText(selector: string, text: string) {
+  const el = document.querySelector<HTMLElement>(selector)
+  if (el) el.textContent = text
+}
+
+function setElementTitle(selector: string, title: string) {
+  const el = document.querySelector<HTMLElement>(selector)
+  if (el) {
+    el.title = title
+    if (el.hasAttribute('aria-label')) el.setAttribute('aria-label', title)
+  }
+}
+
+function applyStaticUiLanguage(language: UserLanguage) {
+  document.documentElement.lang = language
+  const text = UI_TEXT[language]
+  setElementTitle('#btn-settings', text.settings)
+  setElementTitle('#btn-image', text.attachTitle)
+  setElementText('#btn-summary', text.summary)
+  setElementTitle('#btn-summary', text.summaryTitle)
+  setElementText('#btn-history', text.records)
+  setElementTitle('#btn-history', text.recordsTitle)
+  setElementText('#btn-conversations', text.officialConversations)
+  setElementTitle('#btn-conversations', text.officialConversationsTitle)
+  setElementText('#btn-add-panel', text.addAi)
+  setElementTitle('#btn-add-panel', text.addAiTitle)
+  setElementTitle('#btn-expand-input', text.expandInput)
+  setElementTitle('#btn-send', text.send)
+  setElementText('#settings-title', text.settings)
+  setElementText('[data-settings-tab="sites"]', text.sitesTab)
+  setElementText('[data-settings-tab="prompts"]', text.promptsTab)
+  setElementText('.settings-nav-item:disabled', text.shortcutsTab)
+  setElementText('[data-settings-tab="help"]', text.helpTab)
+  setElementText('[data-settings-panel="sites"] .settings-lead', text.sitesLead)
+  setElementText('.settings-field span', text.languageLabel)
+  setElementText('#btn-refresh', text.refreshStatus)
+  setElementTitle('#btn-refresh', text.refreshStatusTitle)
+  setElementText('#history-title', text.historyTitle)
+  historySearchInput.placeholder = text.historySearch
+  setElementText('#conversation-title', text.conversationTitle)
+  setElementText('#summary-title', text.summaryDialogTitle)
+  setElementText('#transfer-title', text.transferTitle)
+  setElementTitle('#btn-settings-close', text.close)
+  setElementTitle('#btn-history-close', text.close)
+  setElementTitle('#btn-conversation-close', text.close)
+  setElementTitle('#btn-summary-close', text.close)
+  setElementTitle('#btn-transfer-close', text.close)
+  setElementText('#btn-settings-save', text.save)
+}
 
 // ---------- @ 状态 ----------
 // atSelected:UI 选中的目标(空集合 = 发给所有 panel)
@@ -315,6 +430,7 @@ function applyPanelOrder(order: AIPlatform[]) {
 
 function applyUserSettings(settings: UserSettings) {
   userSettings = settings
+  applyStaticUiLanguage(settings.language)
   applyPanelOrder(settings.platformOrder)
   for (const p of allPlatforms()) {
     const enabled = settings.enabledPlatforms[p]
@@ -378,6 +494,7 @@ function renderPromptTemplateEditor() {
 }
 
 function renderSettingsForm() {
+  settingLanguage.value = userSettings.language
   for (const input of settingPlatformInputs()) {
     const platform = input.dataset.platform as AIPlatform
     input.checked = !!userSettings.enabledPlatforms[platform]
@@ -447,6 +564,7 @@ async function onSaveSettings() {
   const next: UserSettings = {
     enabledPlatforms,
     platformOrder: userSettings.platformOrder,
+    language: settingLanguage.value as UserLanguage,
     promptTemplates: promptTemplateDrafts,
   }
 
@@ -1618,7 +1736,7 @@ function renderHistoryDetail(session?: Session) {
     const label = getPlatformMeta(platform)?.label ?? platform
     const response = session.responses[platform]
     const text = response?.status === 'captured' && response.text.trim()
-      ? response.text
+      ? formatCapturedMarkdownText(response.text)
       : responseLabel(response)
     appendHistorySection(`${label} 回答`, text)
   }
@@ -1864,6 +1982,7 @@ async function restoreConversation(entry: ConversationEntry) {
   const saved = await saveUserSettings({
     enabledPlatforms,
     platformOrder: conversationRestoreOrder(entry),
+    language: userSettings.language,
     promptTemplates: userSettings.promptTemplates,
   })
   applyUserSettings(saved)
@@ -2209,7 +2328,6 @@ async function onSummary() {
   }
   await openSummaryDialog()
 }
-function onQuote() { console.log('[AIChatRoom chat] quote: not implemented yet') }
 function onHistory() { void openHistory() }
 
 // ---------- 图片按钮 ----------
@@ -2437,6 +2555,7 @@ async function onSwitchPanel(source: AIPlatform, target: AIPlatform) {
   const next: UserSettings = {
     enabledPlatforms,
     platformOrder: swapPlatformOrder(userSettings.platformOrder, source, target),
+    language: userSettings.language,
     promptTemplates: userSettings.promptTemplates,
   }
 
@@ -2454,6 +2573,7 @@ async function onAddPanel(platform: AIPlatform) {
   await savePanelSettings({
     enabledPlatforms,
     platformOrder: userSettings.platformOrder,
+    language: userSettings.language,
     promptTemplates: userSettings.promptTemplates,
   }, 'AI 面板已添加', '添加失败,请稍后重试')
 }
@@ -2468,6 +2588,7 @@ async function onClosePanel(platform: AIPlatform) {
   await savePanelSettings({
     enabledPlatforms,
     platformOrder: userSettings.platformOrder,
+    language: userSettings.language,
     promptTemplates: userSettings.promptTemplates,
   }, 'AI 面板已关闭', '关闭失败,请稍后重试')
 }
@@ -2549,7 +2670,6 @@ function bindEvents() {
     if (!(target instanceof Node)) return
     if (!panelSwitchMenu.hidden && !panelSwitchMenu.contains(target)) closePanelSwitchMenu()
   })
-  btnQuote.addEventListener('click', onQuote)
   btnHistory.addEventListener('click', onHistory)
   btnHistoryClose.addEventListener('click', closeHistory)
   historySearchInput.addEventListener('input', () => {

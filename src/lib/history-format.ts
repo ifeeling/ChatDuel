@@ -43,6 +43,18 @@ function formatAttachment(attachment: SessionAttachment): string {
   return `- ${attachment.name} · ${attachment.mime || '未知类型'} · ${formatBytes(attachment.size)}`
 }
 
+export function formatCapturedMarkdownText(text: string): string {
+  return text
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+$/gm, '')
+    .replace(/([^\n])\s+(#{2,6}\s+)/g, '$1\n\n$2')
+    .replace(/(#{2,6}\s+[^\n]+?)\s+(?=(?:#{2,6}\s+)|(?:[-*]\s+)|(?:\d+[.)]\s+)|[^#\n])/g, '$1\n\n')
+    .replace(/([。！？.!?])\s+([-*]\s+)/g, '$1\n$2')
+    .replace(/([。！？.!?])\s+(\d+[.)]\s+)/g, '$1\n$2')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 export function formatSessionMarkdown(session: Session): string {
   const parts: string[] = [
     `# ${firstLine(session.prompt)}`,
@@ -68,7 +80,7 @@ export function formatSessionMarkdown(session: Session): string {
     const response = session.responses[platform]
     parts.push('', `## ${label} 回答`, '')
     if (response?.status === 'captured' && response.text.trim()) {
-      parts.push(response.text)
+      parts.push(formatCapturedMarkdownText(response.text))
     } else {
       parts.push(responseStatusLabel(response))
     }

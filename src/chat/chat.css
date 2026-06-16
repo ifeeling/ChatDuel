@@ -583,6 +583,33 @@ body { overflow: hidden; }
   gap: 14px 32px;
   max-width: 620px;
 }
+.settings-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.settings-field {
+  display: grid;
+  gap: 6px;
+  min-width: 180px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.settings-field select {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-3);
+  color: var(--fg);
+  font: inherit;
+}
+.settings-field select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
 .site-row {
   display: grid;
   grid-template-columns: 44px 22px auto 1fr 24px;

@@ -74,12 +74,10 @@
       <div class="composer-input">
         <button id="btn-settings" class="input-tool-btn" title="设置" type="button" aria-label="设置">⚙</button>
         <button id="btn-image" class="input-add-btn" title="支持：图片、TXT、Markdown、CSV、PDF、Excel（XLSX）。暂不支持 Word。">+</button>
-        <button id="btn-quote" class="input-action-btn" disabled title="引用上一轮回答" type="button">引用</button>
         <button id="btn-summary" class="input-action-btn" title="对比总结" type="button">总结</button>
-        <button id="btn-history" class="input-action-btn" title="查看历史" type="button">历史</button>
-        <button id="btn-conversations" class="input-action-btn" title="继续历史会话" type="button">会话</button>
-        <button id="btn-add-panel" class="input-action-btn" title="添加 AI 面板" type="button">添加 AI</button>
-        <button id="btn-refresh" class="input-tool-btn compact" title="刷新状态" type="button" aria-label="刷新状态">↻</button>
+        <button id="btn-history" class="input-action-btn" title="查看已保存的问答记录" type="button">记录</button>
+        <button id="btn-conversations" class="input-action-btn" title="打开官网会话链接继续聊" type="button">官网会话</button>
+        <button id="btn-add-panel" class="input-action-btn" title="添加 AI 面板" type="button">+ AI</button>
         <input type="file" id="file-input" accept="image/*,.txt,.md,.csv,.pdf,.xlsx" hidden>
         <textarea id="input" rows="1"
           placeholder="在这里输入你的问题 或 输入 @ 和指定AI对话... (Ctrl+V 粘贴图片)"></textarea>
@@ -111,6 +109,16 @@
         <main class="settings-main">
           <div class="settings-panel active" data-settings-panel="sites">
             <p class="settings-lead">选择要在主界面同时显示的站点</p>
+            <div class="settings-controls">
+              <label class="settings-field">
+                <span>界面语言</span>
+                <select id="setting-language">
+                  <option value="zh-CN">中文</option>
+                  <option value="en-US">English</option>
+                </select>
+              </label>
+              <button id="btn-refresh" class="settings-secondary" title="重新检测每个 AI 页面是否已经打开" type="button">重新检测状态</button>
+            </div>
             <div class="site-list">
               <label class="site-row">
                 <span class="switch">
@@ -190,12 +198,12 @@
                 <p>“总结”会从历史记录中选择一条或多条问答记录，也可以勾选哪些 AI 的回答参与总结，再发送给指定 AI。“汇总意见”会尽量只提取各 AI 的建议和风险点。</p>
               </section>
               <section class="help-card">
-                <h3>历史</h3>
-                <p>“历史”保存每一次用户提交的问题、实际发送内容、附件和 AI 回复。它主要用于回看、单块复制、复制或导出 Markdown、总结和转发。</p>
+                <h3>记录</h3>
+                <p>“记录”保存每一次用户提交的问题、实际发送内容、附件和 AI 回复。它主要用于回看、单块复制、复制或导出 Markdown、总结和转发。</p>
               </section>
               <section class="help-card">
-                <h3>会话</h3>
-                <p>“会话”保存官方网页的会话链接和当时显示的 AI 状态，不保存 AI 回复正文。点击会话历史可以还原面板并继续聊。</p>
+                <h3>官网会话</h3>
+                <p>“官网会话”保存官方网页的会话链接和当时显示的 AI 状态，不保存 AI 回复正文。点击会话历史可以还原面板并继续聊。</p>
               </section>
             </div>
           </div>
@@ -226,7 +234,7 @@
   <div class="history-overlay" id="conversation-overlay" hidden>
     <section class="history-dialog conversation-dialog" role="dialog" aria-modal="true" aria-labelledby="conversation-title">
       <header class="history-header">
-        <h2 id="conversation-title">会话历史</h2>
+        <h2 id="conversation-title">官网会话</h2>
         <button id="btn-conversation-close" class="history-close" type="button" title="关闭" aria-label="关闭">×</button>
       </header>
       <div class="conversation-body">

@@ -45,10 +45,10 @@ describe('chat.html', () => {
   it('renders conversation history controls separately from response history', () => {
     document.body.innerHTML = html
 
-    expect(document.querySelector('#btn-conversations')?.textContent).toBe('会话')
+    expect(document.querySelector('#btn-conversations')?.textContent).toBe('官网会话')
     expect(document.querySelector('#conversation-overlay')).toBeTruthy()
     expect(document.querySelector('#conversation-list')).toBeTruthy()
-    expect(document.querySelector('#conversation-title')?.textContent).toBe('会话历史')
+    expect(document.querySelector('#conversation-title')?.textContent).toBe('官网会话')
     expect(document.querySelector('#btn-conversation-close')).toBeTruthy()
   })
 
@@ -79,6 +79,16 @@ describe('chat.html', () => {
     expect(document.querySelectorAll('#setting-prompt-kind option')).toHaveLength(5)
     expect(document.querySelector<HTMLOptionElement>('#setting-prompt-kind option[value="summaryOpinionDigest"]')?.textContent)
       .toContain('汇总意见')
+  })
+
+  it('offers a language selector in settings', () => {
+    document.body.innerHTML = html
+
+    const language = document.querySelector<HTMLSelectElement>('#setting-language')
+
+    expect(language).toBeTruthy()
+    expect(language?.querySelector('option[value="zh-CN"]')?.textContent).toContain('中文')
+    expect(language?.querySelector('option[value="en-US"]')?.textContent).toContain('English')
   })
 
   it('renders transfer source picker controls', () => {
@@ -118,11 +128,15 @@ describe('chat.html', () => {
     expect(document.querySelectorAll('.panel-close')).toHaveLength(3)
     expect(document.querySelector('#panel-switch-menu')).toBeTruthy()
     expect(document.querySelectorAll('.splitter')).toHaveLength(2)
-    expect(document.querySelectorAll('#btn-quote')).toHaveLength(1)
+    expect(document.querySelectorAll('#btn-quote')).toHaveLength(0)
     expect(document.querySelectorAll('#btn-summary')).toHaveLength(1)
     expect(document.querySelectorAll('#btn-history')).toHaveLength(1)
     expect(document.querySelectorAll('#btn-add-panel')).toHaveLength(1)
-    expect(document.querySelector('.composer-input #btn-quote')).toBeTruthy()
+    expect(document.querySelector<HTMLButtonElement>('.composer-input #btn-history')?.textContent).toBe('记录')
+    expect(document.querySelector<HTMLButtonElement>('.composer-input #btn-conversations')?.textContent).toBe('官网会话')
+    expect(document.querySelector<HTMLButtonElement>('.composer-input #btn-add-panel')?.textContent).toBe('+ AI')
+    expect(document.querySelector('.composer-input #btn-refresh')).toBeNull()
+    expect(document.querySelector<HTMLButtonElement>('#btn-refresh')?.textContent).toContain('重新检测')
     expect(document.querySelector('.composer-input #btn-summary')).toBeTruthy()
     expect(document.querySelector('.composer-input #btn-history')).toBeTruthy()
 
