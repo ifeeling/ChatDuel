@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { renderTemplate, getDefaultTemplates } from '../../src/lib/prompt-template'
+import { renderTemplate, getDefaultTemplates, getDefaultTemplatesForLanguage } from '../../src/lib/prompt-template'
 
 describe('renderTemplate', () => {
   it('substitutes {{var}} placeholders', () => {
@@ -65,5 +65,27 @@ describe('transfer template', () => {
     const lines = t.transfer.split('\n')
     const longDashLines = lines.filter((l) => /^---+$/.test(l.trim()))
     expect(longDashLines).toEqual([])
+  })
+})
+
+describe('localized default templates', () => {
+  it('returns English default prompts without Chinese text', () => {
+    const t = getDefaultTemplatesForLanguage('en-US')
+
+    expect(t.transfer).toContain('Here is a response from {{fromLabel}}')
+    expect(t.transfer).toContain('==== Quote begins ({{fromLabel}}) ====')
+    expect(t.summary).toContain('Here are response records from multiple AIs')
+    expect(t.transfer).not.toMatch(/[\u4e00-\u9fff]/)
+  })
+
+  it('supports the requested European languages', () => {
+    const languages = ['fr-FR', 'de-DE', 'sv-SE', 'nb-NO', 'nl-NL'] as const
+
+    for (const language of languages) {
+      const t = getDefaultTemplatesForLanguage(language)
+      expect(t.transfer).toContain('{{fromLabel}}')
+      expect(t.transfer).toContain('{{content}}')
+      expect(t.summary).toContain('{{historyBlock}}')
+    }
   })
 })

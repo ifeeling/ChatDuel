@@ -89,6 +89,11 @@ describe('chat.html', () => {
     expect(language).toBeTruthy()
     expect(language?.querySelector('option[value="zh-CN"]')?.textContent).toContain('中文')
     expect(language?.querySelector('option[value="en-US"]')?.textContent).toContain('English')
+    expect(language?.querySelector('option[value="fr-FR"]')?.textContent).toContain('Français')
+    expect(language?.querySelector('option[value="de-DE"]')?.textContent).toContain('Deutsch')
+    expect(language?.querySelector('option[value="sv-SE"]')?.textContent).toContain('Svenska')
+    expect(language?.querySelector('option[value="nb-NO"]')?.textContent).toContain('Norsk')
+    expect(language?.querySelector('option[value="nl-NL"]')?.textContent).toContain('Nederlands')
   })
 
   it('renders transfer source picker controls', () => {

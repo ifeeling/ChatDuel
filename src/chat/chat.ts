@@ -26,7 +26,6 @@
 import type { AIPlatform, ConversationEntry, ConversationState, Session, SessionAttachment, SessionResponse, SessionSummary, SummaryMode } from '../types'
 import {
   FileTooLargeError,
-  SUPPORTED_FILE_FORMATS_TEXT,
   UnsupportedFileTypeError,
   assertFileWithinLimit,
   buildInlineTextPrompt,
@@ -48,17 +47,19 @@ import {
   type AIPlatformMeta,
 } from '../lib/ai-platforms'
 import { detectAtInput, filterCandidates, parseAtMentions } from '../lib/at-parser'
-import { getDefaultTemplates, renderTemplate } from '../lib/prompt-template'
+import { getDefaultTemplatesForLanguage, renderTemplate } from '../lib/prompt-template'
 import {
   DEFAULT_USER_SETTINGS,
+  getDefaultUserPromptTemplates,
   loadUserSettings,
   saveUserSettings,
   swapPlatformOrder,
-  type UserLanguage,
+  type UserPromptTemplateCustomizations,
   type UserPromptTemplateKey,
   type UserPromptTemplates,
   type UserSettings,
 } from '../lib/user-settings'
+import { t, type UserLanguage } from '../lib/i18n'
 import { addSession, deleteSession, getSession, loadSessions, updateSession } from '../lib/session-store'
 import {
   applyCapturedResponses,
@@ -140,8 +141,6 @@ const transferList = $<HTMLDivElement>('#transfer-list')
 const transferTargetList = $<HTMLDivElement>('#transfer-target-list')
 const transferSelected = $<HTMLDivElement>('#transfer-selected')
 const transferPreview = $<HTMLDivElement>('#transfer-preview')
-const ATTACH_BUTTON_TITLE = `支持：${SUPPORTED_FILE_FORMATS_TEXT}。暂不支持 Word。`
-const ATTACH_BUTTON_TITLE_EN = `Supported: images, TXT, Markdown, CSV, PDF, Excel (XLSX). Word is not supported yet.`
 
 // ---------- 状态 ----------
 const readyMap: Record<AIPlatform, boolean> = { chatgpt: false, gemini: false, doubao: false }
@@ -152,6 +151,7 @@ const RESPONSE_STABLE_REQUIRED_POLLS = 2
 let userSettings: UserSettings = DEFAULT_USER_SETTINGS
 let selectedPromptTemplateKey: UserPromptTemplateKey = 'transfer'
 let promptTemplateDrafts: UserPromptTemplates = { ...DEFAULT_USER_SETTINGS.promptTemplates }
+let promptTemplateCustomizationDrafts: UserPromptTemplateCustomizations = { ...DEFAULT_USER_SETTINGS.promptTemplateCustomizations }
 let historySessions: Session[] = []
 let conversationEntries: ConversationEntry[] = []
 let selectedHistoryId: string | null = null
@@ -171,69 +171,6 @@ interface PendingAttachment {
 let pendingAttachment: PendingAttachment | null = null
 let pendingImageObjectUrl: string | null = null
 
-const UI_TEXT: Record<UserLanguage, Record<string, string>> = {
-  'zh-CN': {
-    settings: '设置',
-    attach: '添加附件',
-    attachTitle: ATTACH_BUTTON_TITLE,
-    summary: '总结',
-    summaryTitle: '对比总结',
-    records: '记录',
-    recordsTitle: '查看已保存的问答记录',
-    officialConversations: '官网会话',
-    officialConversationsTitle: '打开官网会话链接继续聊',
-    addAi: '+ AI',
-    addAiTitle: '添加 AI 面板',
-    expandInput: '展开输入框',
-    send: '发送',
-    sitesTab: '显示站点',
-    promptsTab: '提示词',
-    shortcutsTab: '快捷键',
-    helpTab: '使用帮助',
-    sitesLead: '选择要在主界面同时显示的站点',
-    languageLabel: '界面语言',
-    refreshStatus: '重新检测状态',
-    refreshStatusTitle: '重新检测每个 AI 页面是否已经打开',
-    historyTitle: '历史记录',
-    historySearch: '搜索历史标题...',
-    conversationTitle: '官网会话',
-    summaryDialogTitle: '对比总结',
-    transferTitle: '选择要转发的回答',
-    close: '关闭',
-    save: '保存',
-  },
-  'en-US': {
-    settings: 'Settings',
-    attach: 'Add attachment',
-    attachTitle: ATTACH_BUTTON_TITLE_EN,
-    summary: 'Summary',
-    summaryTitle: 'Compare and summarize saved responses',
-    records: 'Records',
-    recordsTitle: 'View saved Q&A records',
-    officialConversations: 'Official chats',
-    officialConversationsTitle: 'Open official chat links and continue there',
-    addAi: '+ AI',
-    addAiTitle: 'Add an AI panel',
-    expandInput: 'Expand input',
-    send: 'Send',
-    sitesTab: 'Sites',
-    promptsTab: 'Prompts',
-    shortcutsTab: 'Shortcuts',
-    helpTab: 'Help',
-    sitesLead: 'Choose which sites to show in the main view',
-    languageLabel: 'Language',
-    refreshStatus: 'Check status again',
-    refreshStatusTitle: 'Check whether each AI page is open',
-    historyTitle: 'Records',
-    historySearch: 'Search record titles...',
-    conversationTitle: 'Official chats',
-    summaryDialogTitle: 'Compare summary',
-    transferTitle: 'Choose responses to forward',
-    close: 'Close',
-    save: 'Save',
-  },
-}
-
 function setElementText(selector: string, text: string) {
   const el = document.querySelector<HTMLElement>(selector)
   if (el) el.textContent = text
@@ -249,39 +186,74 @@ function setElementTitle(selector: string, title: string) {
 
 function applyStaticUiLanguage(language: UserLanguage) {
   document.documentElement.lang = language
-  const text = UI_TEXT[language]
-  setElementTitle('#btn-settings', text.settings)
-  setElementTitle('#btn-image', text.attachTitle)
-  setElementText('#btn-summary', text.summary)
-  setElementTitle('#btn-summary', text.summaryTitle)
-  setElementText('#btn-history', text.records)
-  setElementTitle('#btn-history', text.recordsTitle)
-  setElementText('#btn-conversations', text.officialConversations)
-  setElementTitle('#btn-conversations', text.officialConversationsTitle)
-  setElementText('#btn-add-panel', text.addAi)
-  setElementTitle('#btn-add-panel', text.addAiTitle)
-  setElementTitle('#btn-expand-input', text.expandInput)
-  setElementTitle('#btn-send', text.send)
-  setElementText('#settings-title', text.settings)
-  setElementText('[data-settings-tab="sites"]', text.sitesTab)
-  setElementText('[data-settings-tab="prompts"]', text.promptsTab)
-  setElementText('.settings-nav-item:disabled', text.shortcutsTab)
-  setElementText('[data-settings-tab="help"]', text.helpTab)
-  setElementText('[data-settings-panel="sites"] .settings-lead', text.sitesLead)
-  setElementText('.settings-field span', text.languageLabel)
-  setElementText('#btn-refresh', text.refreshStatus)
-  setElementTitle('#btn-refresh', text.refreshStatusTitle)
-  setElementText('#history-title', text.historyTitle)
-  historySearchInput.placeholder = text.historySearch
-  setElementText('#conversation-title', text.conversationTitle)
-  setElementText('#summary-title', text.summaryDialogTitle)
-  setElementText('#transfer-title', text.transferTitle)
-  setElementTitle('#btn-settings-close', text.close)
-  setElementTitle('#btn-history-close', text.close)
-  setElementTitle('#btn-conversation-close', text.close)
-  setElementTitle('#btn-summary-close', text.close)
-  setElementTitle('#btn-transfer-close', text.close)
-  setElementText('#btn-settings-save', text.save)
+  setElementTitle('#btn-settings', t(language, 'app.settings'))
+  setElementTitle('#btn-image', t(language, 'toolbar.attachTitle'))
+  setElementText('#btn-summary', t(language, 'toolbar.summary'))
+  setElementTitle('#btn-summary', t(language, 'toolbar.summaryTitle'))
+  setElementText('#btn-history', t(language, 'toolbar.records'))
+  setElementTitle('#btn-history', t(language, 'toolbar.recordsTitle'))
+  setElementText('#btn-conversations', t(language, 'toolbar.officialChats'))
+  setElementTitle('#btn-conversations', t(language, 'toolbar.officialChatsTitle'))
+  setElementText('#btn-add-panel', t(language, 'toolbar.addAi'))
+  setElementTitle('#btn-add-panel', t(language, 'toolbar.addAiTitle'))
+  setElementTitle('#btn-expand-input', t(language, composer.classList.contains('expanded') ? 'toolbar.collapseInput' : 'toolbar.expandInput'))
+  setElementTitle('#btn-send', t(language, 'toolbar.send'))
+  inputEl.placeholder = t(language, 'input.placeholder')
+  setElementText('#settings-title', t(language, 'app.settings'))
+  setElementText('[data-settings-tab="sites"]', t(language, 'settings.sitesTab'))
+  setElementText('[data-settings-tab="prompts"]', t(language, 'settings.promptsTab'))
+  setElementText('.settings-nav-item:disabled', t(language, 'settings.shortcutsTab'))
+  setElementText('[data-settings-tab="help"]', t(language, 'settings.helpTab'))
+  setElementText('[data-settings-panel="sites"] .settings-lead', t(language, 'settings.sitesLead'))
+  setElementText('[data-settings-panel="prompts"] .settings-lead', t(language, 'settings.promptLead'))
+  setElementText('.prompt-kind-field span', t(language, 'settings.promptKind'))
+  setElementText('#btn-reset-prompt-template', t(language, 'settings.resetPrompt'))
+  setElementText('.settings-field span', t(language, 'settings.language'))
+  setElementText('#btn-refresh', t(language, 'settings.refreshStatus'))
+  setElementTitle('#btn-refresh', t(language, 'settings.refreshStatusTitle'))
+  setElementText('#history-title', t(language, 'toolbar.records'))
+  historySearchInput.placeholder = t(language, 'history.search')
+  setElementText('#conversation-title', t(language, 'toolbar.officialChats'))
+  setElementText('#summary-title', t(language, 'toolbar.summaryTitle'))
+  setElementText('#transfer-title', t(language, 'transfer.title'))
+  setElementTitle('#btn-settings-close', t(language, 'common.close'))
+  setElementTitle('#btn-history-close', t(language, 'common.close'))
+  setElementTitle('#btn-conversation-close', t(language, 'common.close'))
+  setElementTitle('#btn-summary-close', t(language, 'common.close'))
+  setElementTitle('#btn-transfer-close', t(language, 'common.close'))
+  setElementText('#btn-settings-save', t(language, 'common.save'))
+  syncPromptKindOptions()
+  renderPromptTemplateEditor()
+  document.querySelectorAll<HTMLButtonElement>('.panel-transfer').forEach((btn) => {
+    btn.textContent = t(language, 'panel.transfer')
+    btn.title = t(language, 'panel.transferTitle')
+  })
+  document.querySelectorAll<HTMLButtonElement>('.panel-switch').forEach((btn) => {
+    btn.textContent = t(language, 'panel.switch')
+    btn.title = t(language, 'panel.switchTitle')
+  })
+  document.querySelectorAll<HTMLButtonElement>('.panel-open').forEach((btn) => {
+    btn.title = t(language, 'panel.openTitle')
+  })
+  document.querySelectorAll<HTMLButtonElement>('.panel-close').forEach((btn) => {
+    btn.title = t(language, 'panel.closeTitle')
+  })
+  renderHelpContent(language)
+}
+
+const HELP_KEYS = ['send', 'attach', 'forward', 'panels', 'summary', 'records', 'officialChats']
+
+function renderHelpContent(language: UserLanguage) {
+  setElementText('[data-settings-panel="help"] .settings-lead', t(language, 'help.lead'))
+  const cards = [...document.querySelectorAll<HTMLElement>('.help-card')]
+  for (const [index, key] of HELP_KEYS.entries()) {
+    const card = cards[index]
+    if (!card) continue
+    const title = card.querySelector('h3')
+    const body = card.querySelector('p')
+    if (title) title.textContent = t(language, `help.${key}.title`)
+    if (body) body.textContent = t(language, `help.${key}.body`)
+  }
 }
 
 // ---------- @ 状态 ----------
@@ -458,39 +430,41 @@ function applyUserSettings(settings: UserSettings) {
   renderChips()
 }
 
-const PROMPT_TEMPLATE_META: Record<UserPromptTemplateKey, { label: string; help: string }> = {
-  transfer: {
-    label: '转发提示词',
-    help: '可用变量：{{fromLabel}} 表示来源 AI 名字，{{content}} 表示要转发的回答内容。',
-  },
-  summaryFinalAnswer: {
-    label: '总结：最终结论',
-    help: '可用变量：{{historyBlock}} 表示历史记录内容，{{modeInstruction}} 表示当前总结方式的补充要求。',
-  },
-  summaryDifferences: {
-    label: '总结：只看分歧',
-    help: '可用变量：{{historyBlock}} 表示历史记录内容，{{modeInstruction}} 表示当前总结方式的补充要求。',
-  },
-  summaryShort: {
-    label: '总结：简短摘要',
-    help: '可用变量：{{historyBlock}} 表示历史记录内容，{{modeInstruction}} 表示当前总结方式的补充要求。',
-  },
-  summaryOpinionDigest: {
-    label: '总结：汇总意见',
-    help: '可用变量：{{historyBlock}} 表示历史记录内容，{{modeInstruction}} 表示当前总结方式的补充要求。',
-  },
-}
-
 function syncCurrentPromptDraft() {
   promptTemplateDrafts[selectedPromptTemplateKey] = settingPromptTemplate.value
 }
 
+function promptTemplateLabel(key: UserPromptTemplateKey): string {
+  return t(userSettings.language, `settings.prompt.${key}`)
+}
+
+function promptTemplateHelp(key: UserPromptTemplateKey): string {
+  return key === 'transfer'
+    ? t(userSettings.language, 'settings.promptHelp.transfer')
+    : t(userSettings.language, 'settings.promptHelp.summary')
+}
+
+function syncPromptKindOptions() {
+  for (const option of settingPromptKind.options) {
+    option.textContent = promptTemplateLabel(option.value as UserPromptTemplateKey)
+  }
+}
+
+function refreshDefaultPromptDrafts(language: UserLanguage) {
+  const defaults = getDefaultUserPromptTemplates(language)
+  for (const key of Object.keys(defaults) as UserPromptTemplateKey[]) {
+    if (!promptTemplateCustomizationDrafts[key]) {
+      promptTemplateDrafts[key] = defaults[key]
+    }
+  }
+}
+
 function renderPromptTemplateEditor() {
-  const meta = PROMPT_TEMPLATE_META[selectedPromptTemplateKey]
   settingPromptKind.value = selectedPromptTemplateKey
-  settingPromptLabel.textContent = meta.label
+  syncPromptKindOptions()
+  settingPromptLabel.textContent = promptTemplateLabel(selectedPromptTemplateKey)
   settingPromptTemplate.value = promptTemplateDrafts[selectedPromptTemplateKey]
-  settingPromptHelp.textContent = meta.help
+  settingPromptHelp.textContent = promptTemplateHelp(selectedPromptTemplateKey)
 }
 
 function renderSettingsForm() {
@@ -500,6 +474,7 @@ function renderSettingsForm() {
     input.checked = !!userSettings.enabledPlatforms[platform]
   }
   promptTemplateDrafts = { ...userSettings.promptTemplates }
+  promptTemplateCustomizationDrafts = { ...userSettings.promptTemplateCustomizations }
   selectedPromptTemplateKey = settingPromptKind.value as UserPromptTemplateKey || 'transfer'
   renderPromptTemplateEditor()
 }
@@ -526,7 +501,7 @@ function selectSettingsTab(tab: string) {
 function toggleInputExpanded() {
   const expanded = composer.classList.toggle('expanded')
   btnExpandInput.textContent = expanded ? '⇲' : '⛶'
-  btnExpandInput.title = expanded ? '收起输入框' : '放大输入框'
+  btnExpandInput.title = t(userSettings.language, expanded ? 'toolbar.collapseInput' : 'toolbar.expandInput')
   btnExpandInput.setAttribute('aria-label', btnExpandInput.title)
   inputEl.focus()
 }
@@ -566,6 +541,7 @@ async function onSaveSettings() {
     platformOrder: userSettings.platformOrder,
     language: settingLanguage.value as UserLanguage,
     promptTemplates: promptTemplateDrafts,
+    promptTemplateCustomizations: promptTemplateCustomizationDrafts,
   }
 
   btnSettingsSave.disabled = true
@@ -650,7 +626,7 @@ function clearAttachment() {
   imagePreview.hidden = true
   updateComposerToolbarVisibility()
   btnImage.classList.remove('has-image')
-  btnImage.title = ATTACH_BUTTON_TITLE
+  btnImage.title = t(userSettings.language, 'toolbar.attachTitle')
   if (fileInput) fileInput.value = ''
 }
 
@@ -680,12 +656,12 @@ async function refreshAllStatuses() {
   for (const p of activePlatforms()) {
     if (!getPlatformCapabilities(p).supportsEmbed) {
       readyMap[p] = false
-      setStatus(p, 'warn', '待接入')
+      setStatus(p, 'warn', t(userSettings.language, 'panel.status.pending'))
       const iframe = panelIframe(p)
       iframe.src = 'about:blank'
       continue
     }
-    setStatus(p, 'warn', '检测中…')
+    setStatus(p, 'warn', t(userSettings.language, 'panel.status.checking'))
     const iframe = panelIframe(p)
     if (iframe.src === 'about:blank' || !iframe.src) {
       iframe.src = platformUrl(p)
@@ -694,14 +670,14 @@ async function refreshAllStatuses() {
     if (ok) {
       const capabilities = getPlatformCapabilities(p)
       if (capabilities.supportsText) {
-        setStatus(p, 'ok', '已打开')
+        setStatus(p, 'ok', t(userSettings.language, 'panel.status.opened'))
       } else {
         const state = await requestConversationState(p, 1000)
-        if (state.status === 'error') setStatus(p, 'warn', state.errorMessage ?? '需检查')
-        else setStatus(p, 'ok', '已打开')
+        if (state.status === 'error') setStatus(p, 'warn', state.errorMessage ?? t(userSettings.language, 'panel.status.needCheck'))
+        else setStatus(p, 'ok', t(userSettings.language, 'panel.status.opened'))
       }
     } else {
-      setStatus(p, 'err', '加载超时')
+      setStatus(p, 'err', t(userSettings.language, 'panel.status.timeout'))
     }
   }
 }
@@ -1587,7 +1563,7 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform, sel
     if (srcBtn) {
       srcBtn.classList.remove('busy')
       srcBtn.disabled = !getPlatformCapabilities(sourceKey).supportsLastResponse
-      srcBtn.textContent = '转发 ➔'
+      srcBtn.textContent = t(userSettings.language, 'panel.transfer')
     }
     if (tgtBtn) tgtBtn.disabled = !getPlatformCapabilities(targetKey).supportsLastResponse
     closeAtPopup()
@@ -1984,6 +1960,7 @@ async function restoreConversation(entry: ConversationEntry) {
     platformOrder: conversationRestoreOrder(entry),
     language: userSettings.language,
     promptTemplates: userSettings.promptTemplates,
+    promptTemplateCustomizations: userSettings.promptTemplateCustomizations,
   })
   applyUserSettings(saved)
 
@@ -2557,6 +2534,7 @@ async function onSwitchPanel(source: AIPlatform, target: AIPlatform) {
     platformOrder: swapPlatformOrder(userSettings.platformOrder, source, target),
     language: userSettings.language,
     promptTemplates: userSettings.promptTemplates,
+    promptTemplateCustomizations: userSettings.promptTemplateCustomizations,
   }
 
   await savePanelSettings(next, 'AI 面板位置已更新', '切换失败,请稍后重试')
@@ -2575,6 +2553,7 @@ async function onAddPanel(platform: AIPlatform) {
     platformOrder: userSettings.platformOrder,
     language: userSettings.language,
     promptTemplates: userSettings.promptTemplates,
+    promptTemplateCustomizations: userSettings.promptTemplateCustomizations,
   }, 'AI 面板已添加', '添加失败,请稍后重试')
 }
 
@@ -2590,6 +2569,7 @@ async function onClosePanel(platform: AIPlatform) {
     platformOrder: userSettings.platformOrder,
     language: userSettings.language,
     promptTemplates: userSettings.promptTemplates,
+    promptTemplateCustomizations: userSettings.promptTemplateCustomizations,
   }, 'AI 面板已关闭', '关闭失败,请稍后重试')
 }
 
@@ -2700,13 +2680,24 @@ function bindEvents() {
   btnExpandInput.addEventListener('click', toggleInputExpanded)
   btnSettingsClose.addEventListener('click', closeSettings)
   btnSettingsSave.addEventListener('click', () => void onSaveSettings())
+  settingLanguage.addEventListener('change', () => {
+    syncCurrentPromptDraft()
+    const language = settingLanguage.value as UserLanguage
+    refreshDefaultPromptDrafts(language)
+    userSettings = { ...userSettings, language }
+    applyStaticUiLanguage(language)
+  })
   settingPromptKind.addEventListener('change', () => {
     syncCurrentPromptDraft()
     selectedPromptTemplateKey = settingPromptKind.value as UserPromptTemplateKey
     renderPromptTemplateEditor()
   })
+  settingPromptTemplate.addEventListener('input', () => {
+    promptTemplateCustomizationDrafts[selectedPromptTemplateKey] = true
+  })
   btnResetPromptTemplate.addEventListener('click', () => {
-    settingPromptTemplate.value = DEFAULT_USER_SETTINGS.promptTemplates[selectedPromptTemplateKey]
+    settingPromptTemplate.value = getDefaultUserPromptTemplates(settingLanguage.value as UserLanguage)[selectedPromptTemplateKey]
+    promptTemplateCustomizationDrafts[selectedPromptTemplateKey] = false
     syncCurrentPromptDraft()
   })
   document.querySelectorAll<HTMLButtonElement>('.settings-nav-item[data-settings-tab]').forEach((btn) => {

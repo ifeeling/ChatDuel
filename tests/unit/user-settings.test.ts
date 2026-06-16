@@ -48,6 +48,22 @@ describe('user-settings', () => {
     await expect(loadUserSettings()).resolves.toEqual(saved)
   })
 
+  it('accepts the requested European languages', async () => {
+    const saved = await saveUserSettings({ language: 'fr-FR' })
+    expect(saved.language).toBe('fr-FR')
+  })
+
+  it('tracks whether prompt templates are customized by the user', async () => {
+    const saved = await saveUserSettings({
+      promptTemplates: { transfer: 'Custom {{content}}' },
+      promptTemplateCustomizations: { transfer: true },
+    })
+
+    expect(saved.promptTemplates.transfer).toBe('Custom {{content}}')
+    expect(saved.promptTemplateCustomizations.transfer).toBe(true)
+    expect(saved.promptTemplateCustomizations.summaryFinalAnswer).toBe(false)
+  })
+
   it('normalizes missing platform order entries', async () => {
     const saved = await saveUserSettings({
       platformOrder: ['doubao', 'chatgpt'],

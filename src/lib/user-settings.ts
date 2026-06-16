@@ -1,8 +1,7 @@
 import type { AIPlatform } from '../types'
 import { MIN_ACTIVE_PLATFORMS, SUPPORTED_PLATFORMS } from './ai-platforms'
-import { getDefaultTemplates } from './prompt-template'
-
-export type UserLanguage = 'zh-CN' | 'en-US'
+import { isSupportedLanguage, type UserLanguage } from './i18n'
+import { getDefaultTemplatesForLanguage } from './prompt-template'
 
 export type UserPromptTemplateKey =
   | 'transfer'
@@ -12,22 +11,141 @@ export type UserPromptTemplateKey =
   | 'summaryOpinionDigest'
 
 export type UserPromptTemplates = Record<UserPromptTemplateKey, string>
+export type UserPromptTemplateCustomizations = Record<UserPromptTemplateKey, boolean>
 
 export interface UserSettings {
   enabledPlatforms: Record<AIPlatform, boolean>
   platformOrder: AIPlatform[]
   language: UserLanguage
   promptTemplates: UserPromptTemplates
+  promptTemplateCustomizations: UserPromptTemplateCustomizations
 }
 
-type PartialUserSettings = Partial<Omit<UserSettings, 'enabledPlatforms' | 'promptTemplates'>> & {
+type PartialUserSettings = Partial<Omit<UserSettings, 'enabledPlatforms' | 'promptTemplates' | 'promptTemplateCustomizations'>> & {
   enabledPlatforms?: Partial<Record<AIPlatform, boolean>>
   platformOrder?: AIPlatform[]
   promptTemplates?: Partial<UserPromptTemplates & { summary: string }>
+  promptTemplateCustomizations?: Partial<UserPromptTemplateCustomizations>
 }
 
 const STORAGE_KEY = 'userSettings'
-const SUPPORTED_LANGUAGES: UserLanguage[] = ['zh-CN', 'en-US']
+
+export function getDefaultUserPromptTemplates(language: UserLanguage): UserPromptTemplates {
+  const defaults = getDefaultTemplatesForLanguage(language)
+  if (language === 'zh-CN') {
+    return {
+      transfer: defaults.transfer,
+      summaryFinalAnswer: defaults.summary,
+      summaryDifferences: [
+        '下面是多个 AI 关于同一个问题的回答记录。',
+        '',
+        '请只分析这些回答之间的分歧、矛盾、互相补充或侧重点不同的地方。',
+        '不要重新完整总结全部内容，也不要复述相同观点。',
+        '',
+        '【历史记录】',
+        '{{historyBlock}}',
+        '',
+        '请按下面结构输出：',
+        '',
+        '## 分歧点',
+        '',
+        '## 各 AI 的不同观点',
+        '',
+        '## 我的判断',
+      ].join('\n'),
+      summaryShort: [
+        '下面是多个 AI 关于同一个问题的回答记录。',
+        '',
+        '请用尽量短的篇幅给出结论，只保留最重要的 3-5 条信息。',
+        '不要展开长篇解释，不要保留寒暄和客套话。',
+        '',
+        '【历史记录】',
+        '{{historyBlock}}',
+        '',
+        '请直接输出简短摘要。',
+      ].join('\n'),
+      summaryOpinionDigest: [
+        '下面是多个 AI 关于同一个问题的回答记录。',
+        '',
+        '请只提取各 AI 提出的意见、建议、风险提醒和待确认点。',
+        '不要保留寒暄、客套话、自我介绍、重复背景说明。',
+        '',
+        '【历史记录】',
+        '{{historyBlock}}',
+        '',
+        '请按下面结构输出：',
+        '',
+        '## ChatGPT 的意见',
+        '',
+        '## Gemini 的意见',
+        '',
+        '## 豆包的意见',
+        '',
+        '## 共同意见',
+      ].join('\n'),
+    }
+  }
+
+  return {
+    transfer: defaults.transfer,
+    summaryFinalAnswer: defaults.summary,
+    summaryDifferences: [
+      'Here are response records from multiple AIs about the same question.',
+      '',
+      'Analyze only the differences, contradictions, complementary points, and different priorities.',
+      'Do not fully summarize everything again and do not repeat shared points.',
+      '',
+      '[Records]',
+      '{{historyBlock}}',
+      '',
+      'Use this structure:',
+      '',
+      '## Differences',
+      '',
+      '## Different views by AI',
+      '',
+      '## My judgment',
+    ].join('\n'),
+    summaryShort: [
+      'Here are response records from multiple AIs about the same question.',
+      '',
+      'Give a very short summary with only the 3-5 most important points.',
+      'Do not include long explanations, greetings, or filler.',
+      '',
+      '[Records]',
+      '{{historyBlock}}',
+      '',
+      'Output the short summary directly.',
+    ].join('\n'),
+    summaryOpinionDigest: [
+      'Here are response records from multiple AIs about the same question.',
+      '',
+      'Extract only opinions, suggestions, risk notes, and open questions from each AI.',
+      'Remove greetings, self-introductions, repeated background, and filler.',
+      '',
+      '[Records]',
+      '{{historyBlock}}',
+      '',
+      'Use this structure:',
+      '',
+      '## ChatGPT opinions',
+      '',
+      '## Gemini opinions',
+      '',
+      '## Doubao opinions',
+      '',
+      '## Shared opinions',
+    ].join('\n'),
+  }
+}
+
+const DEFAULT_PROMPT_CUSTOMIZATIONS: UserPromptTemplateCustomizations = {
+  transfer: false,
+  summaryFinalAnswer: false,
+  summaryDifferences: false,
+  summaryShort: false,
+  summaryOpinionDigest: false,
+}
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
   enabledPlatforms: {
@@ -37,57 +155,8 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   },
   platformOrder: ['gemini', 'chatgpt', 'doubao'],
   language: 'zh-CN',
-  promptTemplates: {
-    transfer: getDefaultTemplates().transfer,
-    summaryFinalAnswer: getDefaultTemplates().summary,
-    summaryDifferences: [
-      '下面是多个 AI 关于同一个问题的回答记录。',
-      '',
-      '请只分析这些回答之间的分歧、矛盾、互相补充或侧重点不同的地方。',
-      '不要重新完整总结全部内容，也不要复述相同观点。',
-      '',
-      '【历史记录】',
-      '{{historyBlock}}',
-      '',
-      '请按下面结构输出：',
-      '',
-      '## 分歧点',
-      '',
-      '## 各 AI 的不同观点',
-      '',
-      '## 我的判断',
-    ].join('\n'),
-    summaryShort: [
-      '下面是多个 AI 关于同一个问题的回答记录。',
-      '',
-      '请用尽量短的篇幅给出结论，只保留最重要的 3-5 条信息。',
-      '不要展开长篇解释，不要保留寒暄和客套话。',
-      '',
-      '【历史记录】',
-      '{{historyBlock}}',
-      '',
-      '请直接输出简短摘要。',
-    ].join('\n'),
-    summaryOpinionDigest: [
-      '下面是多个 AI 关于同一个问题的回答记录。',
-      '',
-      '请只提取各 AI 提出的意见、建议、风险提醒和待确认点。',
-      '不要保留寒暄、客套话、自我介绍、重复背景说明。',
-      '',
-      '【历史记录】',
-      '{{historyBlock}}',
-      '',
-      '请按下面结构输出：',
-      '',
-      '## ChatGPT 的意见',
-      '',
-      '## Gemini 的意见',
-      '',
-      '## 豆包的意见',
-      '',
-      '## 共同意见',
-    ].join('\n'),
-  },
+  promptTemplates: getDefaultUserPromptTemplates('zh-CN'),
+  promptTemplateCustomizations: DEFAULT_PROMPT_CUSTOMIZATIONS,
 }
 
 function normalizePlatformOrder(order: AIPlatform[] | undefined): AIPlatform[] {
@@ -123,14 +192,28 @@ function normalizeSettings(value: PartialUserSettings | undefined): UserSettings
     ...(value?.enabledPlatforms ?? {}),
   } as Record<AIPlatform, boolean>
   const platformOrder = normalizePlatformOrder(value?.platformOrder)
-  const language = SUPPORTED_LANGUAGES.includes(value?.language as UserLanguage)
-    ? value?.language as UserLanguage
+  const language = isSupportedLanguage(value?.language)
+    ? value.language
     : DEFAULT_USER_SETTINGS.language
+  const defaultPromptTemplates = getDefaultUserPromptTemplates(language)
+  const providedPromptTemplates = value?.promptTemplates ?? {}
+  const promptTemplateCustomizations = {
+    ...DEFAULT_PROMPT_CUSTOMIZATIONS,
+    ...Object.fromEntries(
+      Object.keys(providedPromptTemplates).map((key) => [key, true]),
+    ),
+    ...(value?.promptTemplateCustomizations ?? {}),
+  } as UserPromptTemplateCustomizations
   const legacySummary = value?.promptTemplates?.summary
-  const promptTemplates = {
-    ...DEFAULT_USER_SETTINGS.promptTemplates,
-    ...(value?.promptTemplates ?? {}),
-    ...(legacySummary ? { summaryFinalAnswer: legacySummary } : {}),
+  if (legacySummary) promptTemplateCustomizations.summaryFinalAnswer = true
+  const promptTemplates = { ...defaultPromptTemplates }
+  for (const key of Object.keys(defaultPromptTemplates) as UserPromptTemplateKey[]) {
+    const provided = key === 'summaryFinalAnswer' && legacySummary
+      ? legacySummary
+      : value?.promptTemplates?.[key]
+    if (promptTemplateCustomizations[key] && typeof provided === 'string') {
+      promptTemplates[key] = provided
+    }
   }
 
   const activeCount = SUPPORTED_PLATFORMS.filter((platform) => enabledPlatforms[platform]).length
@@ -141,15 +224,17 @@ function normalizeSettings(value: PartialUserSettings | undefined): UserSettings
   }
 
   if (promptTemplates.transfer.trim().length === 0) {
-    promptTemplates.transfer = DEFAULT_USER_SETTINGS.promptTemplates.transfer
+    promptTemplates.transfer = defaultPromptTemplates.transfer
+    promptTemplateCustomizations.transfer = false
   }
-  for (const key of Object.keys(DEFAULT_USER_SETTINGS.promptTemplates) as UserPromptTemplateKey[]) {
+  for (const key of Object.keys(defaultPromptTemplates) as UserPromptTemplateKey[]) {
     if (promptTemplates[key].trim().length === 0) {
-      promptTemplates[key] = DEFAULT_USER_SETTINGS.promptTemplates[key]
+      promptTemplates[key] = defaultPromptTemplates[key]
+      promptTemplateCustomizations[key] = false
     }
   }
 
-  return { enabledPlatforms, platformOrder, language, promptTemplates }
+  return { enabledPlatforms, platformOrder, language, promptTemplates, promptTemplateCustomizations }
 }
 
 export async function loadUserSettings(): Promise<UserSettings> {
