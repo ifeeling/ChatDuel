@@ -131,6 +131,19 @@ describe('chat.html', () => {
     expect(document.querySelector('#btn-transfer-send')).toBeTruthy()
   })
 
+  it('exposes translatable anchors for modal helper text and labels', () => {
+    document.body.innerHTML = html
+
+    expect(document.querySelector('#conversation-note')).toBeTruthy()
+    expect(document.querySelector('#summary-lead')).toBeTruthy()
+    expect(document.querySelector('#summary-target-label')).toBeTruthy()
+    expect(document.querySelector('#summary-mode-label')).toBeTruthy()
+    expect(document.querySelector('#summary-source-label')).toBeTruthy()
+    expect(document.querySelector('#summary-preview-title')).toBeTruthy()
+    expect(document.querySelector('#transfer-target-label')).toBeTruthy()
+    expect(document.querySelector('#transfer-preview-title')).toBeTruthy()
+  })
+
   it('uses forward wording instead of transfer wording in the visible transfer UI', () => {
     document.body.innerHTML = html
 

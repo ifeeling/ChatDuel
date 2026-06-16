@@ -68,7 +68,7 @@ import {
   createSummarySessionRecord,
   isNewCapturedResponse,
 } from '../lib/session-record'
-import { buildSessionMarkdownExport, formatBytes, formatCapturedMarkdownText, formatSessionMarkdown, summarizeSessionTargets } from '../lib/history-format'
+import { buildSessionMarkdownExport, formatBytes, formatCapturedMarkdownText, formatSessionMarkdown } from '../lib/history-format'
 import { buildSummaryPrompt } from '../lib/summary-builder'
 import { evaluateResponseCapture, type ResponseCaptureProgress } from '../lib/response-capture'
 import { buildTransferContent, buildTransferSourceOptions, type TransferSourceOption } from '../lib/transfer-source'
@@ -123,15 +123,21 @@ const panelSwitchMenu = $<HTMLDivElement>('#panel-switch-menu')
 const conversationOverlay = $<HTMLDivElement>('#conversation-overlay')
 const btnConversationClose = $<HTMLButtonElement>('#btn-conversation-close')
 const conversationList = $<HTMLDivElement>('#conversation-list')
+const conversationNote = $<HTMLDivElement>('#conversation-note')
 const summaryOverlay = $<HTMLDivElement>('#summary-overlay')
 const btnSummaryClose = $<HTMLButtonElement>('#btn-summary-close')
 const btnSummaryCancel = $<HTMLButtonElement>('#btn-summary-cancel')
 const btnSummaryGenerate = $<HTMLButtonElement>('#btn-summary-generate')
 const summaryList = $<HTMLDivElement>('#summary-list')
+const summaryLead = $<HTMLParagraphElement>('#summary-lead')
+const summaryTargetLabel = $<HTMLSpanElement>('#summary-target-label')
+const summaryModeLabel = $<HTMLSpanElement>('#summary-mode-label')
 const summaryTargetSelect = $<HTMLSelectElement>('#summary-target')
 const summaryModeSelect = $<HTMLSelectElement>('#summary-mode')
+const summarySourceLabel = $<HTMLSpanElement>('#summary-source-label')
 const summarySourceList = $<HTMLDivElement>('#summary-source-list')
 const summarySelected = $<HTMLDivElement>('#summary-selected')
+const summaryPreviewTitle = $<HTMLHeadingElement>('#summary-preview-title')
 const summaryPreview = $<HTMLDivElement>('#summary-preview')
 const transferOverlay = $<HTMLDivElement>('#transfer-overlay')
 const transferTitle = $<HTMLHeadingElement>('#transfer-title')
@@ -241,7 +247,18 @@ function applyStaticUiLanguage(language: UserLanguage) {
   setElementText('#history-title', t(language, 'toolbar.records'))
   historySearchInput.placeholder = t(language, 'history.search')
   setElementText('#conversation-title', t(language, 'toolbar.officialChats'))
+  conversationNote.textContent = t(language, 'conversation.note')
   setElementText('#summary-title', t(language, 'toolbar.summaryTitle'))
+  summaryLead.textContent = t(language, 'summary.lead')
+  summaryTargetLabel.textContent = t(language, 'summary.targetLabel')
+  summaryModeLabel.textContent = t(language, 'summary.modeLabel')
+  summarySourceLabel.textContent = t(language, 'summary.sourceLabel')
+  summarySourceList.setAttribute('aria-label', t(language, 'summary.sourceLabel'))
+  summarySelected.textContent = formatUiText(language, 'summary.selectedCount', { count: selectedSummaryIds.size })
+  btnSummaryCancel.textContent = t(language, 'common.cancel')
+  btnSummaryGenerate.textContent = t(language, 'summary.generate')
+  summaryPreviewTitle.textContent = t(language, 'summary.previewTitle')
+  syncSummaryModeOptions(language)
   setElementText('#transfer-title', t(language, 'transfer.title'))
   transferLead.textContent = t(language, 'transfer.lead')
   transferTargetLabel.textContent = t(language, 'transfer.targetLabel')
@@ -272,6 +289,16 @@ function applyStaticUiLanguage(language: UserLanguage) {
     btn.title = t(language, 'panel.closeTitle')
   })
   renderHelpContent(language)
+}
+
+function summaryModeLabelText(mode: SummaryMode, language: UserLanguage = userSettings.language): string {
+  return t(language, `summary.mode.${mode}`)
+}
+
+function syncSummaryModeOptions(language: UserLanguage = userSettings.language) {
+  for (const option of summaryModeSelect.options) {
+    option.textContent = summaryModeLabelText(option.value as SummaryMode, language)
+  }
 }
 
 const HELP_KEYS = ['send', 'attach', 'forward', 'panels', 'summary', 'records', 'officialChats']
@@ -558,12 +585,12 @@ async function onSaveSettings() {
 
   const selectedPlatforms = selectedSettingsPlatforms()
   if (selectedPlatforms.length < MIN_ACTIVE_PLATFORMS) {
-    showToast(`至少保留 ${MIN_ACTIVE_PLATFORMS} 个 AI`, 'warn')
+    showToast(uiText('panelMenu.minActive', { count: MIN_ACTIVE_PLATFORMS }), 'warn')
     renderSettingsForm()
     return
   }
   if (selectedPlatforms.length > MAX_ACTIVE_PLATFORMS) {
-    showToast(`最多同时显示 ${MAX_ACTIVE_PLATFORMS} 个 AI`, 'warn')
+    showToast(uiText('panelMenu.maxActive', { count: MAX_ACTIVE_PLATFORMS }), 'warn')
     renderSettingsForm()
     return
   }
@@ -583,10 +610,10 @@ async function onSaveSettings() {
     applyUserSettings(saved)
     closeSettings()
     await refreshAllStatuses()
-    showToast('设置已保存', 'success', 1600)
+    showToast(t(userSettings.language, 'settings.saveSuccess'), 'success', 1600)
   } catch (e) {
     console.error('[AIChatRoom chat] save settings failed', e)
-    showToast('设置保存失败,请重试', 'err')
+    showToast(t(userSettings.language, 'settings.saveFailed'), 'err')
   } finally {
     btnSettingsSave.disabled = false
   }
@@ -610,7 +637,7 @@ async function acceptFile(file: File) {
       return
     }
     if (e instanceof FileTooLargeError) {
-      showToast(`文件太大(${(file.size / 1024 / 1024).toFixed(1)}MB)`, 'err')
+      showToast(uiText('attachment.tooLarge', { size: (file.size / 1024 / 1024).toFixed(1) }), 'err')
       return
     }
     throw e
@@ -623,7 +650,7 @@ async function acceptFile(file: File) {
       textContent = result.textContent
     } catch (e) {
       console.error('[AIChatRoom chat] failed to read text file', e)
-      showToast('读取文本文件失败', 'err')
+      showToast(t(userSettings.language, 'attachment.readTextFailed'), 'err')
       return
     }
   }
@@ -643,8 +670,14 @@ async function acceptFile(file: File) {
   imagePreview.hidden = false
   updateComposerToolbarVisibility()
   btnImage.classList.add('has-image')
-  btnImage.title = `已附加文件: ${file.name || 'file'} — 点击替换`
-  showToast(classification.handling === 'inline-text' ? '文本文件已附加' : '文件已附加', 'success', 1500)
+  btnImage.title = uiText('attachment.attachedTitle', { name: file.name || 'file' })
+  showToast(
+    classification.handling === 'inline-text'
+      ? t(userSettings.language, 'attachment.textAttached')
+      : t(userSettings.language, 'attachment.fileAttached'),
+    'success',
+    1500,
+  )
 }
 
 function clearAttachment() {
@@ -896,7 +929,7 @@ window.addEventListener('message', (e: MessageEvent) => {
 async function onSend() {
   const text = inputEl.value.trim()
   if (!text && !pendingAttachment) {
-    showToast('请输入文字或附加文件', 'warn')
+    showToast(t(userSettings.language, 'send.needTextOrAttachment'), 'warn')
     return
   }
   // 目标优先级:atSelected(UI 选) > 文本里手打 @xxx(向后兼容) > 全发
@@ -910,7 +943,7 @@ async function onSend() {
     targets = mentioned.length > 0 ? mentioned : textPlatforms
   }
   if (targets.length === 0) {
-    showToast('当前没有可发送文本的 AI', 'warn')
+    showToast(t(userSettings.language, 'send.noTextTarget'), 'warn')
     return
   }
 
@@ -924,12 +957,12 @@ async function onSend() {
     if (deliveryPlan.manualUploadTargets.length > 0) {
       const labels = deliveryPlan.manualUploadTargets.map((p) => getPlatformMeta(p)?.label ?? p).join(' / ')
       const message = text.length > 0
-        ? `${labels} 暂不支持自动上传这个文件类型,将只发送文字;可手动上传文件`
-        : `${labels} 暂不支持自动上传这个文件类型,已跳过;可手动上传`
+        ? uiText('send.manualUploadWithText', { labels })
+        : uiText('send.manualUploadOnly', { labels })
       showToast(message, 'warn', 6000)
     }
     if (targets.length === 0) {
-      showToast('当前目标都不支持自动上传这个文件类型,请手动上传或改用 .md/.txt', 'warn', 6000)
+      showToast(t(userSettings.language, 'send.noUploadTarget'), 'warn', 6000)
       return
     }
   }
@@ -1042,19 +1075,19 @@ async function onSend() {
   const okCount = results.filter((r) => r.ok).length
   if (pendingAttachment?.classification.handling === 'file-upload') {
     if (okCount === results.length && results.length > 0) {
-      showToast('文件已发送到所有目标', 'success', 2500)
+      showToast(t(userSettings.language, 'send.fileAllSent'), 'success', 2500)
     } else if (okCount > 0) {
       // 部分成功:v0.5+ 不再走剪贴板兜底(跨源 iframe 写剪贴板经常失败)
-      showToast('部分目标未自动接收文件,请手动上传到失败侧', 'warn', 6000)
+      showToast(t(userSettings.language, 'send.filePartial'), 'warn', 6000)
     } else {
       // 全部失败:v0.5+ 不再走剪贴板兜底
-      showToast('文件自动发送失败,请手动上传', 'err', 6000)
+      showToast(t(userSettings.language, 'send.fileFailed'), 'err', 6000)
     }
   } else {
     if (okCount === 0 && results.length > 0) {
-      showToast('发送失败,请重试', 'err', 3000)
+      showToast(t(userSettings.language, 'send.failed'), 'err', 3000)
     } else {
-      showToast('已发送', 'success', 1200)
+      showToast(t(userSettings.language, 'send.success'), 'success', 1200)
     }
   }
 
@@ -1135,7 +1168,7 @@ function renderAtPopup() {
   if (atPopupCandidates.length === 0) {
     const empty = document.createElement('div')
     empty.className = 'at-popup-empty'
-    empty.textContent = '没有可用的 AI(全部已选或前台未打开面板)'
+    empty.textContent = t(userSettings.language, 'at.empty')
     atPopupEl.appendChild(empty)
     return
   }
@@ -1160,7 +1193,7 @@ function renderAtPopup() {
   })
   const hint = document.createElement('div')
   hint.className = 'at-popup-hint'
-  hint.textContent = '↑↓ 选择 · Enter 确认 · Esc 取消'
+  hint.textContent = t(userSettings.language, 'at.hint')
   atPopupEl.appendChild(hint)
   // 渲染完后再做定位(用真实高度)
   positionAtPopup()
@@ -1492,11 +1525,11 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform, sel
   try {
     const srcIframe = panelIframe(sourceKey)
     const srcWin = srcIframe.contentWindow
-    if (!srcWin && !selectedContent) throw new Error('源 iframe 不可用')
+    if (!srcWin && !selectedContent) throw new Error(t(userSettings.language, 'transfer.sourceFrameUnavailable'))
 
     let content = selectedContent?.trim() ?? ''
     if (!content) {
-      if (!srcWin) throw new Error('源 iframe 不可用')
+      if (!srcWin) throw new Error(t(userSettings.language, 'transfer.sourceFrameUnavailable'))
       const srcState = await new Promise<{ status: string }>((resolve) => {
         const onMsg = (e: MessageEvent) => {
           const d = e.data as { source?: string; type?: string; platform?: AIPlatform; state?: { status: string } } | undefined
@@ -1634,15 +1667,21 @@ function setupTransferButtons() {
 // ---------- 历史记录 ----------
 function compactText(text: string, max = 80): string {
   const oneLine = text.replace(/\s+/g, ' ').trim()
-  if (!oneLine) return '空问题'
+  if (!oneLine) return t(userSettings.language, 'common.emptyQuestion')
   return oneLine.length > max ? `${oneLine.slice(0, max)}...` : oneLine
 }
 
 function responseLabel(response?: SessionResponse): string {
-  if (!response) return '未发送'
-  if (response.status === 'captured') return '已记录'
-  if (response.status === 'failed') return '发送失败'
-  return '待回填'
+  if (!response) return t(userSettings.language, 'history.status.notSent')
+  if (response.status === 'captured') return t(userSettings.language, 'history.status.captured')
+  if (response.status === 'failed') return t(userSettings.language, 'history.status.failed')
+  return t(userSettings.language, 'history.status.pending')
+}
+
+function summarizeSessionTargetsForUi(session: Session): string {
+  return session.targetPlatforms
+    .map((platform) => `${getPlatformMeta(platform)?.label ?? platform} ${responseLabel(session.responses[platform])}`)
+    .join(' / ')
 }
 
 function formatTime(ts: number): string {
@@ -1654,7 +1693,7 @@ function renderHistoryList() {
   if (historySessions.length === 0) {
     const empty = document.createElement('div')
     empty.className = 'history-empty'
-    empty.textContent = '还没有历史记录'
+    empty.textContent = t(userSettings.language, 'history.empty')
     historyList.appendChild(empty)
     return
   }
@@ -1663,7 +1702,7 @@ function renderHistoryList() {
   if (visibleSessions.length === 0) {
     const empty = document.createElement('div')
     empty.className = 'history-empty'
-    empty.textContent = '没有匹配的历史记录'
+    empty.textContent = t(userSettings.language, 'history.noMatch')
     historyList.appendChild(empty)
     return
   }
@@ -1684,7 +1723,7 @@ function renderHistoryList() {
 
     const targets = document.createElement('span')
     targets.className = 'history-item-targets'
-    targets.textContent = summarizeSessionTargets(session)
+    targets.textContent = summarizeSessionTargetsForUi(session)
 
     item.append(title, meta, targets)
     item.addEventListener('click', () => {
@@ -1709,7 +1748,9 @@ function renderHistoryDetail(session?: Session) {
   if (!session) {
     const empty = document.createElement('div')
     empty.className = 'history-empty'
-    empty.textContent = historySessions.length === 0 ? '还没有历史记录' : '选择一条历史记录查看详情'
+    empty.textContent = historySessions.length === 0
+      ? t(userSettings.language, 'history.empty')
+      : t(userSettings.language, 'history.selectOne')
     historyDetail.appendChild(empty)
     return
   }
@@ -1723,7 +1764,7 @@ function renderHistoryDetail(session?: Session) {
   title.textContent = compactText(session.prompt, 120)
   const meta = document.createElement('div')
   meta.className = 'history-detail-meta'
-  meta.textContent = `${formatTime(session.createdAt)} · ${summarizeSessionTargets(session)}`
+  meta.textContent = `${formatTime(session.createdAt)} · ${summarizeSessionTargetsForUi(session)}`
   headingWrap.append(title, meta)
 
   const actions = document.createElement('div')
@@ -1731,28 +1772,28 @@ function renderHistoryDetail(session?: Session) {
   const copyBtn = document.createElement('button')
   copyBtn.type = 'button'
   copyBtn.className = 'history-action'
-  copyBtn.textContent = '复制 Markdown'
+  copyBtn.textContent = t(userSettings.language, 'common.copyMarkdown')
   copyBtn.addEventListener('click', () => void copySessionMarkdown(session))
   const exportBtn = document.createElement('button')
   exportBtn.type = 'button'
   exportBtn.className = 'history-action'
-  exportBtn.textContent = '导出 Markdown'
+  exportBtn.textContent = t(userSettings.language, 'common.exportMarkdown')
   exportBtn.addEventListener('click', () => exportSessionMarkdown(session))
   const deleteBtn = document.createElement('button')
   deleteBtn.type = 'button'
   deleteBtn.className = 'history-action danger'
-  deleteBtn.textContent = '删除'
+  deleteBtn.textContent = t(userSettings.language, 'common.delete')
   deleteBtn.addEventListener('click', () => void deleteHistorySession(session.id))
   actions.append(copyBtn, exportBtn, deleteBtn)
   header.append(headingWrap, actions)
   historyDetail.appendChild(header)
 
-  if (session.summaries.length > 0 && session.prompt.startsWith('【总结】')) {
-    appendHistorySection('总结信息', formatSummaryHistoryInfo(session.summaries[0]))
+  if (session.summaries.length > 0) {
+    appendHistorySection(t(userSettings.language, 'history.summaryInfo'), formatSummaryHistoryInfo(session.summaries[0]))
   }
-  appendHistorySection('用户问题', session.prompt || '空')
+  appendHistorySection(t(userSettings.language, 'history.userQuestion'), session.prompt || t(userSettings.language, 'common.empty'))
   if (session.sentPrompt && session.sentPrompt !== session.prompt) {
-    appendHistorySection('实际发送内容', session.sentPrompt)
+    appendHistorySection(t(userSettings.language, 'history.sentPrompt'), session.sentPrompt)
   }
   if (session.attachments.length > 0) {
     appendAttachmentSection(session.attachments)
@@ -1763,7 +1804,7 @@ function renderHistoryDetail(session?: Session) {
     const text = response?.status === 'captured' && response.text.trim()
       ? formatCapturedMarkdownText(response.text)
       : responseLabel(response)
-    appendHistorySection(`${label} 回答`, text)
+    appendHistorySection(uiText('history.responseTitle', { label }), text)
   }
 }
 
@@ -1777,8 +1818,8 @@ function appendHistorySection(titleText: string, bodyText: string) {
   const copyBtn = document.createElement('button')
   copyBtn.type = 'button'
   copyBtn.className = 'history-block-copy'
-  copyBtn.title = `复制${titleText}`
-  copyBtn.textContent = '复制'
+  copyBtn.title = uiText('history.copyBlockTitle', { title: titleText })
+  copyBtn.textContent = t(userSettings.language, 'common.copy')
   copyBtn.addEventListener('click', () => void copyHistoryBlockText(bodyText))
   const body = document.createElement('pre')
   body.className = 'history-block'
@@ -1791,22 +1832,22 @@ function appendHistorySection(titleText: string, bodyText: string) {
 async function copyHistoryBlockText(text: string) {
   try {
     await navigator.clipboard.writeText(text)
-    showToast('已复制内容', 'success', 1200)
+    showToast(t(userSettings.language, 'history.copyBlockSuccess'), 'success', 1200)
   } catch (e) {
     console.error('[AIChatRoom chat] failed to copy history block', e)
-    showToast('复制失败,请稍后重试', 'err', 3000)
+    showToast(t(userSettings.language, 'common.copyFailed'), 'err', 3000)
   }
 }
 
 function formatSummaryHistoryInfo(summary: SessionSummary): string {
   const targetLabel = getPlatformMeta(summary.target)?.label ?? summary.target
-  const modeLabel = SUMMARY_MODE_LABELS[summary.mode]
+  const modeLabel = summaryModeLabelText(summary.mode)
   const sourceCount = summary.sourceSessionIds.length
   return [
-    `总结目标：${targetLabel}`,
-    `总结方式：${modeLabel}`,
-    `来源历史：${sourceCount} 条`,
-    `发送时间：${formatTime(summary.sentAt ?? summary.timestamp)}`,
+    uiText('history.summaryTarget', { targetLabel }),
+    uiText('history.summaryMode', { modeLabel }),
+    uiText('history.summarySourceCount', { count: sourceCount }),
+    uiText('history.summarySentAt', { time: formatTime(summary.sentAt ?? summary.timestamp) }),
   ].join('\n')
 }
 
@@ -1814,12 +1855,12 @@ function appendAttachmentSection(attachments: SessionAttachment[]) {
   const section = document.createElement('section')
   section.className = 'history-section'
   const title = document.createElement('h3')
-  title.textContent = '附件'
+  title.textContent = t(userSettings.language, 'history.attachments')
   const list = document.createElement('ul')
   list.className = 'history-attachments'
   for (const attachment of attachments) {
     const item = document.createElement('li')
-    item.textContent = `${attachment.name} · ${attachment.mime || '未知类型'} · ${formatBytes(attachment.size)}`
+    item.textContent = `${attachment.name} · ${attachment.mime || t(userSettings.language, 'common.unknownType')} · ${formatBytes(attachment.size)}`
     list.appendChild(item)
   }
   section.append(title, list)
@@ -1829,10 +1870,10 @@ function appendAttachmentSection(attachments: SessionAttachment[]) {
 async function copySessionMarkdown(session: Session) {
   try {
     await navigator.clipboard.writeText(formatSessionMarkdown(session))
-    showToast('已复制历史 Markdown', 'success', 1600)
+    showToast(t(userSettings.language, 'history.copyMarkdownSuccess'), 'success', 1600)
   } catch (e) {
     console.error('[AIChatRoom chat] failed to copy history markdown', e)
-    showToast('复制失败,请稍后重试', 'err', 3000)
+    showToast(t(userSettings.language, 'common.copyFailed'), 'err', 3000)
   }
 }
 
@@ -1847,15 +1888,15 @@ function exportSessionMarkdown(session: Session) {
   link.click()
   link.remove()
   URL.revokeObjectURL(url)
-  showToast('已导出 Markdown 报告', 'success', 1600)
+  showToast(t(userSettings.language, 'history.exportMarkdownSuccess'), 'success', 1600)
 }
 
 async function deleteHistorySession(id: string) {
-  if (!confirm('确定删除这条历史记录吗？')) return
+  if (!confirm(t(userSettings.language, 'history.deleteConfirm'))) return
   await deleteSession(id)
   historySessions = historySessions.filter((s) => s.id !== id)
   selectFirstVisibleHistorySession()
-  showToast('历史记录已删除', 'success', 1600)
+  showToast(t(userSettings.language, 'history.deleteSuccess'), 'success', 1600)
 }
 
 async function refreshAndRenderHistorySession(session: Session) {
@@ -1881,7 +1922,11 @@ async function refreshSessionResponses(session: Session): Promise<Session> {
 async function openHistory() {
   historyOverlay.hidden = false
   historySearchInput.value = ''
-  historyDetail.innerHTML = '<div class="history-empty">正在刷新最新回答…</div>'
+  historyDetail.innerHTML = ''
+  const loading = document.createElement('div')
+  loading.className = 'history-empty'
+  loading.textContent = t(userSettings.language, 'history.refreshing')
+  historyDetail.appendChild(loading)
   historySessions = (await loadSessions()).sort((a, b) => b.createdAt - a.createdAt)
   if (historySessions[0]) {
     const refreshed = await refreshSessionResponses(historySessions[0])
@@ -1940,7 +1985,7 @@ function renderConversationList() {
   if (conversationEntries.length === 0) {
     const empty = document.createElement('div')
     empty.className = 'history-empty'
-    empty.textContent = '还没有会话历史'
+    empty.textContent = t(userSettings.language, 'conversation.empty')
     conversationList.appendChild(empty)
     return
   }
@@ -1967,8 +2012,8 @@ function renderConversationList() {
     const deleteBtn = document.createElement('button')
     deleteBtn.type = 'button'
     deleteBtn.className = 'conversation-delete'
-    deleteBtn.title = '删除会话历史'
-    deleteBtn.textContent = '删'
+    deleteBtn.title = t(userSettings.language, 'conversation.deleteTitle')
+    deleteBtn.textContent = t(userSettings.language, 'conversation.deleteShort')
     deleteBtn.addEventListener('click', (event) => {
       event.stopPropagation()
       void deleteConversationEntry(entry.id)
@@ -1981,11 +2026,11 @@ function renderConversationList() {
 }
 
 async function deleteConversationEntry(id: string) {
-  if (!confirm('确定删除这条会话历史吗？')) return
+  if (!confirm(t(userSettings.language, 'conversation.deleteConfirm'))) return
   await deleteConversation(id)
   conversationEntries = conversationEntries.filter((entry) => entry.id !== id)
   renderConversationList()
-  showToast('会话历史已删除', 'success', 1600)
+  showToast(t(userSettings.language, 'conversation.deleteSuccess'), 'success', 1600)
 }
 
 function conversationRestoreOrder(entry: ConversationEntry): AIPlatform[] {
@@ -2018,30 +2063,27 @@ async function restoreConversation(entry: ConversationEntry) {
     const panel = platformPanel(platform)
     if (!panel) continue
     readyMap[platform] = false
-    setStatus(platform, 'warn', '加载中…')
+    setStatus(platform, 'warn', t(userSettings.language, 'common.loading'))
     panelIframe(platform).src = url
   }
   closeConversationHistory()
-  showToast('已打开会话历史', 'success', 1600)
+  showToast(t(userSettings.language, 'conversation.restoreSuccess'), 'success', 1600)
   void refreshAllStatuses()
 }
 
 async function openConversationHistory() {
   conversationOverlay.hidden = false
-  conversationList.innerHTML = '<div class="history-empty">正在读取会话历史…</div>'
+  conversationList.innerHTML = ''
+  const loading = document.createElement('div')
+  loading.className = 'history-empty'
+  loading.textContent = t(userSettings.language, 'conversation.loading')
+  conversationList.appendChild(loading)
   conversationEntries = await loadConversations()
   renderConversationList()
 }
 
 function closeConversationHistory() {
   conversationOverlay.hidden = true
-}
-
-const SUMMARY_MODE_LABELS: Record<SummaryMode, string> = {
-  'final-answer': '最终结论',
-  differences: '只看分歧',
-  'short-summary': '简短摘要',
-  'opinion-digest': '汇总意见',
 }
 
 const SUMMARY_MODE_TEMPLATE_KEYS: Record<SummaryMode, UserPromptTemplateKey> = {
@@ -2075,7 +2117,7 @@ function renderSummaryList() {
   if (summarySessions.length === 0) {
     const empty = document.createElement('div')
     empty.className = 'history-empty'
-    empty.textContent = '还没有历史记录'
+    empty.textContent = t(userSettings.language, 'history.empty')
     summaryList.appendChild(empty)
     updateSummarySelectedCount()
     return
@@ -2099,7 +2141,7 @@ function renderSummaryList() {
     meta.textContent = formatTime(session.createdAt)
     const targets = document.createElement('span')
     targets.className = 'summary-item-targets'
-    targets.textContent = summarizeSessionTargets(session)
+    targets.textContent = summarizeSessionTargetsForUi(session)
 
     content.append(title, meta, targets)
     item.append(checkbox, content)
@@ -2115,7 +2157,7 @@ function renderSummaryList() {
 }
 
 function updateSummarySelectedCount() {
-  summarySelected.textContent = `已选择 ${selectedSummaryIds.size} 条历史`
+  summarySelected.textContent = uiText('summary.selectedCount', { count: selectedSummaryIds.size })
   btnSummaryGenerate.disabled = selectedSummaryIds.size === 0
   renderSummarySourceOptions()
   renderSummaryPreview()
@@ -2147,7 +2189,7 @@ function renderSummarySourceOptions() {
   if (platforms.length === 0) {
     const empty = document.createElement('div')
     empty.className = 'summary-preview-empty'
-    empty.textContent = '先选择包含 AI 回复的历史'
+    empty.textContent = t(userSettings.language, 'summary.noSourceResponses')
     summarySourceList.appendChild(empty)
     return
   }
@@ -2176,7 +2218,7 @@ function renderSummaryPreview() {
   if (sessions.length === 0) {
     const empty = document.createElement('div')
     empty.className = 'summary-preview-empty'
-    empty.textContent = '勾选左侧历史后，这里会显示具体聊天内容'
+    empty.textContent = t(userSettings.language, 'summary.previewEmpty')
     summaryPreview.appendChild(empty)
     return
   }
@@ -2192,13 +2234,13 @@ function renderSummaryPreview() {
     title.textContent = compactText(session.prompt, 90)
     const meta = document.createElement('div')
     meta.className = 'summary-preview-meta'
-    meta.textContent = `${formatTime(session.createdAt)} · ${summarizeSessionTargets(session)}`
+    meta.textContent = `${formatTime(session.createdAt)} · ${summarizeSessionTargetsForUi(session)}`
     header.append(title, meta)
     card.appendChild(header)
 
-    appendSummaryPreviewSection(card, '用户问题', session.prompt || '空')
+    appendSummaryPreviewSection(card, t(userSettings.language, 'history.userQuestion'), session.prompt || t(userSettings.language, 'common.empty'))
     if (session.sentPrompt && session.sentPrompt !== session.prompt) {
-      appendSummaryPreviewSection(card, '实际发送内容', session.sentPrompt)
+      appendSummaryPreviewSection(card, t(userSettings.language, 'history.sentPrompt'), session.sentPrompt)
     }
     for (const platform of session.targetPlatforms) {
       if (!selectedSummaryPlatforms.has(platform)) continue
@@ -2207,7 +2249,7 @@ function renderSummaryPreview() {
       const text = response?.status === 'captured' && response.text.trim()
         ? response.text
         : responseLabel(response)
-      appendSummaryPreviewSection(card, `${label} 回答`, text)
+      appendSummaryPreviewSection(card, uiText('history.responseTitle', { label }), text)
     }
 
     summaryPreview.appendChild(card)
@@ -2227,16 +2269,23 @@ function appendSummaryPreviewSection(card: HTMLElement, titleText: string, bodyT
 }
 
 function truncatePreviewText(text: string, max = 1200): string {
-  const normalized = text.trim() || '空'
-  return normalized.length > max ? `${normalized.slice(0, max)}\n\n……内容较长，生成总结时会使用完整内容。` : normalized
+  const normalized = text.trim() || t(userSettings.language, 'common.empty')
+  return normalized.length > max
+    ? `${normalized.slice(0, max)}\n\n${t(userSettings.language, 'summary.longPreview')}`
+    : normalized
 }
 
 async function openSummaryDialog() {
   summaryOverlay.hidden = false
-  summaryList.innerHTML = '<div class="history-empty">正在读取历史记录…</div>'
+  summaryList.innerHTML = ''
+  const loading = document.createElement('div')
+  loading.className = 'history-empty'
+  loading.textContent = t(userSettings.language, 'summary.loading')
+  summaryList.appendChild(loading)
   selectedSummaryIds.clear()
   selectedSummaryPlatforms.clear()
   renderSummaryTargets()
+  syncSummaryModeOptions()
   summaryModeSelect.value = 'final-answer'
 
   summarySessions = (await loadSessions()).sort((a, b) => b.createdAt - a.createdAt)
@@ -2267,32 +2316,34 @@ function hasCapturedResponseFromPlatforms(session: Session, platforms: AIPlatfor
 }
 
 function summarySessionTitle(sessions: Session[], mode: SummaryMode): string {
-  const firstPrompt = compactText(sessions[0]?.prompt ?? '历史记录', 56)
-  const modeLabel = SUMMARY_MODE_LABELS[mode]
-  const countLabel = sessions.length > 1 ? `${firstPrompt} 等 ${sessions.length} 条` : firstPrompt
-  return `【总结】${modeLabel} · ${countLabel}`
+  const firstPrompt = compactText(sessions[0]?.prompt ?? t(userSettings.language, 'history.empty'), 56)
+  const modeLabel = summaryModeLabelText(mode)
+  const countLabel = sessions.length > 1
+    ? uiText('summary.multipleCount', { firstPrompt, count: sessions.length })
+    : firstPrompt
+  return uiText('summary.recordTitle', { modeLabel, countLabel })
 }
 
 async function onGenerateSummary() {
   const target = summaryTargetSelect.value as AIPlatform
   if (!target) {
-    showToast('没有可用的总结目标 AI', 'warn')
+    showToast(t(userSettings.language, 'summary.noTarget'), 'warn')
     return
   }
 
   const sessions = selectedSummarySessions()
   if (sessions.length === 0) {
-    showToast('请至少选择一条历史记录', 'warn')
+    showToast(t(userSettings.language, 'summary.needHistory'), 'warn')
     return
   }
   const includedPlatforms = [...selectedSummaryPlatforms]
   if (includedPlatforms.length === 0) {
-    showToast('请至少选择一个参与总结的 AI', 'warn')
+    showToast(t(userSettings.language, 'summary.needSource'), 'warn')
     return
   }
   const incomplete = sessions.filter((session) => !hasCapturedResponseFromPlatforms(session, includedPlatforms))
   if (incomplete.length > 0) {
-    showToast(`有 ${incomplete.length} 条历史还没有可用回答,等 AI 回答完成后再试`, 'warn', 5000)
+    showToast(uiText('summary.incomplete', { count: incomplete.length }), 'warn', 5000)
     return
   }
 
@@ -2300,7 +2351,7 @@ async function onGenerateSummary() {
   const prompt = buildSummaryPrompt(userSettings.promptTemplates[SUMMARY_MODE_TEMPLATE_KEYS[mode]], sessions, {
     targetLabel: getPlatformMeta(target)?.label ?? target,
     mode,
-    modeLabel: SUMMARY_MODE_LABELS[mode],
+    modeLabel: summaryModeLabelText(mode),
     includedPlatforms,
   })
   const summary: SessionSummary = {
@@ -2336,10 +2387,10 @@ async function onGenerateSummary() {
     postToIframe(target, 'write-and-send', { text: prompt })
     scheduleSessionResponseBackfill(summarySession.id, [target], summaryBaselines)
     closeSummaryDialog()
-    showToast(`已发送总结请求到 ${getPlatformMeta(target)?.label ?? target}`, 'success', 1800)
+    showToast(uiText('summary.sent', { targetLabel: getPlatformMeta(target)?.label ?? target }), 'success', 1800)
   } catch (e) {
     console.error('[AIChatRoom chat] summary failed', e)
-    showToast(`总结失败: ${e instanceof Error ? e.message : String(e)}`, 'err', 5000)
+    showToast(uiText('summary.failed', { message: e instanceof Error ? e.message : String(e) }), 'err', 5000)
   } finally {
     updateSummarySelectedCount()
   }
@@ -2349,7 +2400,7 @@ async function onGenerateSummary() {
 // 转发按钮(panel header 上的 .panel-transfer)由 setupTransferButtons() 单独绑定(动态 target)
 async function onSummary() {
   if (activePlatforms().length === 0) {
-    showToast('没有可用的总结目标 AI', 'warn')
+    showToast(t(userSettings.language, 'summary.noTarget'), 'warn')
     return
   }
   await openSummaryDialog()
@@ -2519,7 +2570,7 @@ function renderPanelSwitchMenu(source: AIPlatform) {
     appendPanelMenuItem(
       platform,
       platform === source,
-      userSettings.enabledPlatforms[platform] ? '已显示' : '未显示',
+      userSettings.enabledPlatforms[platform] ? t(userSettings.language, 'panelMenu.shown') : t(userSettings.language, 'panelMenu.hidden'),
       () => void onSwitchPanel(source, platform),
     )
   }
@@ -2530,12 +2581,12 @@ function renderPanelAddMenu() {
   panelSwitchMenu.dataset.mode = 'add'
   const hiddenPlatforms = allPlatforms().filter((platform) => !userSettings.enabledPlatforms[platform])
   for (const platform of hiddenPlatforms) {
-    appendPanelMenuItem(platform, false, '添加', () => void onAddPanel(platform))
+    appendPanelMenuItem(platform, false, t(userSettings.language, 'panelMenu.add'), () => void onAddPanel(platform))
   }
   if (hiddenPlatforms.length === 0) {
     const empty = document.createElement('div')
     empty.className = 'at-popup-empty'
-    empty.textContent = '没有可添加的 AI'
+    empty.textContent = t(userSettings.language, 'panelMenu.noAddable')
     panelSwitchMenu.appendChild(empty)
   }
 }
@@ -2550,7 +2601,7 @@ function openPanelAddMenu(anchor: HTMLElement) {
   const hiddenPlatforms = allPlatforms().filter((platform) => !userSettings.enabledPlatforms[platform])
   if (hiddenPlatforms.length === 0) {
     closePanelSwitchMenu()
-    showToast('当前所有 AI 都已显示', 'info', 1800)
+    showToast(t(userSettings.language, 'panelMenu.allShown'), 'info', 1800)
     return
   }
   renderPanelAddMenu()
@@ -2586,14 +2637,14 @@ async function onSwitchPanel(source: AIPlatform, target: AIPlatform) {
     promptTemplateCustomizations: userSettings.promptTemplateCustomizations,
   }
 
-  await savePanelSettings(next, 'AI 面板位置已更新', '切换失败,请稍后重试')
+  await savePanelSettings(next, t(userSettings.language, 'panelMenu.updated'), t(userSettings.language, 'panelMenu.switchFailed'))
 }
 
 async function onAddPanel(platform: AIPlatform) {
   closePanelSwitchMenu()
   const enabledPlatforms = { ...userSettings.enabledPlatforms }
   if (enabledPlatformKeys().length >= MAX_ACTIVE_PLATFORMS) {
-    showToast(`最多同时显示 ${MAX_ACTIVE_PLATFORMS} 个 AI`, 'warn')
+    showToast(uiText('panelMenu.maxActive', { count: MAX_ACTIVE_PLATFORMS }), 'warn')
     return
   }
   enabledPlatforms[platform] = true
@@ -2603,13 +2654,13 @@ async function onAddPanel(platform: AIPlatform) {
     language: userSettings.language,
     promptTemplates: userSettings.promptTemplates,
     promptTemplateCustomizations: userSettings.promptTemplateCustomizations,
-  }, 'AI 面板已添加', '添加失败,请稍后重试')
+  }, t(userSettings.language, 'panelMenu.added'), t(userSettings.language, 'panelMenu.addFailed'))
 }
 
 async function onClosePanel(platform: AIPlatform) {
   const active = enabledPlatformKeys()
   if (active.length <= MIN_ACTIVE_PLATFORMS) {
-    showToast(`至少保留 ${MIN_ACTIVE_PLATFORMS} 个 AI`, 'warn')
+    showToast(uiText('panelMenu.minActive', { count: MIN_ACTIVE_PLATFORMS }), 'warn')
     return
   }
   const enabledPlatforms = { ...userSettings.enabledPlatforms, [platform]: false }
@@ -2619,7 +2670,7 @@ async function onClosePanel(platform: AIPlatform) {
     language: userSettings.language,
     promptTemplates: userSettings.promptTemplates,
     promptTemplateCustomizations: userSettings.promptTemplateCustomizations,
-  }, 'AI 面板已关闭', '关闭失败,请稍后重试')
+  }, t(userSettings.language, 'panelMenu.closed'), t(userSettings.language, 'panelMenu.closeFailed'))
 }
 
 function setupPanelSwitchButtons() {

@@ -246,7 +246,7 @@
       </header>
       <div class="conversation-body">
         <div class="conversation-list" id="conversation-list" aria-label="会话历史列表"></div>
-        <div class="conversation-note">只保存官方页面的会话链接和当时显示的 AI 状态，不保存 AI 回复正文。点击一条会话后，会还原面板并切回当时的官方会话页面。</div>
+        <div class="conversation-note" id="conversation-note">只保存官方页面的会话链接和当时显示的 AI 状态，不保存 AI 回复正文。点击一条会话后，会还原面板并切回当时的官方会话页面。</div>
       </div>
     </section>
   </div>
@@ -261,13 +261,13 @@
         <aside class="summary-list" id="summary-list" aria-label="选择要总结的历史记录"></aside>
         <main class="summary-options">
           <div class="summary-config">
-            <p class="summary-lead">默认选中最新一条历史。你可以勾选其它相关记录一起总结。</p>
+            <p class="summary-lead" id="summary-lead">默认选中最新一条历史。你可以勾选其它相关记录一起总结。</p>
             <label class="summary-field">
-              <span>总结目标</span>
+              <span id="summary-target-label">总结目标</span>
               <select id="summary-target"></select>
             </label>
             <label class="summary-field">
-              <span>总结方式</span>
+              <span id="summary-mode-label">总结方式</span>
               <select id="summary-mode">
                 <option value="final-answer">最终结论</option>
                 <option value="differences">只看分歧</option>
@@ -276,7 +276,7 @@
               </select>
             </label>
             <label class="summary-field transfer-target-field">
-              <span>参与总结的 AI</span>
+              <span id="summary-source-label">参与总结的 AI</span>
               <div class="transfer-target-list" id="summary-source-list" role="group" aria-label="参与总结的 AI"></div>
             </label>
             <div class="summary-selected" id="summary-selected">已选择 0 条历史</div>
@@ -286,7 +286,7 @@
             </div>
           </div>
           <section class="summary-preview" aria-label="已选择历史内容预览">
-            <h3>内容预览</h3>
+            <h3 id="summary-preview-title">内容预览</h3>
             <div id="summary-preview" class="summary-preview-list"></div>
           </section>
         </main>
