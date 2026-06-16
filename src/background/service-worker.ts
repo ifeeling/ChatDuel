@@ -12,6 +12,12 @@
 
 import { enableEmbedRules, disableEmbedRules } from './dnr-rules'
 import { SUPPORTED_PLATFORMS } from '../lib/ai-platforms'
+import {
+  REMOTE_SELECTOR_CONFIG_STORAGE_KEY,
+  REMOTE_SELECTOR_CONFIG_URL,
+  getStoredSelectorOverrides,
+  sanitizeRemoteSelectorConfig,
+} from '../lib/remote-selector-config'
 import type { AIPlatform } from '../types'
 
 const CHAT_PAGE_URL = 'src/chat/chat.html'
@@ -23,6 +29,7 @@ const PLATFORM_URL_PREFIXES: Record<AIPlatform, string[]> = {
 }
 
 const CHAT_TAB_IDS_KEY = 'chatTabIds'
+const SELECTOR_CONFIG_REFRESH_ALARM = 'selector-config-refresh'
 
 async function getChatTabIds(): Promise<Set<number>> {
   const r = await chrome.storage.session.get(CHAT_TAB_IDS_KEY)
@@ -60,12 +67,54 @@ async function broadcastToChatTabs(msg: unknown): Promise<void> {
   }
 }
 
+function scheduleSelectorConfigRefresh(): void {
+  chrome.alarms?.create(SELECTOR_CONFIG_REFRESH_ALARM, { periodInMinutes: 24 * 60 })
+}
+
+async function refreshRemoteSelectorConfig(): Promise<boolean> {
+  try {
+    const response = await fetch(REMOTE_SELECTOR_CONFIG_URL, {
+      method: 'GET',
+      cache: 'no-store',
+      headers: {
+        Accept: 'application/json',
+        'X-ChatDuel-Version': chrome.runtime.getManifest().version,
+      },
+    })
+    if (!response.ok) return false
+    const rawConfig = await response.json()
+    const config = sanitizeRemoteSelectorConfig(rawConfig)
+    if (!config) {
+      await chrome.storage.local.remove(REMOTE_SELECTOR_CONFIG_STORAGE_KEY)
+      return false
+    }
+    await chrome.storage.local.set({ [REMOTE_SELECTOR_CONFIG_STORAGE_KEY]: config })
+    return true
+  } catch (e) {
+    console.warn('[ChatDuel] remote selector config refresh failed', e)
+    return false
+  }
+}
+
 // ---------- 启动时的兜底清理 ----------
 // 之前会话可能崩溃 / beforeunload 没跑成功,先清掉旧的 DNR 规则
 chrome.runtime.onInstalled.addListener(() => {
+  scheduleSelectorConfigRefresh()
+  void refreshRemoteSelectorConfig()
   chrome.declarativeNetRequest
     .updateDynamicRules({ removeRuleIds: [1, 2] })
-    .catch((e) => console.warn('[AIChatRoom] startup cleanup failed', e))
+    .catch((e) => console.warn('[ChatDuel] startup cleanup failed', e))
+})
+
+chrome.runtime.onStartup.addListener(() => {
+  scheduleSelectorConfigRefresh()
+  void refreshRemoteSelectorConfig()
+})
+
+chrome.alarms?.onAlarm.addListener((alarm) => {
+  if (alarm.name === SELECTOR_CONFIG_REFRESH_ALARM) {
+    void refreshRemoteSelectorConfig()
+  }
 })
 
 // ---------- 工具栏图标点击 → 打开 chat 页 ----------
@@ -127,6 +176,18 @@ chrome.runtime.onMessage.addListener((msg: { type: string; [k: string]: unknown 
   if (msg.type === 'check-tab-exists') {
     findOfficialTab(msg.platform as AIPlatform)
       .then((tab) => sendResponse({ ok: true, exists: !!tab }))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }))
+    return true
+  }
+  if (msg.type === 'selector-config:get') {
+    getStoredSelectorOverrides(msg.platform as AIPlatform)
+      .then((selectors) => sendResponse({ ok: true, selectors }))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }))
+    return true
+  }
+  if (msg.type === 'selector-config:refresh') {
+    refreshRemoteSelectorConfig()
+      .then((ok) => sendResponse({ ok }))
       .catch((e) => sendResponse({ ok: false, error: String(e) }))
     return true
   }

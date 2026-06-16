@@ -1,8 +1,10 @@
 import type { AIAdapter } from '../base'
 import type { ConversationState, StreamEvent } from '../../types'
+import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 import selectorsJson from './selectors.json'
 
-const S = selectorsJson.selectors
+type GeminiSelectors = typeof selectorsJson.selectors
+const DEFAULT_SELECTORS = selectorsJson.selectors
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // gemini.google.com 的输入框是 div.ql-editor(Quill 富文本)。
@@ -192,7 +194,8 @@ async function waitForSendAccepted(editor: HTMLElement, maxMs = 700): Promise<bo
   return hasStopGeneratingButton() || !editorHasPendingContent(editor)
 }
 
-export function createGeminiAdapter(): AIAdapter {
+export function createGeminiAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter {
+  const S = mergeSelectorOverrides(DEFAULT_SELECTORS, selectorOverrides)
   let lastEventHandler: ((e: StreamEvent) => void) | null = null
   let observer: MutationObserver | null = null
   let dirty = false
@@ -222,7 +225,7 @@ export function createGeminiAdapter(): AIAdapter {
 
   function startContinuePolling() {
     continuePollTimer = setInterval(() => {
-      const btn = q(selectorsJson.selectors.continueButton)
+      const btn = q(S.continueButton)
       const hasButton = !!btn
       if (hasButton && !lastContinueButtonState) {
         lastContinueButtonState = true
@@ -292,7 +295,7 @@ export function createGeminiAdapter(): AIAdapter {
     getConversationState(): Promise<ConversationState> {
       const lastText = last(S.lastResponse)?.textContent ?? ''
       if (hasStopGeneratingButton()) return Promise.resolve({ status: 'streaming', lastResponse: lastText })
-      if (q(selectorsJson.selectors.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText })
+      if (q(S.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText })
       if (!lastText) return Promise.resolve({ status: 'idle' })
       return Promise.resolve({ status: 'finished', lastResponse: lastText })
     },

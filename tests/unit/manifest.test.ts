@@ -26,4 +26,8 @@ describe('manifest', () => {
     expect(doubaoScript?.matches).toEqual(['https://doubao.com/*', 'https://www.doubao.com/*'])
     expect(doubaoScript?.all_frames).toBe(true)
   })
+
+  it('allows fetching selector config from the ChatDuel backend only', () => {
+    expect(manifest.host_permissions).toContain('https://pipeline.happydata.com.cn/*')
+  })
 })

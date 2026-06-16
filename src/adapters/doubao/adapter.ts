@@ -1,15 +1,16 @@
 import type { AIAdapter } from '../base'
 import type { ConversationState, StreamEvent } from '../../types'
 import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
+import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 
-const INPUT_SELECTORS = [
+const DEFAULT_INPUT_SELECTORS = [
   'textarea[placeholder*="发消息"]',
   'textarea',
   '[contenteditable="true"]',
   '[role="textbox"]',
 ]
 
-const SEND_BUTTON_SELECTORS = [
+const DEFAULT_SEND_BUTTON_SELECTORS = [
   'button[aria-label*="发送"]',
   'button[title*="发送"]',
   'button[type="submit"]',
@@ -17,7 +18,7 @@ const SEND_BUTTON_SELECTORS = [
   '[role="button"][title*="发送"]',
 ]
 
-const RESPONSE_SELECTORS = [
+const DEFAULT_RESPONSE_SELECTORS = [
   '[data-testid*="assistant" i]',
   '[data-testid*="answer" i]',
   '[data-testid*="message" i]',
@@ -40,6 +41,19 @@ const RESPONSE_EXCLUDE_ANCESTORS = [
   '[role="button"]',
   '[contenteditable="true"]',
 ].join(',')
+
+interface DoubaoSelectors {
+  [key: string]: string[]
+  inputBox: string[]
+  sendButton: string[]
+  response: string[]
+}
+
+const DEFAULT_SELECTORS: DoubaoSelectors = {
+  inputBox: DEFAULT_INPUT_SELECTORS,
+  sendButton: DEFAULT_SEND_BUTTON_SELECTORS,
+  response: DEFAULT_RESPONSE_SELECTORS,
+}
 
 export interface DoubaoAttachmentProbeResult {
   inputFound: boolean
@@ -113,8 +127,8 @@ async function attachImageToFileInput(file: File): Promise<boolean> {
   return true
 }
 
-async function pasteImageIntoComposer(file: File): Promise<boolean> {
-  const box = queryFirst<HTMLElement>(INPUT_SELECTORS)
+async function pasteImageIntoComposer(file: File, selectors: DoubaoSelectors): Promise<boolean> {
+  const box = queryFirst<HTMLElement>(selectors.inputBox)
   if (!box) return false
   const scope = composerScope(box)
   const baseline = attachmentEvidenceCount(scope, file)
@@ -139,15 +153,15 @@ function writeEditableValue(el: HTMLElement, text: string): void {
   el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }))
 }
 
-function findSendControl(): HTMLElement | null {
-  const direct = queryFirst<HTMLElement>(SEND_BUTTON_SELECTORS)
+function findSendControl(selectors: DoubaoSelectors): HTMLElement | null {
+  const direct = queryFirst<HTMLElement>(selectors.sendButton)
   if (direct) return direct
 
   const controls = [...document.querySelectorAll<HTMLElement>('button, [role="button"]')]
   const textButton = controls.find((button) => /发送|send/i.test(button.textContent ?? ''))
   if (textButton) return textButton
 
-  const input = queryFirst<HTMLElement>(INPUT_SELECTORS)
+  const input = queryFirst<HTMLElement>(selectors.inputBox)
   if (!input) return null
   let scope: HTMLElement | null = input.parentElement
   for (let depth = 0; scope && depth < 5; depth += 1, scope = scope.parentElement) {
@@ -199,8 +213,9 @@ function fileInputAccepts(input: HTMLInputElement, patterns: RegExp[]): boolean 
   return patterns.some((pattern) => pattern.test(accept))
 }
 
-export function probeDoubaoAttachmentControls(): DoubaoAttachmentProbeResult {
-  const inputFound = !!queryFirst(INPUT_SELECTORS)
+export function probeDoubaoAttachmentControls(selectorOverrides?: SelectorOverrideMap): DoubaoAttachmentProbeResult {
+  const selectors = mergeSelectorOverrides(DEFAULT_SELECTORS, selectorOverrides) as DoubaoSelectors
+  const inputFound = !!queryFirst(selectors.inputBox)
   const fileInputs = [...document.querySelectorAll<HTMLInputElement>('input[type="file"]')]
   const explicitFileInputFound = fileInputs.length > 0
   const imageFileInputFound = fileInputs.some((input) => fileInputAccepts(input, [/image\/\*/, /image\//, /\.png/, /\.jpe?g/, /\.webp/, /\.gif/]))
@@ -276,9 +291,9 @@ function responseCandidateScore(el: HTMLElement): number {
   return score
 }
 
-function getLatestResponseText(): string {
+function getLatestResponseText(selectors: DoubaoSelectors): string {
   const seen = new Set<string>()
-  const candidates = [...document.querySelectorAll<HTMLElement>(RESPONSE_SELECTORS.join(','))]
+  const candidates = [...document.querySelectorAll<HTMLElement>(selectors.response.join(','))]
     .filter((el) => !isHidden(el))
     .filter((el) => !el.closest(RESPONSE_EXCLUDE_ANCESTORS))
     .filter((el) => !isUserMessage(el))
@@ -297,16 +312,17 @@ function getLatestResponseText(): string {
   return candidates[candidates.length - 1]?.text ?? ''
 }
 
-export function createDoubaoAdapter(): AIAdapter {
+export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter {
+  const selectors = mergeSelectorOverrides(DEFAULT_SELECTORS, selectorOverrides) as DoubaoSelectors
   let lastEventHandler: ((e: StreamEvent) => void) | null = null
 
   return {
     async isLoggedIn() {
-      return !!queryFirst(INPUT_SELECTORS)
+      return !!queryFirst(selectors.inputBox)
     },
 
     async writeText(text: string) {
-      const box = queryFirst<HTMLElement>(INPUT_SELECTORS)
+      const box = queryFirst<HTMLElement>(selectors.inputBox)
       if (!box) throw new Error('doubao input box not found')
       if (box instanceof HTMLTextAreaElement) {
         writeNativeTextareaValue(box, text)
@@ -316,13 +332,13 @@ export function createDoubaoAdapter(): AIAdapter {
     },
 
     async triggerSend() {
-      const btn = findSendControl()
+      const btn = findSendControl(selectors)
       if (btn) {
         if (btn instanceof HTMLButtonElement && btn.disabled) btn.disabled = false
         activateControl(btn)
         return
       }
-      const box = queryFirst<HTMLElement>(INPUT_SELECTORS)
+      const box = queryFirst<HTMLElement>(selectors.inputBox)
       if (!box) throw new Error('doubao send button not found')
       dispatchEnter(box)
     },
@@ -337,18 +353,18 @@ export function createDoubaoAdapter(): AIAdapter {
 
     async attachImage(file: File) {
       if (await attachImageToFileInput(file)) return
-      if (await pasteImageIntoComposer(file)) return
-      const probe = probeDoubaoAttachmentControls()
+      if (await pasteImageIntoComposer(file, selectors)) return
+      const probe = probeDoubaoAttachmentControls(selectorOverrides)
       throw new Error(`doubao image upload failed: ${probe.reason}`)
     },
 
     async getLastResponse() {
-      return getLatestResponseText()
+      return getLatestResponseText(selectors)
     },
 
     async getConversationState(): Promise<ConversationState> {
-      if (!queryFirst(INPUT_SELECTORS)) return { status: 'error', errorMessage: '豆包输入框未识别' }
-      const lastResponse = getLatestResponseText()
+      if (!queryFirst(selectors.inputBox)) return { status: 'error', errorMessage: '豆包输入框未识别' }
+      const lastResponse = getLatestResponseText(selectors)
       if (lastResponse) return { status: 'finished', lastResponse }
       return { status: 'idle' }
     },

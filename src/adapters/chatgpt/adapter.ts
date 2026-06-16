@@ -1,8 +1,10 @@
 import type { AIAdapter } from '../base'
 import type { ConversationState, StreamEvent } from '../../types'
+import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 import selectorsJson from './selectors.json'
 
-const S = selectorsJson.selectors
+type ChatGPTSelectors = typeof selectorsJson.selectors
+const DEFAULT_SELECTORS = selectorsJson.selectors
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // chatgpt.com 的输入框是 contenteditable div(ProseMirror/TipTap 风格),
@@ -125,8 +127,8 @@ function isButtonDisabled(btn: HTMLButtonElement): boolean {
   return btn.disabled || btn.getAttribute('aria-disabled') === 'true' || btn.dataset.disabled === 'true'
 }
 
-function composerHasPendingContent(): boolean {
-  const box = document.querySelector<HTMLElement>(S.inputBox)
+function composerHasPendingContent(selectors: ChatGPTSelectors): boolean {
+  const box = document.querySelector<HTMLElement>(selectors.inputBox)
   const text = box?.textContent?.replace(/\u200b/g, '').trim() ?? ''
   const hasAttachmentPreview = !!document.querySelector(
     [
@@ -140,26 +142,27 @@ function composerHasPendingContent(): boolean {
   return text.length > 0 || hasAttachmentPreview
 }
 
-async function waitForSendButtonReady(maxMs = 8000): Promise<HTMLButtonElement> {
+async function waitForSendButtonReady(selectors: ChatGPTSelectors, maxMs = 8000): Promise<HTMLButtonElement> {
   const start = Date.now()
   while (Date.now() - start < maxMs) {
-    const btn = document.querySelector<HTMLButtonElement>(S.sendButton)
+    const btn = document.querySelector<HTMLButtonElement>(selectors.sendButton)
     if (btn && !isButtonDisabled(btn)) return btn
     await sleep(100)
   }
   throw new Error('send button is not ready')
 }
 
-async function waitForSendAccepted(maxMs = 700): Promise<boolean> {
+async function waitForSendAccepted(selectors: ChatGPTSelectors, maxMs = 700): Promise<boolean> {
   const start = Date.now()
   while (Date.now() - start < maxMs) {
-    if (hasStopGeneratingButton() || !composerHasPendingContent()) return true
+    if (hasStopGeneratingButton() || !composerHasPendingContent(selectors)) return true
     await sleep(100)
   }
-  return hasStopGeneratingButton() || !composerHasPendingContent()
+  return hasStopGeneratingButton() || !composerHasPendingContent(selectors)
 }
 
-export function createChatGPTAdapter(): AIAdapter {
+export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter {
+  const S = mergeSelectorOverrides(DEFAULT_SELECTORS, selectorOverrides)
   let lastEventHandler: ((e: StreamEvent) => void) | null = null
   let observer: MutationObserver | null = null
   let dirty = false
@@ -189,7 +192,7 @@ export function createChatGPTAdapter(): AIAdapter {
 
   function startContinuePolling() {
     continuePollTimer = setInterval(() => {
-      const btn = q(selectorsJson.selectors.continueButton)
+      const btn = q(S.continueButton)
       const hasButton = !!btn
       if (hasButton && !lastContinueButtonState) {
         lastContinueButtonState = true
@@ -212,7 +215,7 @@ export function createChatGPTAdapter(): AIAdapter {
     },
 
     async triggerSend() {
-      const btn = await waitForSendButtonReady()
+      const btn = await waitForSendButtonReady(S)
       btn.click()
     },
 
@@ -229,7 +232,7 @@ export function createChatGPTAdapter(): AIAdapter {
       // 给 React/ProseMirror 一个微任务让状态更新,再点发送按钮
       for (let attempt = 0; attempt < 3; attempt += 1) {
         await this.triggerSend()
-        if (await waitForSendAccepted()) return
+        if (await waitForSendAccepted(S)) return
         await sleep(250)
       }
       throw new Error('message was not accepted by ChatGPT composer')
@@ -247,7 +250,7 @@ export function createChatGPTAdapter(): AIAdapter {
     getConversationState(): Promise<ConversationState> {
       const lastText = last(S.lastResponse)?.textContent ?? ''
       if (hasStopGeneratingButton()) return Promise.resolve({ status: 'streaming', lastResponse: lastText })
-      if (q(selectorsJson.selectors.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText })
+      if (q(S.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText })
       if (!lastText) return Promise.resolve({ status: 'idle' })
       return Promise.resolve({ status: 'finished', lastResponse: lastText })
     },
