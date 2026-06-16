@@ -50,7 +50,7 @@ describe('history-format', () => {
       prompt: '你好 / Gemini?',
     })
 
-    expect(report.filename).toBe('AIChatRoom-你好-Gemini.md')
+    expect(report.filename).toBe('ChatDuel-你好-Gemini.md')
     expect(report.mime).toBe('text/markdown;charset=utf-8')
     expect(report.content).toContain('# 你好 / Gemini?')
   })

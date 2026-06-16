@@ -3,11 +3,20 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const manifest = JSON.parse(readFileSync(resolve(__dirname, '../../manifest.json'), 'utf8')) as {
+  name: string
+  description: string
+  action: { default_title: string }
   host_permissions: string[]
   content_scripts: Array<{ matches: string[]; js: string[]; all_frames?: boolean }>
 }
 
 describe('manifest', () => {
+  it('uses the ChatDuel marketplace-facing name', () => {
+    expect(manifest.name).toBe('ChatDuel')
+    expect(manifest.action.default_title).toBe('ChatDuel')
+    expect(manifest.description).toContain('Split-screen multi-AI comparison workspace')
+  })
+
   it('declares doubao host permissions and content script probe', () => {
     expect(manifest.host_permissions).toContain('https://doubao.com/*')
     expect(manifest.host_permissions).toContain('https://www.doubao.com/*')

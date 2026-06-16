@@ -1,4 +1,7 @@
-# AIChatRoom
+# ChatDuel
+
+**English full name:** ChatDuel - Split-Screen Multi-AI Comparison Workspace  
+**中文完整名：** ChatDuel - 多 AI 同步问答与横向对比工具
 
 Chrome 扩展，用来在一个页面里同时对比 ChatGPT、Gemini、豆包的回答。它不是 API 聚合器，不需要 API Key，而是嵌入用户已经登录的官方网页来操作。
 

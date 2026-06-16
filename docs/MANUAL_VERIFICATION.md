@@ -1,4 +1,4 @@
-# AIChatRoom v1 端到端验收清单
+# ChatDuel v1 端到端验收清单
 
 > 跑通下面所有项即认为 v1 达成。
 > 涉及真实 ChatGPT / Gemini 的项目需要用户登录 + 在浏览器里手动验证。
@@ -13,7 +13,7 @@
 - [ ] 打开 `chrome://extensions`
 - [ ] 开启"开发者模式"
 - [ ] "加载已解压的扩展" → 选择 `dist/` 目录
-- [ ] 扩展出现在列表里，名称"AIChatRoom"
+- [ ] 扩展出现在列表里，名称"ChatDuel"
 
 ## 真实页面验证
 - [ ] 打开 `https://chatgpt.com`，登录

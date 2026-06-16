@@ -91,7 +91,7 @@ export function formatSessionMarkdown(session: Session): string {
 
 export function buildSessionMarkdownExport(session: Session): { filename: string; mime: string; content: string } {
   return {
-    filename: `AIChatRoom-${safeFilename(session.prompt)}.md`,
+    filename: `ChatDuel-${safeFilename(session.prompt)}.md`,
     mime: 'text/markdown;charset=utf-8',
     content: formatSessionMarkdown(session),
   }
