@@ -52,3 +52,5 @@ npm run typecheck
 
 - 设计文档：`docs/superpowers/specs/2026-06-08-aichatroom-design.md`
 - 实施计划：`docs/superpowers/plans/2026-06-08-aichatroom-impl.md`
+- 隐私政策草稿：`docs/store/privacy-policy.md`
+- Chrome / Edge 上架材料草稿：`docs/store/chrome-edge-listing.md`

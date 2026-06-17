@@ -24,7 +24,7 @@
     "https://gemini.google.com/*",
     "https://doubao.com/*",
     "https://www.doubao.com/*",
-    "https://chatduel.happydata.com.cn/*"
+    "https://chatduel.ifeeling.app/*"
   ],
   "content_scripts": [
     {

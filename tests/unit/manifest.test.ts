@@ -28,6 +28,6 @@ describe('manifest', () => {
   })
 
   it('allows fetching selector config from the ChatDuel backend only', () => {
-    expect(manifest.host_permissions).toContain('https://chatduel.happydata.com.cn/*')
+    expect(manifest.host_permissions).toContain('https://chatduel.ifeeling.app/*')
   })
 })
