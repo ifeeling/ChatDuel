@@ -147,6 +147,27 @@ const DEFAULT_PROMPT_CUSTOMIZATIONS: UserPromptTemplateCustomizations = {
   summaryOpinionDigest: false,
 }
 
+const BROWSER_LANGUAGE_FALLBACKS: Record<string, UserLanguage> = {
+  zh: 'zh-CN',
+  en: 'en-US',
+  fr: 'fr-FR',
+  de: 'de-DE',
+  sv: 'sv-SE',
+  nb: 'nb-NO',
+  no: 'nb-NO',
+  nl: 'nl-NL',
+}
+
+function normalizeBrowserLanguage(language: string | undefined): UserLanguage {
+  if (isSupportedLanguage(language)) return language
+  const languagePrefix = language?.split('-')[0]?.toLowerCase()
+  return BROWSER_LANGUAGE_FALLBACKS[languagePrefix ?? ''] ?? DEFAULT_USER_SETTINGS.language
+}
+
+function getDefaultLanguage(): UserLanguage {
+  return normalizeBrowserLanguage(chrome.i18n?.getUILanguage?.())
+}
+
 function isKnownDefaultPromptTemplate(key: UserPromptTemplateKey, value: string): boolean {
   return SUPPORTED_LANGUAGE_CODES.some((language) => getDefaultUserPromptTemplates(language)[key] === value)
 }
@@ -218,7 +239,7 @@ function normalizeSettings(value: PartialUserSettings | undefined): UserSettings
   const platformOrder = normalizePlatformOrder(value?.platformOrder)
   const language = isSupportedLanguage(value?.language)
     ? value.language
-    : DEFAULT_USER_SETTINGS.language
+    : getDefaultLanguage()
   const defaultPromptTemplates = getDefaultUserPromptTemplates(language)
   const providedPromptTemplates = value?.promptTemplates ?? {}
   const promptTemplateCustomizations = normalizePromptTemplateCustomizations(

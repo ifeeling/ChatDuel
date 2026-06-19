@@ -4,6 +4,9 @@ import { DEFAULT_USER_SETTINGS, getDefaultUserPromptTemplates, loadUserSettings,
 beforeEach(() => {
   const store: Record<string, unknown> = {}
   vi.stubGlobal('chrome', {
+    i18n: {
+      getUILanguage: vi.fn(() => 'zh-CN'),
+    },
     storage: {
       local: {
         get: vi.fn(async (key: string) => ({ [key]: store[key] })),
@@ -18,6 +21,24 @@ beforeEach(() => {
 describe('user-settings', () => {
   it('loads defaults when no settings are saved', async () => {
     await expect(loadUserSettings()).resolves.toEqual(DEFAULT_USER_SETTINGS)
+  })
+
+  it('uses the browser language when no language has been saved', async () => {
+    vi.mocked(chrome.i18n.getUILanguage).mockReturnValue('en-US')
+
+    await expect(loadUserSettings()).resolves.toMatchObject({
+      language: 'en-US',
+      promptTemplates: getDefaultUserPromptTemplates('en-US'),
+    })
+  })
+
+  it('keeps the saved language instead of the browser language', async () => {
+    vi.mocked(chrome.i18n.getUILanguage).mockReturnValue('en-US')
+
+    const saved = await saveUserSettings({ language: 'fr-FR' })
+
+    expect(saved.language).toBe('fr-FR')
+    await expect(loadUserSettings()).resolves.toMatchObject({ language: 'fr-FR' })
   })
 
   it('saves enabled platform preferences', async () => {
