@@ -50,6 +50,7 @@ describe('chat.html', () => {
     expect(document.querySelector('#conversation-list')).toBeTruthy()
     expect(document.querySelector('#conversation-title')?.textContent).toBe('官网会话')
     expect(document.querySelector('#btn-conversation-close')).toBeTruthy()
+    expect(css).toContain('.conversation-rename')
   })
 
   it('renders enabled help content in settings', () => {

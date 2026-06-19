@@ -1061,7 +1061,7 @@ body { overflow: hidden; }
   width: 100%;
   min-height: 64px;
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr auto auto auto;
   align-items: center;
   gap: 14px;
   padding: 12px 14px;
@@ -1107,6 +1107,20 @@ body { overflow: hidden; }
   background: transparent;
   color: var(--muted);
   cursor: pointer;
+}
+.conversation-rename {
+  height: 30px;
+  min-width: 38px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.conversation-rename:hover {
+  border-color: rgba(80, 140, 255, 0.35);
+  color: var(--accent);
+  background: rgba(80, 140, 255, 0.12);
 }
 .conversation-delete:hover {
   border-color: rgba(239, 68, 68, 0.35);

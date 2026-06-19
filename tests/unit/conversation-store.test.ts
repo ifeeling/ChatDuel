@@ -3,6 +3,7 @@ import {
   deleteConversation,
   isSpecificConversationUrl,
   loadConversations,
+  renameConversation,
   upsertConversation,
 } from '../../src/lib/conversation-store'
 import type { ConversationEntry } from '../../src/types'
@@ -89,5 +90,19 @@ describe('conversation-store', () => {
     await deleteConversation('c1')
 
     await expect(loadConversations()).resolves.toEqual([])
+  })
+
+  it('renames a conversation by id without changing official urls', async () => {
+    await upsertConversation(makeConversation('c1', '旧标题', 'https://chatgpt.com/c/one'))
+
+    const renamed = await renameConversation('c1', '  新标题  ', 2000)
+
+    expect(renamed).toMatchObject({
+      id: 'c1',
+      title: '新标题',
+      updatedAt: 2000,
+      platformUrls: { chatgpt: 'https://chatgpt.com/c/one' },
+    })
+    await expect(loadConversations()).resolves.toMatchObject([{ title: '新标题' }])
   })
 })

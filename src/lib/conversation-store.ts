@@ -89,3 +89,21 @@ export async function deleteConversation(id: string): Promise<void> {
   const all = await getRaw()
   await setRaw(all.filter((item) => item.id !== id))
 }
+
+export async function renameConversation(id: string, title: string, now = Date.now()): Promise<ConversationEntry | null> {
+  const nextTitle = title.trim()
+  if (!nextTitle) return null
+
+  const all = await getRaw()
+  const idx = all.findIndex((item) => item.id === id)
+  if (idx < 0) return null
+
+  const renamed: ConversationEntry = {
+    ...all[idx],
+    title: nextTitle,
+    updatedAt: now,
+  }
+  all[idx] = renamed
+  await setRaw(trimConversations(all))
+  return renamed
+}

@@ -86,7 +86,7 @@ import { evaluateResponseCapture, isResponseCompleteForUnlock, type ResponseCapt
 import { buildTransferContent, buildTransferSourceOptions, type TransferSourceOption } from '../lib/transfer-source'
 import { bindComposerFocusRestorer } from '../lib/focus-restore'
 import { filterSessionsByTitle } from '../lib/history-search'
-import { deleteConversation, isSpecificConversationUrl, loadConversations, upsertConversation } from '../lib/conversation-store'
+import { deleteConversation, isSpecificConversationUrl, loadConversations, renameConversation, upsertConversation } from '../lib/conversation-store'
 
 // ---------- DOM 引用 ----------
 const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => document.querySelector<T>(sel)!
@@ -2141,6 +2141,16 @@ function renderConversationList() {
     time.className = 'conversation-item-time'
     time.textContent = formatTime(entry.updatedAt)
 
+    const renameBtn = document.createElement('button')
+    renameBtn.type = 'button'
+    renameBtn.className = 'conversation-rename'
+    renameBtn.title = t(userSettings.language, 'conversation.renameTitle')
+    renameBtn.textContent = t(userSettings.language, 'conversation.renameShort')
+    renameBtn.addEventListener('click', (event) => {
+      event.stopPropagation()
+      void renameConversationEntry(entry)
+    })
+
     const deleteBtn = document.createElement('button')
     deleteBtn.type = 'button'
     deleteBtn.className = 'conversation-delete'
@@ -2151,10 +2161,21 @@ function renderConversationList() {
       void deleteConversationEntry(entry.id)
     })
 
-    item.append(main, time, deleteBtn)
+    item.append(main, time, renameBtn, deleteBtn)
     item.addEventListener('click', () => void restoreConversation(entry))
     conversationList.appendChild(item)
   }
+}
+
+async function renameConversationEntry(entry: ConversationEntry) {
+  const nextTitle = prompt(t(userSettings.language, 'conversation.renamePrompt'), entry.title)?.trim()
+  if (!nextTitle || nextTitle === entry.title) return
+
+  const renamed = await renameConversation(entry.id, nextTitle)
+  if (!renamed) return
+  conversationEntries = conversationEntries.map((item) => (item.id === renamed.id ? renamed : item))
+  renderConversationList()
+  showToast(t(userSettings.language, 'conversation.renameSuccess'), 'success', 1600)
 }
 
 async function deleteConversationEntry(id: string) {
