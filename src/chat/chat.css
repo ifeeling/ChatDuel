@@ -220,6 +220,10 @@ body { overflow: hidden; }
 }
 #input::placeholder { color: var(--muted); }
 #input:focus { outline: none; }
+#input:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
 
 #btn-send {
   background: var(--accent);
@@ -229,13 +233,40 @@ body { overflow: hidden; }
   height: 36px;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 19px;
-  font-weight: 700;
   line-height: 1;
-  padding: 0 0 0 2px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.send-icon {
+  width: 21px;
+  height: 21px;
+  stroke: currentColor;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+.send-icon-stop { display: none; }
+#btn-send[data-icon="stop"] .send-icon-send { display: none; }
+#btn-send[data-icon="stop"] .send-icon-stop { display: block; }
+#btn-send[data-icon="stop"] .send-icon-stop rect {
+  fill: currentColor;
+  stroke: none;
 }
 #btn-send:hover { background: #3d75e0; }
 #btn-send:disabled { background: #555; cursor: not-allowed; }
+#btn-send.empty {
+  background: #555;
+  color: rgba(255, 255, 255, 0.72);
+}
+#btn-send.waiting-response {
+  background: #555;
+  cursor: pointer;
+  opacity: 0.9;
+}
+#btn-send.waiting-response:hover { background: #666; }
 /* 输入框左边的工具按钮,参考 Gemini/ChatGPT */
 .input-add-btn,
 .input-tool-btn {

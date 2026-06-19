@@ -171,13 +171,8 @@ async function waitForUploadReady(maxMs = 3000): Promise<void> {
   }
 }
 
-function hasStopGeneratingButton(): boolean {
-  const candidates = [
-    "button[aria-label*='stop' i]",
-    "button[aria-label*='停止' i]",
-    'button.stop',
-  ]
-  return candidates.some((selector) => !!document.querySelector(selector))
+function hasStopGeneratingButton(selectors: GeminiSelectors): boolean {
+  return !!document.querySelector(selectors.stopButton)
 }
 
 function editorHasPendingContent(editor: HTMLElement): boolean {
@@ -185,13 +180,13 @@ function editorHasPendingContent(editor: HTMLElement): boolean {
   return text.length > 0 || !!editor.querySelector('img')
 }
 
-async function waitForSendAccepted(editor: HTMLElement, maxMs = 700): Promise<boolean> {
+async function waitForSendAccepted(editor: HTMLElement, selectors: GeminiSelectors, maxMs = 700): Promise<boolean> {
   const start = Date.now()
   while (Date.now() - start < maxMs) {
-    if (hasStopGeneratingButton() || !editorHasPendingContent(editor)) return true
+    if (hasStopGeneratingButton(selectors) || !editorHasPendingContent(editor)) return true
     await sleep(100)
   }
-  return hasStopGeneratingButton() || !editorHasPendingContent(editor)
+  return hasStopGeneratingButton(selectors) || !editorHasPendingContent(editor)
 }
 
 export function createGeminiAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter {
@@ -253,7 +248,7 @@ export function createGeminiAdapter(selectorOverrides?: SelectorOverrideMap): AI
       if (box) {
         for (let attempt = 0; attempt < 3; attempt += 1) {
           dispatchEnterKey(box)
-          if (await waitForSendAccepted(box)) return
+          if (await waitForSendAccepted(box, S)) return
           await sleep(250)
         }
         throw new Error('message was not accepted by Gemini editor')
@@ -294,7 +289,7 @@ export function createGeminiAdapter(selectorOverrides?: SelectorOverrideMap): AI
 
     getConversationState(): Promise<ConversationState> {
       const lastText = last(S.lastResponse)?.textContent ?? ''
-      if (hasStopGeneratingButton()) return Promise.resolve({ status: 'streaming', lastResponse: lastText })
+      if (hasStopGeneratingButton(S)) return Promise.resolve({ status: 'streaming', lastResponse: lastText })
       if (q(S.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText })
       if (!lastText) return Promise.resolve({ status: 'idle' })
       return Promise.resolve({ status: 'finished', lastResponse: lastText })

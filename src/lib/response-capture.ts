@@ -51,3 +51,10 @@ export function evaluateResponseCapture(
     progress: { lastText: text, stableCount },
   }
 }
+
+export function isResponseCompleteForUnlock(probe: ResponseProbe, baseline: string | undefined): boolean {
+  const text = probe.text?.trim() ?? ''
+  const baselineText = baseline?.trim() ?? ''
+  const isActive = probe.status ? ACTIVE_STATUSES.includes(probe.status) : false
+  return !!text && text !== baselineText && !isActive
+}

@@ -9,6 +9,7 @@
     "userMessage": "user-query",
     "rateLimitToast": "[role='alert']",
     "continueButton": "button[aria-label*='Continue' i]",
+    "stopButton": "button[aria-label*='stop' i], button[aria-label*='停止' i], button.stop",
     "loggedIn": "[aria-label*='Google Account' i], img[alt*='avatar' i]",
     "fileInput": "input[type='file'][accept='image/*']"
   }

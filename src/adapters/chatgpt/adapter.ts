@@ -114,13 +114,8 @@ async function waitForUploadReady(maxMs = 3000): Promise<void> {
   }
 }
 
-function hasStopGeneratingButton(): boolean {
-  const candidates = [
-    "button[data-testid='stop-button']",
-    "button[aria-label*='stop' i]",
-    "button[aria-label*='停止' i]",
-  ]
-  return candidates.some((selector) => !!document.querySelector(selector))
+function hasStopGeneratingButton(selectors: ChatGPTSelectors): boolean {
+  return !!document.querySelector(selectors.stopButton)
 }
 
 function isButtonDisabled(btn: HTMLButtonElement): boolean {
@@ -155,10 +150,10 @@ async function waitForSendButtonReady(selectors: ChatGPTSelectors, maxMs = 8000)
 async function waitForSendAccepted(selectors: ChatGPTSelectors, maxMs = 700): Promise<boolean> {
   const start = Date.now()
   while (Date.now() - start < maxMs) {
-    if (hasStopGeneratingButton() || !composerHasPendingContent(selectors)) return true
+    if (hasStopGeneratingButton(selectors) || !composerHasPendingContent(selectors)) return true
     await sleep(100)
   }
-  return hasStopGeneratingButton() || !composerHasPendingContent(selectors)
+  return hasStopGeneratingButton(selectors) || !composerHasPendingContent(selectors)
 }
 
 export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter {
@@ -249,7 +244,7 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
 
     getConversationState(): Promise<ConversationState> {
       const lastText = last(S.lastResponse)?.textContent ?? ''
-      if (hasStopGeneratingButton()) return Promise.resolve({ status: 'streaming', lastResponse: lastText })
+      if (hasStopGeneratingButton(S)) return Promise.resolve({ status: 'streaming', lastResponse: lastText })
       if (q(S.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText })
       if (!lastText) return Promise.resolve({ status: 'idle' })
       return Promise.resolve({ status: 'finished', lastResponse: lastText })

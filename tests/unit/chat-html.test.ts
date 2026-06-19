@@ -109,6 +109,27 @@ describe('chat.html', () => {
     expect(css).toContain('.composer-textbox:focus-within')
   })
 
+  it('does not render a separate send lock control', () => {
+    document.body.innerHTML = html
+
+    expect(document.querySelector('#btn-send-lock')).toBeNull()
+    expect(css).not.toContain('#btn-send-lock')
+    expect(css).toContain('#btn-send.waiting-response')
+    expect(css).toContain('#btn-send.empty')
+  })
+
+  it('uses SVG icons for send and stop states', () => {
+    document.body.innerHTML = html
+
+    const sendButton = document.querySelector<HTMLButtonElement>('#btn-send')
+
+    expect(sendButton?.dataset.icon).toBe('send')
+    expect(sendButton?.querySelector('.send-icon-send')).toBeTruthy()
+    expect(sendButton?.querySelector('.send-icon-stop')).toBeTruthy()
+    expect(sendButton?.textContent?.trim()).toBe('')
+    expect(css).toContain('#btn-send[data-icon="stop"]')
+  })
+
   it('does not show unverified capability hints in the Doubao site row', () => {
     document.body.innerHTML = html
 

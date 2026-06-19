@@ -20,6 +20,7 @@ describe('remote selector config', () => {
         chatgpt: {
           selectors: {
             inputBox: '#composer',
+            stopButton: 'button[data-testid="stop-button"]',
             unknownKey: '.should-not-pass',
           },
         },
@@ -32,6 +33,7 @@ describe('remote selector config', () => {
     }, NOW)
 
     expect(config?.platforms.chatgpt?.selectors.inputBox).toBe('#composer')
+    expect(config?.platforms.chatgpt?.selectors.stopButton).toBe('button[data-testid="stop-button"]')
     expect(config?.platforms.chatgpt?.selectors).not.toHaveProperty('unknownKey')
     expect(config?.platforms.doubao?.selectors.inputBox).toEqual(['textarea', '[role="textbox"]'])
   })

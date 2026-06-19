@@ -60,6 +60,7 @@ import {
   type UserSettings,
 } from '../lib/user-settings'
 import { t, type UserLanguage } from '../lib/i18n'
+import { getSendButtonState } from '../lib/send-button-state'
 import { addSession, deleteSession, getSession, loadSessions, updateSession } from '../lib/session-store'
 import {
   applyCapturedResponses,
@@ -68,9 +69,20 @@ import {
   createSummarySessionRecord,
   isNewCapturedResponse,
 } from '../lib/session-record'
+import {
+  SEND_LOCK_TIMEOUT_MS,
+  createSendLock,
+  markSendLockSubmitted,
+  markSendLockPlatformDone,
+  markSendLockTimedOut,
+  markSendLockUnlocked,
+  shouldUnlockInsteadOfSend,
+  shouldSendLockTimeout,
+  type SendLockState,
+} from '../lib/send-lock'
 import { buildSessionMarkdownExport, formatBytes, formatCapturedMarkdownText, formatSessionMarkdown } from '../lib/history-format'
 import { buildSummaryPrompt } from '../lib/summary-builder'
-import { evaluateResponseCapture, type ResponseCaptureProgress } from '../lib/response-capture'
+import { evaluateResponseCapture, isResponseCompleteForUnlock, type ResponseCaptureProgress } from '../lib/response-capture'
 import { buildTransferContent, buildTransferSourceOptions, type TransferSourceOption } from '../lib/transfer-source'
 import { bindComposerFocusRestorer } from '../lib/focus-restore'
 import { filterSessionsByTitle } from '../lib/history-search'
@@ -170,6 +182,9 @@ const selectedSummaryIds: Set<string> = new Set()
 const selectedSummaryPlatforms: Set<AIPlatform> = new Set()
 let transferSourcePlatform: AIPlatform | null = null
 let transferSourceOptions: TransferSourceOption[] = []
+let currentSendLock: SendLockState | null = null
+let sendLockTimer: ReturnType<typeof setTimeout> | null = null
+let originalInputPlaceholder = inputEl.placeholder
 
 // 待发送的附件(仅支持 1 个,后续 attach 会替换)
 interface PendingAttachment {
@@ -221,6 +236,8 @@ function applyStaticUiLanguage(language: UserLanguage) {
   setElementTitle('#btn-expand-input', t(language, composer.classList.contains('expanded') ? 'toolbar.collapseInput' : 'toolbar.expandInput'))
   setElementTitle('#btn-send', t(language, 'toolbar.send'))
   inputEl.placeholder = t(language, 'input.placeholder')
+  originalInputPlaceholder = inputEl.placeholder
+  updateSendButtonState()
   setElementText('#settings-title', t(language, 'app.settings'))
   setElementText('[data-settings-tab="sites"]', t(language, 'settings.sitesTab'))
   setElementText('[data-settings-tab="prompts"]', t(language, 'settings.promptsTab'))
@@ -338,6 +355,90 @@ function setStatus(p: AIPlatform, state: 'ok' | 'err' | 'warn', text: string) {
   dot.classList.remove('ok', 'err', 'warn')
   if (state !== ('idle' as never)) dot.classList.add(state)
   statusText(p).textContent = text
+}
+
+function sendButtonTitle(kind: ReturnType<typeof getSendButtonState>['kind']): string {
+  if (kind === 'empty') return t(userSettings.language, 'send.emptyTitle')
+  if (kind === 'waiting-response') return t(userSettings.language, 'send.lockResponseTitle')
+  if (kind === 'submitting') return t(userSettings.language, 'send.lockStillSubmitting')
+  return t(userSettings.language, 'toolbar.send')
+}
+
+function updateSendButtonState() {
+  const state = getSendButtonState({
+    hasContent: inputEl.value.trim().length > 0 || !!pendingAttachment,
+    lockPhase: currentSendLock?.status === 'waiting' ? currentSendLock.phase : null,
+  })
+  sendBtn.dataset.icon = state.icon
+  sendBtn.disabled = state.disabled
+  sendBtn.classList.toggle('waiting-response', state.kind === 'waiting-response')
+  sendBtn.classList.toggle('empty', state.kind === 'empty')
+  const title = sendButtonTitle(state.kind)
+  sendBtn.title = title
+  sendBtn.setAttribute('aria-label', title)
+}
+
+function setSubmittingLockUi() {
+  inputEl.disabled = true
+  btnImage.disabled = true
+  inputEl.placeholder = t(userSettings.language, 'send.lockedPlaceholder')
+  updateSendButtonState()
+}
+
+function setWaitingResponseLockUi() {
+  inputEl.disabled = false
+  btnImage.disabled = false
+  inputEl.placeholder = originalInputPlaceholder
+  updateSendButtonState()
+}
+
+function hideSendLockUi() {
+  inputEl.disabled = false
+  btnImage.disabled = false
+  inputEl.placeholder = originalInputPlaceholder
+  updateSendButtonState()
+}
+
+function clearSendLockTimer() {
+  if (!sendLockTimer) return
+  clearTimeout(sendLockTimer)
+  sendLockTimer = null
+}
+
+function beginSendLock(targets: AIPlatform[]) {
+  clearSendLockTimer()
+  currentSendLock = createSendLock(targets)
+  setSubmittingLockUi()
+  sendLockTimer = setTimeout(() => {
+    if (!currentSendLock || !shouldSendLockTimeout(currentSendLock)) return
+    const timedOutLock = markSendLockTimedOut(currentSendLock)
+    currentSendLock = markSendLockUnlocked(timedOutLock)
+    hideSendLockUi()
+    const labels = timedOutLock.pendingPlatforms.map((p) => getPlatformMeta(p)?.label ?? p).join(' / ')
+    showToast(uiText('send.lockTimeout', { labels }), 'warn', 8000)
+  }, SEND_LOCK_TIMEOUT_MS)
+}
+
+function markCurrentSendSubmitted() {
+  if (!currentSendLock || currentSendLock.status !== 'waiting') return
+  currentSendLock = markSendLockSubmitted(currentSendLock)
+  setWaitingResponseLockUi()
+}
+
+function finishSendLockPlatform(platform: AIPlatform) {
+  if (!currentSendLock || currentSendLock.status !== 'waiting') return
+  currentSendLock = markSendLockPlatformDone(currentSendLock, platform)
+  if (currentSendLock.status !== 'done') return
+  clearSendLockTimer()
+  hideSendLockUi()
+}
+
+function forceUnlockComposer() {
+  if (!currentSendLock || currentSendLock.status !== 'waiting') return
+  currentSendLock = markSendLockUnlocked(currentSendLock)
+  clearSendLockTimer()
+  hideSendLockUi()
+  showToast(t(userSettings.language, 'send.manualUnlocked'), 'warn', 5000)
 }
 
 function waitForIframeReady(p: AIPlatform, timeoutMs = 5000): Promise<boolean> {
@@ -669,6 +770,7 @@ async function acceptFile(file: File) {
   imageMeta.textContent = `${file.name || 'file'} · ${(file.size / 1024).toFixed(0)}KB`
   imagePreview.hidden = false
   updateComposerToolbarVisibility()
+  updateSendButtonState()
   btnImage.classList.add('has-image')
   btnImage.title = uiText('attachment.attachedTitle', { name: file.name || 'file' })
   showToast(
@@ -691,6 +793,7 @@ function clearAttachment() {
   imageMeta.textContent = ''
   imagePreview.hidden = true
   updateComposerToolbarVisibility()
+  updateSendButtonState()
   btnImage.classList.remove('has-image')
   btnImage.title = t(userSettings.language, 'toolbar.attachTitle')
   if (fileInput) fileInput.value = ''
@@ -883,6 +986,9 @@ async function backfillSessionResponses(
     const nextProgress = { ...progress }
     await Promise.all(pendingPlatforms.map(async (platform) => {
       const state = await requestConversationState(platform, 1500)
+      if (state.status === 'streaming') {
+        setStatus(platform, 'warn', t(userSettings.language, 'send.statusResponding'))
+      }
       const text = state.lastResponse ? state.lastResponse : await requestLastResponse(platform, 1500)
       const decision = evaluateResponseCapture(
         { text, status: state.status },
@@ -891,6 +997,10 @@ async function backfillSessionResponses(
         RESPONSE_STABLE_REQUIRED_POLLS,
       )
       nextProgress[platform] = decision.progress
+      if (isResponseCompleteForUnlock({ text, status: state.status }, baselines[platform])) {
+        setStatus(platform, 'ok', t(userSettings.language, 'send.statusDone'))
+        finishSendLockPlatform(platform)
+      }
       if (decision.shouldCapture && isNewCapturedResponse(decision.text, baselines[platform])) {
         captured[platform] = decision.text
       }
@@ -927,6 +1037,14 @@ window.addEventListener('message', (e: MessageEvent) => {
 
 // ---------- 发送 ----------
 async function onSend() {
+  if (shouldUnlockInsteadOfSend(currentSendLock)) {
+    forceUnlockComposer()
+    return
+  }
+  if (currentSendLock?.status === 'waiting') {
+    showToast(t(userSettings.language, 'send.lockStillSubmitting'), 'warn', 3000)
+    return
+  }
   const text = inputEl.value.trim()
   if (!text && !pendingAttachment) {
     showToast(t(userSettings.language, 'send.needTextOrAttachment'), 'warn')
@@ -966,6 +1084,9 @@ async function onSend() {
       return
     }
   }
+
+  beginSendLock(targets)
+  targets.forEach((platform) => setStatus(platform, 'warn', t(userSettings.language, 'send.statusSending')))
 
   // 1. 准备附件:上传类转 dataURL,文本类拼进 prompt。
   let imageDataUrl: string | undefined
@@ -1055,6 +1176,17 @@ async function onSend() {
         }),
     ),
   )
+
+  markCurrentSendSubmitted()
+
+  for (const result of results) {
+    if (result.ok) {
+      setStatus(result.p, 'warn', t(userSettings.language, 'send.statusWaiting'))
+    } else {
+      setStatus(result.p, 'err', t(userSettings.language, 'send.statusFailed'))
+      finishSendLockPlatform(result.p)
+    }
+  }
 
   if (currentSession) {
     try {
@@ -2720,6 +2852,7 @@ function bindEvents() {
   })
   // @ 弹层监听
   inputEl.addEventListener('input', onAtInput)
+  inputEl.addEventListener('input', updateSendButtonState)
   inputEl.addEventListener('keydown', onAtKeydown)
   inputEl.addEventListener('blur', () => {
     // 失焦关弹层(等 100ms 给 click 事件先到达)

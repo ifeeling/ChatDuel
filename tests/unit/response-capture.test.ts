@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { evaluateResponseCapture } from '../../src/lib/response-capture'
+import { evaluateResponseCapture, isResponseCompleteForUnlock } from '../../src/lib/response-capture'
 
 describe('response-capture', () => {
   it('does not capture while the AI is still streaming even if text is available', () => {
@@ -52,5 +52,11 @@ describe('response-capture', () => {
     expect(second.shouldCapture).toBe(false)
     expect(second.progress.lastText).toBe('第二版')
     expect(second.progress.stableCount).toBe(1)
+  })
+
+  it('allows unlock as soon as a non-active new response is visible', () => {
+    expect(isResponseCompleteForUnlock({ text: '新回答', status: 'finished' }, '旧回答')).toBe(true)
+    expect(isResponseCompleteForUnlock({ text: '新回答', status: 'streaming' }, '旧回答')).toBe(false)
+    expect(isResponseCompleteForUnlock({ text: '旧回答', status: 'finished' }, '旧回答')).toBe(false)
   })
 })

@@ -84,7 +84,15 @@
             placeholder="在这里输入你的问题 或 输入 @ 和指定AI对话... (Ctrl+V 粘贴图片)"></textarea>
         </div>
         <button id="btn-expand-input" class="input-tool-btn" title="展开输入框" type="button" aria-label="展开输入框">⛶</button>
-        <button id="btn-send" title="发送" aria-label="发送">➤</button>
+        <button id="btn-send" title="发送" aria-label="发送" data-icon="send">
+          <svg class="send-icon send-icon-send" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 19V5"></path>
+            <path d="M5 12l7-7 7 7"></path>
+          </svg>
+          <svg class="send-icon send-icon-stop" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="8" y="8" width="8" height="8" rx="1.5"></rect>
+          </svg>
+        </button>
       </div>
       <!-- @ 候选弹层(绝对定位,由 chat.ts 算坐标) -->
       <div class="at-popup" id="at-popup" hidden role="listbox" aria-label="选择 AI 目标"></div>
