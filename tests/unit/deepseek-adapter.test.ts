@@ -73,9 +73,13 @@ describe('deepseek adapter', () => {
   })
 
   it('attaches an image through an explicit DeepSeek file input', async () => {
-    document.body.innerHTML = '<input type="file" accept="image/*"><textarea placeholder="给 DeepSeek 发送消息"></textarea>'
+    document.body.innerHTML = '<div class="composer"><input type="file" accept="image/*"><textarea placeholder="给 DeepSeek 发送消息"></textarea></div>'
     const input = document.querySelector<HTMLInputElement>('input[type="file"]')!
-    const changeSpy = vi.fn()
+    const changeSpy = vi.fn(() => {
+      const preview = document.createElement('img')
+      preview.className = 'upload-preview'
+      document.querySelector('.composer')?.appendChild(preview)
+    })
     input.addEventListener('change', changeSpy)
 
     const file = new File(['image'], 'cursor.png', { type: 'image/png' })
@@ -83,6 +87,36 @@ describe('deepseek adapter', () => {
 
     expect(input.files?.[0]?.name).toBe('cursor.png')
     expect(changeSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to paste/drop when file input does not create attachment evidence', async () => {
+    vi.useFakeTimers()
+    document.body.innerHTML = `
+      <div class="composer">
+        <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt">
+        <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+      </div>
+    `
+    const textarea = document.querySelector<HTMLTextAreaElement>('textarea')!
+    const pasteSpy = vi.fn(() => {
+      const preview = document.createElement('span')
+      preview.className = 'upload-file'
+      preview.textContent = 'cursor.png'
+      document.querySelector('.composer')?.appendChild(preview)
+    })
+    textarea.addEventListener('paste', pasteSpy)
+
+    const file = new File(['image'], 'cursor.png', { type: 'image/png' })
+    try {
+      const upload = createDeepSeekAdapter().attachImage(file)
+      await vi.advanceTimersByTimeAsync(3100)
+      await upload
+
+      expect(pasteSpy).toHaveBeenCalledTimes(1)
+      expect(document.querySelector('.upload-file')?.textContent).toBe('cursor.png')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('fires input and change events and waits for attachment evidence before resolving', async () => {

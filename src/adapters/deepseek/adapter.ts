@@ -99,8 +99,7 @@ async function attachFileToInput(file: File): Promise<boolean> {
   }
   input.dispatchEvent(new Event('input', { bubbles: true }))
   input.dispatchEvent(new Event('change', { bubbles: true }))
-  await waitForAttachmentEvidence(file, baseline)
-  return true
+  return waitForAttachmentEvidence(file, baseline)
 }
 
 async function pasteFileIntoComposer(file: File, selectors: DeepSeekSelectors): Promise<boolean> {
@@ -115,8 +114,7 @@ async function pasteFileIntoComposer(file: File, selectors: DeepSeekSelectors): 
   const dt = buildDataTransferFromFile(file)
   dispatchPaste(box, dt)
   dispatchPaste(box, dt, 'drop')
-  await waitForAttachmentEvidence(file, baseline)
-  return true
+  return waitForAttachmentEvidence(file, baseline)
 }
 
 function attachmentEvidenceCount(file: File): number {

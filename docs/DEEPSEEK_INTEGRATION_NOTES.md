@@ -148,6 +148,8 @@ npm run build
 - DeepSeek 页面里存在 1 个 `input[type=file]`。
 - 这个 input 是隐藏的，`display: none`。
 - `accept` 包含 `.png`、`.jpg`、`.jpeg`、`.webp`、`.pdf`、`.txt`、`.md` 等大量格式。
+- 页面没有暴露明显的上传按钮，诊断结果里的 `uploadLikeButtons` 是空数组。
+- 文本输入框是 `textarea`，placeholder 为 `给 DeepSeek 发送消息`。
 - DOM 路径类似：
 
 ```text
@@ -162,12 +164,37 @@ div._77cefa5._3d616d3 > div._020ab5b > div.ec4f5d61 > div.bf38813a > input
 - 发送前等待页面出现附件证据，例如文件名、上传相关 class、图片/预览节点。
 - 如果找不到 file input，仍保留 paste/drop 输入框兜底。
 
+第二次主动诊断确认：
+
+- 在 DeepSeek iframe 控制台创建 `chatduel-upload-test.png` 后，程序化设置 `input.files`、向 textarea 派发 paste、向 textarea/父级 div 派发 drop 都能让页面出现附件块。
+- 页面附件块显示图片名 `chatduel-upload-test.png`，并提示“未提取到文字”。
+- 因为测试脚本依次跑了多条路线，页面上会出现多个测试附件，这说明附件注入路线是可用的。
+
+这次真正的代码问题：
+
+- `attachFileToInput()` 虽然调用了 `waitForAttachmentEvidence()`，但没有使用等待结果。
+- 所以即使 file input 路径没有等到附件预览，它也会直接返回成功，导致不会继续尝试 paste/drop 兜底。
+- 修法是让 `attachFileToInput()` 和 `pasteFileIntoComposer()` 都只有在看到附件证据时才返回 `true`；如果 file input 没产生预览，就继续走 paste/drop。
+
 后续如果又出现“发送成功但附件没带上”，先在 DeepSeek iframe 控制台看：
 
 1. `input[type=file]` 是否仍存在。
 2. `input.files` 设置后是否触发页面里的附件预览。
 3. 文件名或上传预览是否出现在 DOM。
 4. 如果预览出现但发送后 DeepSeek 没读到，问题就从“上传入口”转移到“发送前等待 DeepSeek 文件处理完成”，需要延长或改进等待条件。
+5. 如果程序化设置 `input.files`、paste、drop 都不触发预览，说明 DeepSeek 可能要求真实用户文件选择事件；这时不要继续误报 `ok=true`，要改成失败提示或手动上传兜底。
+
+## 附件上传功能记录规则
+
+附件上传最容易受官方网页 DOM、隐藏 input、可信事件和上传预览状态影响。以后新增或修改任何平台的附件上传能力，都要把踩坑记录补进对应平台文档，至少记录这些信息：
+
+1. 官方页面里真实的上传入口，例如 `input[type=file]`、按钮、label、paste/drop 区域。
+2. 上传入口是否隐藏，以及当时可用的关键 DOM 路径、placeholder、`accept`、class 或 aria 信息。
+3. 尝试过的触发方式，例如设置 `input.files` 后派发 `input/change`、向输入框派发 paste/drop、点击上传按钮等。
+4. 页面有没有出现附件证据，例如文件名、缩略图、上传进度、图片预览节点。
+5. 失败时官方页面的表现，例如只收到文字、提示没有附件、发送按钮提前可点但文件还没处理完。
+6. 最终采用的等待条件和兜底策略。
+7. 如果官方页面改版，优先复查这些记录，不要一上来重写整条发送链路。
 
 ## 以后如果 DeepSeek 网页变了
 
