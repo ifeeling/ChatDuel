@@ -87,7 +87,7 @@ export const AI_PLATFORMS: Record<AIPlatform, AIPlatformMeta> = {
     capabilities: {
       supportsEmbed: true,
       supportsText: true,
-      supportsImageUpload: true,
+      supportsImageUpload: false,
       supportsFileUpload: false,
       supportsLastResponse: true,
     },

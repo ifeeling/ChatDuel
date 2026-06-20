@@ -4,9 +4,9 @@
 
 2026-06-20，DeepSeek 已作为第 4 个可选平台接入 ChatDuel 扩展，默认关闭。
 
-当前接入范围：支持文本发送、图片附件上传、读取最后回答、转发和总结目标选择；暂不自动上传 PDF/XLSX 等文档文件。
+当前接入范围：支持文本发送、读取最后回答、转发和总结目标选择。图片和 PDF/XLSX 等附件不再标记为自动上传；DeepSeek 需要用户在官方输入框里手动上传或粘贴。
 
-原因：DeepSeek 官方页入口是 `https://chat.deepseek.com/`。第一次接入时没有完成登录后的真实 DOM 验证，所以先只开放文本能力。用户实测后确认消息能发出去，但图片没有进入 DeepSeek，于是补了图片附件注入路径。文档文件仍未开启，因为还没验证 DeepSeek 对 PDF/XLSX 的读取链路。
+原因：DeepSeek 官方页入口是 `https://chat.deepseek.com/`。第一次接入时没有完成登录后的真实 DOM 验证，所以先只开放文本能力。后续多轮实测确认文字能发出去，但图片自动上传不稳定：手动 `Cmd+V` 可以把图粘进 DeepSeek 输入框，扩展脚本模拟 paste/drop 或写剪贴板则会被浏览器安全限制或 DeepSeek 页面忽略。为避免误报成功，当前关闭 DeepSeek 图片自动上传能力。
 
 ## 当时实现了什么
 
@@ -17,7 +17,7 @@
   - url: `https://chat.deepseek.com/`
   - `supportsText: true`
   - `supportsLastResponse: true`
-  - `supportsImageUpload: true`
+  - `supportsImageUpload: false`
   - `supportsFileUpload: false`
 - 在 `src/lib/user-settings.ts` 中把 DeepSeek 加入默认设置和面板顺序，默认关闭。
 - 在 `src/chat/chat.html` 中新增 DeepSeek 面板和设置页站点行。
@@ -30,7 +30,7 @@
   - 使用通用发送按钮选择器触发发送。
   - 如果找不到发送按钮，退回到对输入框派发 Enter。
   - 使用通用回答选择器读取最后回答，并把 DOM 结构转换成 Markdown-ish 文本。
-  - 图片上传优先注入 `input[type="file"]`，找不到再尝试 paste/drop 到输入框。
+  - 保留图片上传探测代码，但平台能力当前关闭，不再默认从 ChatDuel 自动上传图片到 DeepSeek。
 - 新增 `src/content-scripts/deepseek-content.ts`：
   - 支持 `get-state`
   - 支持 `get-last-response`
@@ -57,23 +57,24 @@
 
 这些选择器能覆盖常见聊天页结构，但如果 DeepSeek 改 class 或 DOM 层级，最可能坏的是发送按钮和最后回答读取。
 
-### 3. 图片上传可以打开，文档上传先不要打开
+### 3. 图片和文档上传都先不要打开
 
 DeepSeek 平台元数据当前设置：
 
 ```ts
-supportsImageUpload: true
+supportsImageUpload: false
 supportsFileUpload: false
 ```
 
-这样图片会走自动上传；PDF/XLSX 仍会提示用户手动处理，避免文档入口没验证时误发失败。
+这样图片和 PDF/XLSX 都会提示用户手动处理，避免自动上传失败时仍发送文字并让用户误以为 DeepSeek 收到了附件。
 
-以后要打开文档上传能力，先验证：
+以后要重新打开图片或文档上传能力，先验证：
 
 1. DeepSeek iframe 中是否能看到稳定的 `input[type="file"]`。
-2. PDF/XLSX 上传后 DOM 中是否有明确附件预览。
-3. 发送后文档是否真的随问题一起进入 DeepSeek 对话。
-4. 再把 `supportsFileUpload` 改成 true，并补 `file-handler` 和 adapter 测试。
+2. 程序化上传后，附件预览是否稳定出现在 DeepSeek 输入区附近，而不是页面其它图标变化。
+3. 发送后 DeepSeek 是否真的承认收到了附件，而不是回复“没有附带图片/文件”。
+4. 如果必须依赖系统剪贴板，确认扩展页能否在用户手势内写入剪贴板，并确认浏览器允许把它粘到跨源 iframe。
+5. 再把对应的 `supportsImageUpload` 或 `supportsFileUpload` 改成 true，并补 `file-handler` 和 adapter 测试。
 
 ### 4. 官网会话 URL 没有加特判
 
@@ -199,6 +200,21 @@ div._77cefa5._3d616d3 > div._020ab5b > div.ec4f5d61 > div.bf38813a > input
 1. 优先 focus 输入框并派发带文件的 paste/drop 事件。
 2. 只有 paste/drop 没有产生输入区附件证据时，才退回隐藏 file input。
 3. 隐藏 file input 只作为兜底，不再作为第一路径，避免误判或走到 DeepSeek 不真正提交图片的路径。
+
+最终剪贴板诊断：
+
+- 用户在 DeepSeek frame 控制台运行剪贴板诊断脚本。
+- `navigator.clipboard.write()` 失败，错误为 `NotAllowedError: Failed to execute 'write' on 'Clipboard': Document is not focused.`
+- `document.execCommand('paste')` 返回 `false`。
+- 程序化 paste 后没有出现附件块，`attachments` 为空数组。
+- 用户把光标放在 DeepSeek 输入框里再运行脚本，结果仍相同，因为执行脚本时焦点在 DevTools，浏览器不把它当作官方页面内的真实用户粘贴。
+
+最终结论：
+
+- DeepSeek 官方页面能接受用户手动 `Cmd+V` 粘贴图片。
+- 扩展脚本不能稳定伪造同等可信的系统剪贴板粘贴。
+- 因此当前关闭 DeepSeek 的 `supportsImageUpload`，把 DeepSeek 归为手动上传侧。
+- 如果用户同时发图片给 Gemini/ChatGPT/豆包 和 DeepSeek，ChatDuel 只自动上传到已验证平台，并提示 DeepSeek 需要手动上传/粘贴。
 
 后续如果又出现“发送成功但附件没带上”，先在 DeepSeek iframe 控制台看：
 
