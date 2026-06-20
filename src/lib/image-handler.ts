@@ -18,16 +18,24 @@ export function buildDataTransferFromFile(file: File): DataTransfer {
 
 export function dispatchPaste(target: HTMLElement, dt: DataTransfer, eventType: 'paste' | 'drop' = 'paste'): void {
   const event = typeof ClipboardEvent === 'undefined'
-    ? new Event(eventType, { bubbles: true, cancelable: true })
+    ? new Event(eventType, { bubbles: true, cancelable: true, composed: true })
     : new ClipboardEvent(eventType, {
       clipboardData: dt,
       bubbles: true,
       cancelable: true,
+      composed: true,
     })
   try {
     Object.defineProperty(event, 'clipboardData', { value: dt, configurable: true })
   } catch {
     // ClipboardEvent.clipboardData may be read-only in some envs
+  }
+  if (eventType === 'drop') {
+    try {
+      Object.defineProperty(event, 'dataTransfer', { value: dt, configurable: true })
+    } catch {
+      // DragEvent.dataTransfer may be read-only in some envs
+    }
   }
   target.dispatchEvent(event)
 }

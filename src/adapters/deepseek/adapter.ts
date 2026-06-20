@@ -90,7 +90,8 @@ function findFileInput(): HTMLInputElement | null {
 async function attachFileToInput(file: File): Promise<boolean> {
   const input = findFileInput()
   if (!input) return false
-  const baseline = attachmentEvidenceCount(file)
+  const scope = findAttachmentScope(input)
+  const baseline = attachmentEvidenceCount(file, scope)
   const dt = buildDataTransferFromFile(file)
   try {
     input.files = dt.files
@@ -99,13 +100,14 @@ async function attachFileToInput(file: File): Promise<boolean> {
   }
   input.dispatchEvent(new Event('input', { bubbles: true }))
   input.dispatchEvent(new Event('change', { bubbles: true }))
-  return waitForAttachmentEvidence(file, baseline)
+  return waitForAttachmentEvidence(file, baseline, scope)
 }
 
 async function pasteFileIntoComposer(file: File, selectors: DeepSeekSelectors): Promise<boolean> {
   const box = queryFirst<HTMLElement>(selectors.inputBox)
   if (!box) return false
-  const baseline = attachmentEvidenceCount(file)
+  const scope = findAttachmentScope(box)
+  const baseline = attachmentEvidenceCount(file, scope)
   try {
     box.focus()
   } catch {
@@ -114,14 +116,33 @@ async function pasteFileIntoComposer(file: File, selectors: DeepSeekSelectors): 
   const dt = buildDataTransferFromFile(file)
   dispatchPaste(box, dt)
   dispatchPaste(box, dt, 'drop')
-  return waitForAttachmentEvidence(file, baseline)
+  return waitForAttachmentEvidence(file, baseline, scope)
 }
 
-function attachmentEvidenceCount(file: File): number {
+function findAttachmentScope(anchor: HTMLElement): ParentNode {
+  let scope: HTMLElement | null = anchor
+  for (let depth = 0; scope.parentElement && depth < 6; depth += 1) {
+    scope = scope.parentElement
+    if (scope.querySelector('textarea, [contenteditable="true"], [role="textbox"]') && scope.querySelector('input[type="file"]')) {
+      return scope
+    }
+  }
+  return anchor.parentElement ?? document.body
+}
+
+function attachmentEvidenceCount(file: File, scope: ParentNode = document.body): number {
   const fileName = file.name.toLowerCase()
-  const textHits = [...document.querySelectorAll<HTMLElement>('body *')]
-    .filter((el) => (el.textContent ?? '').toLowerCase().includes(fileName)).length
-  const uploadMarks = document.querySelectorAll([
+  const textHits = [...scope.querySelectorAll<HTMLElement>('*')]
+    .filter((el) => {
+      const text = (el.textContent ?? '').toLowerCase()
+      const label = [
+        el.getAttribute('alt') ?? '',
+        el.getAttribute('title') ?? '',
+        el.getAttribute('aria-label') ?? '',
+      ].join(' ').toLowerCase()
+      return text.includes(fileName) || label.includes(fileName)
+    }).length
+  const uploadMarks = scope.querySelectorAll([
     'img',
     'canvas',
     '[class*="upload" i]',
@@ -135,10 +156,10 @@ function attachmentEvidenceCount(file: File): number {
   return textHits + uploadMarks
 }
 
-async function waitForAttachmentEvidence(file: File, baseline: number, maxMs = 3000): Promise<boolean> {
+async function waitForAttachmentEvidence(file: File, baseline: number, scope: ParentNode = document.body, maxMs = 3000): Promise<boolean> {
   const start = Date.now()
   while (Date.now() - start < maxMs) {
-    if (attachmentEvidenceCount(file) > baseline) return true
+    if (attachmentEvidenceCount(file, scope) > baseline) return true
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
   return false
@@ -304,8 +325,8 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
     },
 
     async attachImage(file: File) {
-      if (await attachFileToInput(file)) return
       if (await pasteFileIntoComposer(file, selectors)) return
+      if (await attachFileToInput(file)) return
       throw new Error('deepseek image upload failed')
     },
 

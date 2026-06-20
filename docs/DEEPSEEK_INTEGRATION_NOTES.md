@@ -176,6 +176,30 @@ div._77cefa5._3d616d3 > div._020ab5b > div.ec4f5d61 > div.bf38813a > input
 - 所以即使 file input 路径没有等到附件预览，它也会直接返回成功，导致不会继续尝试 paste/drop 兜底。
 - 修法是让 `attachFileToInput()` 和 `pasteFileIntoComposer()` 都只有在看到附件证据时才返回 `true`；如果 file input 没产生预览，就继续走 paste/drop。
 
+第三次实测发现：
+
+- 修正 fallback 后，DeepSeek 仍可能回复“收不到图片”。
+- 控制台仍显示 `write-and-send result for deepseek: ok=true`，但 DeepSeek 输入区没有稳定出现附件预览。
+- 根因是附件证据判断太宽：旧逻辑在整个 DeepSeek 页面里数 `img`、`canvas`、`upload/file/image` class。DeepSeek 页面自身有很多图标和动态节点，可能导致“页面其它地方变化”被误判成“附件已进入输入区”。
+
+继续修正：
+
+- 附件证据只在输入区附近的 DOM 范围内统计，不再看整个页面。
+- 文件名、图片预览、上传相关节点必须出现在 composer 附近，才算上传成功。
+- drop 事件补上 `dataTransfer`，和控制台主动诊断里能触发附件预览的事件形态保持一致。
+- 新增回归测试：页面其它地方出现无关图片时，DeepSeek adapter 必须继续走 paste/drop 兜底，不能提前返回成功。
+
+用户随后手动验证：
+
+- 光标在 DeepSeek 输入框内时，直接用复制/粘贴可以把图片加到输入框里。
+- 这说明 DeepSeek 当前更可靠的图片入口是 composer paste，而不是隐藏 file input。
+
+因此 DeepSeek 图片上传策略调整为：
+
+1. 优先 focus 输入框并派发带文件的 paste/drop 事件。
+2. 只有 paste/drop 没有产生输入区附件证据时，才退回隐藏 file input。
+3. 隐藏 file input 只作为兜底，不再作为第一路径，避免误判或走到 DeepSeek 不真正提交图片的路径。
+
 后续如果又出现“发送成功但附件没带上”，先在 DeepSeek iframe 控制台看：
 
 1. `input[type=file]` 是否仍存在。

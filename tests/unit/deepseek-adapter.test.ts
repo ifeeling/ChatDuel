@@ -73,6 +73,7 @@ describe('deepseek adapter', () => {
   })
 
   it('attaches an image through an explicit DeepSeek file input', async () => {
+    vi.useFakeTimers()
     document.body.innerHTML = '<div class="composer"><input type="file" accept="image/*"><textarea placeholder="给 DeepSeek 发送消息"></textarea></div>'
     const input = document.querySelector<HTMLInputElement>('input[type="file"]')!
     const changeSpy = vi.fn(() => {
@@ -83,14 +84,45 @@ describe('deepseek adapter', () => {
     input.addEventListener('change', changeSpy)
 
     const file = new File(['image'], 'cursor.png', { type: 'image/png' })
-    await createDeepSeekAdapter().attachImage(file)
+    try {
+      const upload = createDeepSeekAdapter().attachImage(file)
+      await vi.advanceTimersByTimeAsync(3100)
+      await upload
 
-    expect(input.files?.[0]?.name).toBe('cursor.png')
-    expect(changeSpy).toHaveBeenCalledTimes(1)
+      expect(input.files?.[0]?.name).toBe('cursor.png')
+      expect(changeSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
-  it('falls back to paste/drop when file input does not create attachment evidence', async () => {
-    vi.useFakeTimers()
+  it('prefers paste into the DeepSeek composer when paste creates attachment evidence', async () => {
+    document.body.innerHTML = `
+      <div class="composer">
+        <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt">
+        <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+      </div>
+    `
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]')!
+    const textarea = document.querySelector<HTMLTextAreaElement>('textarea')!
+    const changeSpy = vi.fn()
+    const pasteSpy = vi.fn(() => {
+      const preview = document.createElement('span')
+      preview.className = 'upload-file'
+      preview.textContent = 'cursor.png'
+      document.querySelector('.composer')?.appendChild(preview)
+    })
+    input.addEventListener('change', changeSpy)
+    textarea.addEventListener('paste', pasteSpy)
+
+    const file = new File(['image'], 'cursor.png', { type: 'image/png' })
+    await createDeepSeekAdapter().attachImage(file)
+
+    expect(pasteSpy).toHaveBeenCalledTimes(1)
+    expect(changeSpy).not.toHaveBeenCalled()
+  })
+
+  it('uses paste/drop when the DeepSeek composer creates attachment evidence', async () => {
     document.body.innerHTML = `
       <div class="composer">
         <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt">
@@ -107,13 +139,39 @@ describe('deepseek adapter', () => {
     textarea.addEventListener('paste', pasteSpy)
 
     const file = new File(['image'], 'cursor.png', { type: 'image/png' })
+    await createDeepSeekAdapter().attachImage(file)
+
+    expect(pasteSpy).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('.upload-file')?.textContent).toBe('cursor.png')
+  })
+
+  it('ignores unrelated page media when checking DeepSeek attachment evidence', async () => {
+    vi.useFakeTimers()
+    document.body.innerHTML = `
+      <div id="outside"></div>
+      <div class="composer">
+        <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt">
+        <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+      </div>
+    `
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]')!
+    const textarea = document.querySelector<HTMLTextAreaElement>('textarea')!
+    input.addEventListener('change', () => {
+      const unrelated = document.createElement('img')
+      unrelated.className = 'upload-icon'
+      document.querySelector('#outside')?.appendChild(unrelated)
+    })
+    const pasteSpy = vi.fn()
+    textarea.addEventListener('paste', pasteSpy)
+
     try {
+      const file = new File(['image'], 'cursor.png', { type: 'image/png' })
       const upload = createDeepSeekAdapter().attachImage(file)
-      await vi.advanceTimersByTimeAsync(3100)
-      await upload
+      const expectedFailure = expect(upload).rejects.toThrow('deepseek image upload failed')
+      await vi.advanceTimersByTimeAsync(6200)
 
       expect(pasteSpy).toHaveBeenCalledTimes(1)
-      expect(document.querySelector('.upload-file')?.textContent).toBe('cursor.png')
+      await expectedFailure
     } finally {
       vi.useRealTimers()
     }
