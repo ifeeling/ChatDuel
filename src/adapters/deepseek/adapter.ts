@@ -90,19 +90,23 @@ function findFileInput(): HTMLInputElement | null {
 async function attachFileToInput(file: File): Promise<boolean> {
   const input = findFileInput()
   if (!input) return false
+  const baseline = attachmentEvidenceCount(file)
   const dt = buildDataTransferFromFile(file)
   try {
     input.files = dt.files
   } catch {
     Object.defineProperty(input, 'files', { value: dt.files, configurable: true })
   }
+  input.dispatchEvent(new Event('input', { bubbles: true }))
   input.dispatchEvent(new Event('change', { bubbles: true }))
+  await waitForAttachmentEvidence(file, baseline)
   return true
 }
 
 async function pasteFileIntoComposer(file: File, selectors: DeepSeekSelectors): Promise<boolean> {
   const box = queryFirst<HTMLElement>(selectors.inputBox)
   if (!box) return false
+  const baseline = attachmentEvidenceCount(file)
   try {
     box.focus()
   } catch {
@@ -111,7 +115,35 @@ async function pasteFileIntoComposer(file: File, selectors: DeepSeekSelectors): 
   const dt = buildDataTransferFromFile(file)
   dispatchPaste(box, dt)
   dispatchPaste(box, dt, 'drop')
+  await waitForAttachmentEvidence(file, baseline)
   return true
+}
+
+function attachmentEvidenceCount(file: File): number {
+  const fileName = file.name.toLowerCase()
+  const textHits = [...document.querySelectorAll<HTMLElement>('body *')]
+    .filter((el) => (el.textContent ?? '').toLowerCase().includes(fileName)).length
+  const uploadMarks = document.querySelectorAll([
+    'img',
+    'canvas',
+    '[class*="upload" i]',
+    '[class*="attach" i]',
+    '[class*="file" i]',
+    '[class*="image" i]',
+    '[data-testid*="upload" i]',
+    '[data-testid*="attach" i]',
+    '[data-testid*="file" i]',
+  ].join(',')).length
+  return textHits + uploadMarks
+}
+
+async function waitForAttachmentEvidence(file: File, baseline: number, maxMs = 3000): Promise<boolean> {
+  const start = Date.now()
+  while (Date.now() - start < maxMs) {
+    if (attachmentEvidenceCount(file) > baseline) return true
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  return false
 }
 
 function writeNativeTextareaValue(el: HTMLTextAreaElement, text: string): void {

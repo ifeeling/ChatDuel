@@ -141,6 +141,34 @@ npm run build
 - `tests/unit/file-handler.test.ts`
   - DeepSeek 对图片附件走自动上传。
 
+## 2026-06-20 上传入口诊断
+
+用户在 DeepSeek iframe 控制台运行诊断脚本后确认：
+
+- DeepSeek 页面里存在 1 个 `input[type=file]`。
+- 这个 input 是隐藏的，`display: none`。
+- `accept` 包含 `.png`、`.jpg`、`.jpeg`、`.webp`、`.pdf`、`.txt`、`.md` 等大量格式。
+- DOM 路径类似：
+
+```text
+div._77cefa5._3d616d3 > div._020ab5b > div.ec4f5d61 > div.bf38813a > input
+```
+
+所以问题不是“找不到上传入口”，而是第一次实现只设置 `files` 并派发 `change` 后很快发送，DeepSeek 可能还没来得及把附件预览/上传状态挂到页面里。
+
+修正：
+
+- `attachFileToInput()` 设置 `input.files` 后同时派发 `input` 和 `change`。
+- 发送前等待页面出现附件证据，例如文件名、上传相关 class、图片/预览节点。
+- 如果找不到 file input，仍保留 paste/drop 输入框兜底。
+
+后续如果又出现“发送成功但附件没带上”，先在 DeepSeek iframe 控制台看：
+
+1. `input[type=file]` 是否仍存在。
+2. `input.files` 设置后是否触发页面里的附件预览。
+3. 文件名或上传预览是否出现在 DOM。
+4. 如果预览出现但发送后 DeepSeek 没读到，问题就从“上传入口”转移到“发送前等待 DeepSeek 文件处理完成”，需要延长或改进等待条件。
+
 ## 以后如果 DeepSeek 网页变了
 
 优先按这个顺序排查，不要一上来全链路重写：

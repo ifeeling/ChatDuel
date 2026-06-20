@@ -84,4 +84,30 @@ describe('deepseek adapter', () => {
     expect(input.files?.[0]?.name).toBe('cursor.png')
     expect(changeSpy).toHaveBeenCalledTimes(1)
   })
+
+  it('fires input and change events and waits for attachment evidence before resolving', async () => {
+    document.body.innerHTML = `
+      <div class="composer">
+        <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt">
+        <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+      </div>
+    `
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]')!
+    const inputSpy = vi.fn()
+    const changeSpy = vi.fn(() => {
+      const preview = document.createElement('span')
+      preview.className = 'upload-file'
+      preview.textContent = 'cursor.png'
+      document.querySelector('.composer')?.appendChild(preview)
+    })
+    input.addEventListener('input', inputSpy)
+    input.addEventListener('change', changeSpy)
+
+    const file = new File(['image'], 'cursor.png', { type: 'image/png' })
+    await createDeepSeekAdapter().attachImage(file)
+
+    expect(inputSpy).toHaveBeenCalledTimes(1)
+    expect(changeSpy).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('.upload-file')?.textContent).toBe('cursor.png')
+  })
 })
