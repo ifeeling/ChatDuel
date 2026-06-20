@@ -1,6 +1,7 @@
 import type { AIAdapter } from '../base'
 import type { ConversationState, StreamEvent } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
+import { elementToMarkdownText } from '../../lib/dom-response-text'
 import selectorsJson from './selectors.json'
 
 type GeminiSelectors = typeof selectorsJson.selectors
@@ -213,7 +214,8 @@ export function createGeminiAdapter(selectorOverrides?: SelectorOverrideMap): AI
     pollTimer = setInterval(() => {
       if (!dirty || !lastEventHandler) return
       dirty = false
-      const text = last(S.lastResponse)?.textContent ?? ''
+      const responseEl = last<HTMLElement>(S.lastResponse)
+      const text = responseEl ? elementToMarkdownText(responseEl) : ''
       lastEventHandler({ type: 'token', platform: 'gemini', text, timestamp: Date.now() })
     }, 150)
   }
@@ -283,12 +285,14 @@ export function createGeminiAdapter(selectorOverrides?: SelectorOverrideMap): AI
       throw new Error('file input not found and paste fallback failed for image upload')
     },
 
-        getLastResponse() {
-      return Promise.resolve(last(S.lastResponse)?.textContent ?? '')
+    getLastResponse() {
+      const responseEl = last<HTMLElement>(S.lastResponse)
+      return Promise.resolve(responseEl ? elementToMarkdownText(responseEl) : '')
     },
 
     getConversationState(): Promise<ConversationState> {
-      const lastText = last(S.lastResponse)?.textContent ?? ''
+      const responseEl = last<HTMLElement>(S.lastResponse)
+      const lastText = responseEl ? elementToMarkdownText(responseEl) : ''
       if (hasStopGeneratingButton(S)) return Promise.resolve({ status: 'streaming', lastResponse: lastText })
       if (q(S.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText })
       if (!lastText) return Promise.resolve({ status: 'idle' })

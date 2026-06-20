@@ -74,7 +74,7 @@ describe('supportsAutoUpload', () => {
     expect(supportsAutoUpload('chatgpt', image)).toBe(true)
     expect(supportsAutoUpload('gemini', image)).toBe(true)
     expect(supportsAutoUpload('doubao', image)).toBe(true)
-    expect(supportsAutoUpload('deepseek', image)).toBe(false)
+    expect(supportsAutoUpload('deepseek', image)).toBe(true)
   })
 
   it('does not auto-upload document files to ChatGPT in v1', () => {

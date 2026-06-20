@@ -4,9 +4,9 @@
 
 2026-06-20，DeepSeek 已作为第 4 个可选平台接入 ChatDuel 扩展，默认关闭。
 
-当前接入范围是“方案 A”：支持文本发送、读取最后回答、转发和总结目标选择；不自动上传图片或文件。
+当前接入范围：支持文本发送、图片附件上传、读取最后回答、转发和总结目标选择；暂不自动上传 PDF/XLSX 等文档文件。
 
-原因：DeepSeek 官方页入口是 `https://chat.deepseek.com/`，但没有在当前环境里完成登录后的真实 DOM 验证。为了避免给用户一个“看起来支持上传，但实际可能失败”的入口，先只开放文本能力。以后如果确认图片/文件上传控件稳定，再打开对应 capability。
+原因：DeepSeek 官方页入口是 `https://chat.deepseek.com/`。第一次接入时没有完成登录后的真实 DOM 验证，所以先只开放文本能力。用户实测后确认消息能发出去，但图片没有进入 DeepSeek，于是补了图片附件注入路径。文档文件仍未开启，因为还没验证 DeepSeek 对 PDF/XLSX 的读取链路。
 
 ## 当时实现了什么
 
@@ -17,7 +17,7 @@
   - url: `https://chat.deepseek.com/`
   - `supportsText: true`
   - `supportsLastResponse: true`
-  - `supportsImageUpload: false`
+  - `supportsImageUpload: true`
   - `supportsFileUpload: false`
 - 在 `src/lib/user-settings.ts` 中把 DeepSeek 加入默认设置和面板顺序，默认关闭。
 - 在 `src/chat/chat.html` 中新增 DeepSeek 面板和设置页站点行。
@@ -29,8 +29,8 @@
   - 使用通用输入框选择器写入文本。
   - 使用通用发送按钮选择器触发发送。
   - 如果找不到发送按钮，退回到对输入框派发 Enter。
-  - 使用通用回答选择器读取最后回答。
-  - 图片上传明确抛错，不做自动上传。
+  - 使用通用回答选择器读取最后回答，并把 DOM 结构转换成 Markdown-ish 文本。
+  - 图片上传优先注入 `input[type="file"]`，找不到再尝试 paste/drop 到输入框。
 - 新增 `src/content-scripts/deepseek-content.ts`：
   - 支持 `get-state`
   - 支持 `get-last-response`
@@ -57,23 +57,23 @@
 
 这些选择器能覆盖常见聊天页结构，但如果 DeepSeek 改 class 或 DOM 层级，最可能坏的是发送按钮和最后回答读取。
 
-### 3. 不要一开始打开图片/文件上传
+### 3. 图片上传可以打开，文档上传先不要打开
 
-DeepSeek 平台元数据里故意设置：
+DeepSeek 平台元数据当前设置：
 
 ```ts
-supportsImageUpload: false
+supportsImageUpload: true
 supportsFileUpload: false
 ```
 
-这样即使用户附加图片或 PDF，ChatDuel 也不会把文件自动塞进 DeepSeek 页面，避免文件入口没验证时误发失败。
+这样图片会走自动上传；PDF/XLSX 仍会提示用户手动处理，避免文档入口没验证时误发失败。
 
-以后要打开上传能力，先验证：
+以后要打开文档上传能力，先验证：
 
 1. DeepSeek iframe 中是否能看到稳定的 `input[type="file"]`。
-2. 图片上传后 DOM 中是否有明确附件预览。
-3. 发送后附件是否真的随问题一起进入 DeepSeek 对话。
-4. 再把 capability 改成 true，并补 `file-handler` 和 adapter 测试。
+2. PDF/XLSX 上传后 DOM 中是否有明确附件预览。
+3. 发送后文档是否真的随问题一起进入 DeepSeek 对话。
+4. 再把 `supportsFileUpload` 改成 true，并补 `file-handler` 和 adapter 测试。
 
 ### 4. 官网会话 URL 没有加特判
 
@@ -115,6 +115,31 @@ npm run build
 - 单元测试：29 个测试文件、209 条测试通过。
 - TypeScript 检查通过。
 - 生产构建通过，产物里包含 `content-deepseek`。
+
+## 2026-06-20 用户实测后的修正
+
+用户在 Edge 扩展里实测 Gemini + DeepSeek 双面板后发现三个问题：
+
+1. DeepSeek 可以收到文本，但图片附件没有传上去。
+2. 历史记录里的 DeepSeek 回答只保存了最后一小段，没有保存完整助手回答。
+3. Gemini 在官网页面里的回答有标题、段落、列表，但历史记录里被压成一段纯文本。
+
+根因和修法：
+
+- DeepSeek 附件问题：第一次接入时 `supportsImageUpload` 还是 false，`send` 链路不会把 `imageDataUrl` 发给 DeepSeek。修法是把 DeepSeek 图片 capability 打开，并在 `src/adapters/deepseek/adapter.ts` 中实现 `attachImage(file)`。
+- DeepSeek 记录不全：通用 `response` 选择器会匹配到助手回复内部的多个小节点，旧逻辑按 DOM 最后一个候选取文本，容易只拿到最后一句。修法是给候选节点打分，优先选带 `assistant/answer/markdown/article` 特征、位于 `main` 中、文本更完整的节点。
+- Gemini 格式丢失：旧 adapter 用 `textContent` 读取回答，浏览器会把标题、段落、列表都压平。修法是新增 `src/lib/dom-response-text.ts`，把 DOM 回答块转换成 Markdown-ish 文本，Gemini 和 DeepSeek 都复用它。
+
+新增回归测试：
+
+- `tests/unit/deepseek-adapter.test.ts`
+  - DeepSeek 取完整助手回复块。
+  - DeepSeek 保留有序列表编号。
+  - DeepSeek 可以通过 file input 注入图片。
+- `tests/unit/gemini-adapter.test.ts`
+  - Gemini 捕获回答时保留段落、标题和列表。
+- `tests/unit/file-handler.test.ts`
+  - DeepSeek 对图片附件走自动上传。
 
 ## 以后如果 DeepSeek 网页变了
 

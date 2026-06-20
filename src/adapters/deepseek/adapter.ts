@@ -1,5 +1,7 @@
 import type { AIAdapter } from '../base'
 import type { ConversationState, StreamEvent } from '../../types'
+import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
+import { elementToMarkdownText } from '../../lib/dom-response-text'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 
 const DEFAULT_INPUT_SELECTORS = [
@@ -70,6 +72,48 @@ function queryFirst<T extends Element = Element>(selectors: string[]): T | null 
   return null
 }
 
+function findFileInput(): HTMLInputElement | null {
+  const candidates = [
+    "input[type='file'][accept*='image']",
+    "input[type='file'][aria-label*='upload' i]",
+    "input[type='file'][aria-label*='附件' i]",
+    "input[type='file'][aria-label*='图片' i]",
+    "input[type='file']",
+  ]
+  for (const selector of candidates) {
+    const input = document.querySelector<HTMLInputElement>(selector)
+    if (input) return input
+  }
+  return null
+}
+
+async function attachFileToInput(file: File): Promise<boolean> {
+  const input = findFileInput()
+  if (!input) return false
+  const dt = buildDataTransferFromFile(file)
+  try {
+    input.files = dt.files
+  } catch {
+    Object.defineProperty(input, 'files', { value: dt.files, configurable: true })
+  }
+  input.dispatchEvent(new Event('change', { bubbles: true }))
+  return true
+}
+
+async function pasteFileIntoComposer(file: File, selectors: DeepSeekSelectors): Promise<boolean> {
+  const box = queryFirst<HTMLElement>(selectors.inputBox)
+  if (!box) return false
+  try {
+    box.focus()
+  } catch {
+    /* focus may be blocked in embedded frames */
+  }
+  const dt = buildDataTransferFromFile(file)
+  dispatchPaste(box, dt)
+  dispatchPaste(box, dt, 'drop')
+  return true
+}
+
 function writeNativeTextareaValue(el: HTMLTextAreaElement, text: string): void {
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
   setter?.call(el, text)
@@ -131,10 +175,6 @@ function normalizeText(text: string): string {
     .trim()
 }
 
-function elementText(el: HTMLElement): string {
-  return normalizeText(el.innerText ?? el.textContent ?? '')
-}
-
 function isHidden(el: HTMLElement): boolean {
   if (el.hidden || el.getAttribute('aria-hidden') === 'true') return true
   const style = window.getComputedStyle?.(el)
@@ -151,18 +191,44 @@ function isUserMessage(el: HTMLElement): boolean {
   return /\b(user|human|question|query)\b/i.test(marker) && !/\b(assistant|answer)\b/i.test(marker)
 }
 
+function elementMarker(el: HTMLElement): string {
+  return [
+    el.getAttribute('data-testid') ?? '',
+    el.getAttribute('data-role') ?? '',
+    el.className?.toString() ?? '',
+    el.getAttribute('aria-label') ?? '',
+  ].join(' ')
+}
+
+function responseCandidateScore(el: HTMLElement, text: string): number {
+  const marker = elementMarker(el)
+  let score = 0
+  if (/\b(assistant|answer|markdown)\b/i.test(marker) || el.matches('article, [role="article"]')) score += 100
+  if (/\b(user|human|question|query|recommend|suggest|guide|prompt|chip|card)\b/i.test(marker)) score -= 100
+  if (el.closest('main')) score += 10
+  score += Math.min(text.length, 1000) / 100
+  return score
+}
+
 function getLatestResponseText(selectors: DeepSeekSelectors): string {
   const seen = new Set<string>()
   const candidates = [...document.querySelectorAll<HTMLElement>(selectors.response.join(','))]
     .filter((el) => !isHidden(el))
     .filter((el) => !el.closest(RESPONSE_EXCLUDE_ANCESTORS))
     .filter((el) => !isUserMessage(el))
-    .map((el, index) => ({ text: elementText(el), index }))
+    .map((el, index) => {
+      const text = elementToMarkdownText(el)
+      return { text, score: responseCandidateScore(el, text), index }
+    })
     .filter((candidate) => candidate.text.length > 0)
     .filter((candidate) => {
       if (seen.has(candidate.text)) return false
       seen.add(candidate.text)
       return true
+    })
+    .sort((a, b) => {
+      if (a.score !== b.score) return a.score - b.score
+      return a.index - b.index
     })
 
   return candidates[candidates.length - 1]?.text ?? ''
@@ -199,14 +265,18 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
       dispatchEnter(box)
     },
 
-    async sendMessage(text: string) {
+    async sendMessage(text: string, image?: File) {
       await this.writeText(text)
       await new Promise((resolve) => setTimeout(resolve, 80))
+      if (image) await this.attachImage(image)
+      await new Promise((resolve) => setTimeout(resolve, 200))
       await this.triggerSend()
     },
 
-    async attachImage() {
-      throw new Error('deepseek image upload is not enabled')
+    async attachImage(file: File) {
+      if (await attachFileToInput(file)) return
+      if (await pasteFileIntoComposer(file, selectors)) return
+      throw new Error('deepseek image upload failed')
     },
 
     async getLastResponse() {
