@@ -42,6 +42,39 @@ describe('composer focus restore', () => {
     dispose()
   })
 
+  it('does not steal focus back from an AI iframe interaction after the composer was active', () => {
+    const input = document.querySelector<HTMLTextAreaElement>('#input')!
+    const composer = document.querySelector<HTMLElement>('.composer')!
+    const frame = document.querySelector<HTMLIFrameElement>('.panel-iframe')!
+    const dispose = bindComposerFocusRestorer({ input, composer, restoreDelayMs: 10 })
+
+    input.focus()
+    window.dispatchEvent(new Event('blur'))
+    frame.focus()
+    window.dispatchEvent(new Event('focus'))
+    vi.advanceTimersByTime(10)
+
+    expect(document.activeElement).toBe(frame)
+    dispose()
+  })
+
+  it('cancels delayed focus restore when focus lands in an AI iframe after window blur', () => {
+    const input = document.querySelector<HTMLTextAreaElement>('#input')!
+    const composer = document.querySelector<HTMLElement>('.composer')!
+    const frame = document.querySelector<HTMLIFrameElement>('.panel-iframe')!
+    const dispose = bindComposerFocusRestorer({ input, composer, restoreDelayMs: 10 })
+
+    input.focus()
+    window.dispatchEvent(new Event('blur'))
+    frame.focus()
+    vi.advanceTimersByTime(0)
+    window.dispatchEvent(new Event('focus'))
+    vi.advanceTimersByTime(10)
+
+    expect(document.activeElement).toBe(frame)
+    dispose()
+  })
+
   it('does not restore focus while a dialog is open', () => {
     const input = document.querySelector<HTMLTextAreaElement>('#input')!
     const composer = document.querySelector<HTMLElement>('.composer')!

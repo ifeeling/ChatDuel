@@ -25,6 +25,11 @@ export function bindComposerFocusRestorer(options: ComposerFocusRestorerOptions)
     return active === input || (active instanceof Node && composer.contains(active))
   }
 
+  const aiFrameHasFocus = () => {
+    const active = doc.activeElement
+    return active instanceof HTMLIFrameElement && active.classList.contains('panel-iframe')
+  }
+
   const clearRestoreTimer = () => {
     if (!restoreTimer) return
     clearTimeout(restoreTimer)
@@ -45,11 +50,11 @@ export function bindComposerFocusRestorer(options: ComposerFocusRestorerOptions)
   }
 
   const onWindowFocus = () => {
-    if (!shouldRestoreOnFocus || isBlocked()) return
+    if (!shouldRestoreOnFocus || isBlocked() || aiFrameHasFocus()) return
     clearRestoreTimer()
     restoreTimer = setTimeout(() => {
       restoreTimer = null
-      if (shouldRestoreOnFocus && !isBlocked()) input.focus()
+      if (shouldRestoreOnFocus && !isBlocked() && !aiFrameHasFocus()) input.focus()
     }, restoreDelayMs)
   }
 

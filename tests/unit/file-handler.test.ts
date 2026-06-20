@@ -69,11 +69,12 @@ describe('file limits', () => {
 })
 
 describe('supportsAutoUpload', () => {
-  it('allows image upload for ChatGPT, Gemini, and Doubao', () => {
+  it('allows image upload only for platforms with verified image support', () => {
     const image = classifyFile(new File(['x'], 'photo.png', { type: 'image/png' }))
     expect(supportsAutoUpload('chatgpt', image)).toBe(true)
     expect(supportsAutoUpload('gemini', image)).toBe(true)
     expect(supportsAutoUpload('doubao', image)).toBe(true)
+    expect(supportsAutoUpload('deepseek', image)).toBe(false)
   })
 
   it('does not auto-upload document files to ChatGPT in v1', () => {

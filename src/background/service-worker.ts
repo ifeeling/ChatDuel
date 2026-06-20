@@ -26,6 +26,7 @@ const PLATFORM_URL_PREFIXES: Record<AIPlatform, string[]> = {
   chatgpt: ['https://chatgpt.com/'],
   gemini: ['https://gemini.google.com/'],
   doubao: ['https://www.doubao.com/', 'https://doubao.com/'],
+  deepseek: ['https://chat.deepseek.com/'],
 }
 
 const CHAT_TAB_IDS_KEY = 'chatTabIds'
@@ -102,7 +103,7 @@ chrome.runtime.onInstalled.addListener(() => {
   scheduleSelectorConfigRefresh()
   void refreshRemoteSelectorConfig()
   chrome.declarativeNetRequest
-    .updateDynamicRules({ removeRuleIds: [1, 2] })
+    .updateDynamicRules({ removeRuleIds: [1, 2, 3, 4, 5] })
     .catch((e) => console.warn('[ChatDuel] startup cleanup failed', e))
 })
 

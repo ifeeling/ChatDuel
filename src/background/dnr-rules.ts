@@ -1,4 +1,4 @@
-// declarativeNetRequest 规则:按需启用,把 chatgpt.com / gemini.google.com / doubao.com
+// declarativeNetRequest 规则:按需启用,把 chatgpt.com / gemini.google.com / doubao.com / chat.deepseek.com
 // 的 X-Frame-Options 删掉,把它们 CSP 里的 frame-ancestors 改写为允许
 // 被 chrome-extension://* 页面嵌入,这样 chat.html 才能用 iframe 嵌官方页面。
 //
@@ -7,7 +7,8 @@
 // updateDynamicRules 静默失败,iframe 嵌入不进去,content script 也没法注入。
 // 详见 docs/postmortems/2026-06-09-iframe-no-response.md
 
-const RULE_IDS = { chatgpt: 1, gemini: 2, doubao: 3 } as const
+const RULE_IDS = { chatgpt: 1, gemini: 2, doubao: 4, deepseek: 5 } as const
+const REMOVE_RULE_IDS = [1, 2, 3, 4, 5]
 
 const FRAME_ANCESTORS_VALUE = "frame-ancestors 'self' chrome-extension://*"
 
@@ -68,10 +69,28 @@ function buildDoubaoRule(): ModifyHeadersRule {
   }
 }
 
+function buildDeepSeekRule(): ModifyHeadersRule {
+  return {
+    id: RULE_IDS.deepseek,
+    priority: 1,
+    condition: {
+      urlFilter: 'chat.deepseek.com',
+      resourceTypes: [chrome.declarativeNetRequest.ResourceType.SUB_FRAME, chrome.declarativeNetRequest.ResourceType.MAIN_FRAME],
+    },
+    action: {
+      type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
+      responseHeaders: [
+        { header: 'Content-Security-Policy', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: FRAME_ANCESTORS_VALUE },
+        { header: 'X-Frame-Options', operation: chrome.declarativeNetRequest.HeaderOperation.REMOVE },
+      ],
+    },
+  }
+}
+
 export async function enableEmbedRules(): Promise<void> {
   await chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds: [RULE_IDS.chatgpt, RULE_IDS.gemini, RULE_IDS.doubao],
-    addRules: [buildChatGPTRule(), buildGeminiRule(), buildDoubaoRule()],
+    removeRuleIds: REMOVE_RULE_IDS,
+    addRules: [buildChatGPTRule(), buildGeminiRule(), buildDoubaoRule(), buildDeepSeekRule()],
   })
   const rules = await chrome.declarativeNetRequest.getDynamicRules()
   console.log('[AIChatRoom] embed rules enabled, count =', rules.length)
@@ -79,7 +98,7 @@ export async function enableEmbedRules(): Promise<void> {
 
 export async function disableEmbedRules(): Promise<void> {
   await chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds: [RULE_IDS.chatgpt, RULE_IDS.gemini, RULE_IDS.doubao],
+    removeRuleIds: REMOVE_RULE_IDS,
   })
   console.log('[AIChatRoom] embed rules disabled')
 }

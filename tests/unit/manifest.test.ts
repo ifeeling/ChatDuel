@@ -28,6 +28,15 @@ describe('manifest', () => {
     expect(doubaoScript?.all_frames).toBe(true)
   })
 
+  it('declares deepseek host permissions and content script probe', () => {
+    expect(manifest.host_permissions).toContain('https://chat.deepseek.com/*')
+
+    const deepseekScript = manifest.content_scripts.find((script) => script.js.includes('src/content-scripts/deepseek-content.ts'))
+    expect(deepseekScript).toBeTruthy()
+    expect(deepseekScript?.matches).toEqual(['https://chat.deepseek.com/*'])
+    expect(deepseekScript?.all_frames).toBe(true)
+  })
+
   it('allows fetching selector config from the ChatDuel backend only', () => {
     expect(manifest.host_permissions).toContain('https://chatduel.ifeeling.app/*')
   })

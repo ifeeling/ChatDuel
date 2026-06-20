@@ -16,6 +16,9 @@ describe('parseAtMentions', () => {
   it('extracts doubao after platform registration', () => {
     expect(parseAtMentions('@doubao 你好')).toEqual(['doubao'])
   })
+  it('extracts deepseek after platform registration', () => {
+    expect(parseAtMentions('@deepseek 你好')).toEqual(['deepseek'])
+  })
   it('dedupes repeated mentions', () => {
     const r = parseAtMentions('@chatgpt @chatgpt hi')
     expect(r).toEqual(['chatgpt'])
@@ -82,6 +85,11 @@ describe('filterCandidates', () => {
   it('filters doubao by key prefix', () => {
     expect(filterCandidates(candidates, 'dou')).toEqual([
       AI_PLATFORMS.doubao,
+    ])
+  })
+  it('filters deepseek by key prefix', () => {
+    expect(filterCandidates(candidates, 'deep')).toEqual([
+      AI_PLATFORMS.deepseek,
     ])
   })
   it('returns empty when no match', () => {

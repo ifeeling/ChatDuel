@@ -12,6 +12,8 @@ export default defineConfig({
         'service-worker': resolve(import.meta.dirname, 'src/background/service-worker.ts'),
         'content-chatgpt': resolve(import.meta.dirname, 'src/content-scripts/chatgpt-content.ts'),
         'content-gemini': resolve(import.meta.dirname, 'src/content-scripts/gemini-content.ts'),
+        'content-doubao': resolve(import.meta.dirname, 'src/content-scripts/doubao-content.ts'),
+        'content-deepseek': resolve(import.meta.dirname, 'src/content-scripts/deepseek-content.ts'),
       },
     },
   },

@@ -29,6 +29,11 @@ describe('remote selector config', () => {
             inputBox: ['textarea', '[role="textbox"]'],
           },
         },
+        deepseek: {
+          selectors: {
+            inputBox: ['textarea', '[contenteditable="true"]'],
+          },
+        },
       },
     }, NOW)
 
@@ -36,6 +41,7 @@ describe('remote selector config', () => {
     expect(config?.platforms.chatgpt?.selectors.stopButton).toBe('button[data-testid="stop-button"]')
     expect(config?.platforms.chatgpt?.selectors).not.toHaveProperty('unknownKey')
     expect(config?.platforms.doubao?.selectors.inputBox).toEqual(['textarea', '[role="textbox"]'])
+    expect(config?.platforms.deepseek?.selectors.inputBox).toEqual(['textarea', '[contenteditable="true"]'])
   })
 
   it('rejects expired config', () => {

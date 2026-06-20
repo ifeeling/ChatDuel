@@ -6,6 +6,7 @@ const scripts = [
   'chatgpt-content.ts',
   'gemini-content.ts',
   'doubao-content.ts',
+  'deepseek-content.ts',
 ]
 
 describe('content script location bridge', () => {
@@ -16,4 +17,5 @@ describe('content script location bridge', () => {
     expect(source).toContain("type: 'location'")
     expect(source).toContain('href: location.href')
   })
+
 })

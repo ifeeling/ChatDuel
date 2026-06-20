@@ -165,8 +165,8 @@ const transferSelected = $<HTMLDivElement>('#transfer-selected')
 const transferPreview = $<HTMLDivElement>('#transfer-preview')
 
 // ---------- 状态 ----------
-const readyMap: Record<AIPlatform, boolean> = { chatgpt: false, gemini: false, doubao: false }
-const readyWaiters: Record<AIPlatform, Array<(ok: boolean) => void>> = { chatgpt: [], gemini: [], doubao: [] }
+const readyMap: Record<AIPlatform, boolean> = { chatgpt: false, gemini: false, doubao: false, deepseek: false }
+const readyWaiters: Record<AIPlatform, Array<(ok: boolean) => void>> = { chatgpt: [], gemini: [], doubao: [], deepseek: [] }
 const RESPONSE_BACKFILL_INTERVAL_MS = 3000
 const RESPONSE_BACKFILL_MAX_ATTEMPTS = 20
 const RESPONSE_STABLE_REQUIRED_POLLS = 2
@@ -1141,6 +1141,7 @@ async function onSend() {
     targets.map(
       (p) =>
         new Promise<void>((resolve) => {
+          const shouldUploadFile = deliveryPlan.autoUploadTargets.includes(p)
           const win = panelIframe(p).contentWindow
           if (!win) {
             results.push({ p, ok: false })
@@ -1158,7 +1159,6 @@ async function onSend() {
             }
           }
           window.addEventListener('message', onMsg)
-          const shouldUploadFile = deliveryPlan.autoUploadTargets.includes(p)
           postToIframe(p, 'write-and-send', {
             text: textToSend,
             imageDataUrl: shouldUploadFile ? imageDataUrl : undefined,
@@ -1766,10 +1766,7 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform, sel
       fromLabel,
       targetLabel: getPlatformMeta(targetKey)?.label ?? targetKey,
     }), 'info', 2000)
-    tgtWin?.postMessage(
-      { source: 'aichatroom-parent', action: 'write-and-send', text: prompt },
-      platformOrigin(targetKey),
-    )
+    postToIframe(targetKey, 'write-and-send', { text: prompt })
   } catch (e) {
     console.error('[AIChatRoom chat] transfer failed', e)
     showToast(uiText('transfer.failed', { message: e instanceof Error ? e.message : String(e) }), 'err', 5000)
