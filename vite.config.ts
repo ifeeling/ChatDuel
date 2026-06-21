@@ -14,6 +14,8 @@ export default defineConfig({
         'content-gemini': resolve(import.meta.dirname, 'src/content-scripts/gemini-content.ts'),
         'content-doubao': resolve(import.meta.dirname, 'src/content-scripts/doubao-content.ts'),
         'content-deepseek': resolve(import.meta.dirname, 'src/content-scripts/deepseek-content.ts'),
+        'content-copilot': resolve(import.meta.dirname, 'src/content-scripts/copilot-content.ts'),
+        'content-grok': resolve(import.meta.dirname, 'src/content-scripts/grok-content.ts'),
       },
     },
   },

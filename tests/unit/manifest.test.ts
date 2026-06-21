@@ -37,6 +37,21 @@ describe('manifest', () => {
     expect(deepseekScript?.all_frames).toBe(true)
   })
 
+  it('declares copilot and grok host permissions and content script probes', () => {
+    expect(manifest.host_permissions).toContain('https://copilot.microsoft.com/*')
+    expect(manifest.host_permissions).toContain('https://grok.com/*')
+
+    const copilotScript = manifest.content_scripts.find((script) => script.js.includes('src/content-scripts/copilot-content.ts'))
+    expect(copilotScript).toBeTruthy()
+    expect(copilotScript?.matches).toEqual(['https://copilot.microsoft.com/*'])
+    expect(copilotScript?.all_frames).toBe(true)
+
+    const grokScript = manifest.content_scripts.find((script) => script.js.includes('src/content-scripts/grok-content.ts'))
+    expect(grokScript).toBeTruthy()
+    expect(grokScript?.matches).toEqual(['https://grok.com/*'])
+    expect(grokScript?.all_frames).toBe(true)
+  })
+
   it('allows fetching selector config from the ChatDuel backend only', () => {
     expect(manifest.host_permissions).toContain('https://chatduel.ifeeling.app/*')
   })

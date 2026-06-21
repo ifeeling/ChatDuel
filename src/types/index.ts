@@ -1,4 +1,4 @@
-export type AIPlatform = 'chatgpt' | 'gemini' | 'doubao' | 'deepseek'
+export type AIPlatform = 'chatgpt' | 'gemini' | 'doubao' | 'deepseek' | 'copilot' | 'grok'
 
 export type StreamStatus =
   | 'idle'

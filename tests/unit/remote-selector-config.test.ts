@@ -34,6 +34,17 @@ describe('remote selector config', () => {
             inputBox: ['textarea', '[contenteditable="true"]'],
           },
         },
+        copilot: {
+          selectors: {
+            inputBox: ['textarea', '[role="textbox"]'],
+            sendButton: 'button[type="submit"]',
+          },
+        },
+        grok: {
+          selectors: {
+            response: ['article', '[data-testid*="message" i]'],
+          },
+        },
       },
     }, NOW)
 
@@ -42,6 +53,9 @@ describe('remote selector config', () => {
     expect(config?.platforms.chatgpt?.selectors).not.toHaveProperty('unknownKey')
     expect(config?.platforms.doubao?.selectors.inputBox).toEqual(['textarea', '[role="textbox"]'])
     expect(config?.platforms.deepseek?.selectors.inputBox).toEqual(['textarea', '[contenteditable="true"]'])
+    expect(config?.platforms.copilot?.selectors.inputBox).toEqual(['textarea', '[role="textbox"]'])
+    expect(config?.platforms.copilot?.selectors.sendButton).toEqual(['button[type="submit"]'])
+    expect(config?.platforms.grok?.selectors.response).toEqual(['article', '[data-testid*="message" i]'])
   })
 
   it('rejects expired config', () => {

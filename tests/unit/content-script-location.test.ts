@@ -7,6 +7,8 @@ const scripts = [
   'gemini-content.ts',
   'doubao-content.ts',
   'deepseek-content.ts',
+  'copilot-content.ts',
+  'grok-content.ts',
 ]
 
 describe('content script location bridge', () => {

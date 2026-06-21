@@ -165,8 +165,11 @@ const transferSelected = $<HTMLDivElement>('#transfer-selected')
 const transferPreview = $<HTMLDivElement>('#transfer-preview')
 
 // ---------- 状态 ----------
-const readyMap: Record<AIPlatform, boolean> = { chatgpt: false, gemini: false, doubao: false, deepseek: false }
-const readyWaiters: Record<AIPlatform, Array<(ok: boolean) => void>> = { chatgpt: [], gemini: [], doubao: [], deepseek: [] }
+const readyMap = Object.fromEntries(SUPPORTED_PLATFORMS.map((platform) => [platform, false])) as Record<AIPlatform, boolean>
+const readyWaiters = SUPPORTED_PLATFORMS.reduce((acc, platform) => {
+  acc[platform] = []
+  return acc
+}, {} as Record<AIPlatform, Array<(ok: boolean) => void>>)
 const RESPONSE_BACKFILL_INTERVAL_MS = 3000
 const RESPONSE_BACKFILL_MAX_ATTEMPTS = 20
 const RESPONSE_STABLE_REQUIRED_POLLS = 2

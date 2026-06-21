@@ -78,6 +78,42 @@
         </header>
         <iframe class="panel-iframe" data-platform="deepseek" src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
       </section>
+
+      <div class="splitter"></div>
+
+      <section class="panel" data-platform="copilot">
+        <header class="panel-header">
+          <span class="panel-title-wrap">
+            <span class="panel-title">Copilot</span>
+            <span class="status-item" data-platform="copilot">
+              <span class="dot"></span><span class="status-text">待接入</span>
+            </span>
+          </span>
+          <button class="panel-transfer" data-platform="copilot" title="把这里的回答转发给其它 AI">转发 ➔</button>
+          <button class="panel-switch" data-platform="copilot" title="切换这个位置的 AI" type="button">切换</button>
+          <button class="panel-open" data-platform="copilot" title="在新标签页打开官方页面">↗</button>
+          <button class="panel-close" data-platform="copilot" title="关闭这个 AI 面板" type="button">×</button>
+        </header>
+        <iframe class="panel-iframe" data-platform="copilot" src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
+      </section>
+
+      <div class="splitter"></div>
+
+      <section class="panel" data-platform="grok">
+        <header class="panel-header">
+          <span class="panel-title-wrap">
+            <span class="panel-title">Grok</span>
+            <span class="status-item" data-platform="grok">
+              <span class="dot"></span><span class="status-text">待接入</span>
+            </span>
+          </span>
+          <button class="panel-transfer" data-platform="grok" title="把这里的回答转发给其它 AI">转发 ➔</button>
+          <button class="panel-switch" data-platform="grok" title="切换这个位置的 AI" type="button">切换</button>
+          <button class="panel-open" data-platform="grok" title="在新标签页打开官方页面">↗</button>
+          <button class="panel-close" data-platform="grok" title="关闭这个 AI 面板" type="button">×</button>
+        </header>
+        <iframe class="panel-iframe" data-platform="grok" src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
+      </section>
     </main>
 
     <footer class="composer">
@@ -192,6 +228,26 @@
                 <span class="site-name">DeepSeek</span>
                 <span class="site-owner" data-site-owner="deepseek">深度求索</span>
                 <a class="site-open" href="https://chat.deepseek.com/" target="_blank" rel="noreferrer" title="打开 DeepSeek">↗</a>
+              </label>
+              <label class="site-row">
+                <span class="switch">
+                  <input id="setting-copilot" type="checkbox" data-platform="copilot">
+                  <span class="switch-track"></span>
+                </span>
+                <span class="site-icon">CP</span>
+                <span class="site-name">Copilot</span>
+                <span class="site-owner" data-site-owner="copilot">Microsoft</span>
+                <a class="site-open" href="https://copilot.microsoft.com/" target="_blank" rel="noreferrer" title="打开 Copilot">↗</a>
+              </label>
+              <label class="site-row">
+                <span class="switch">
+                  <input id="setting-grok" type="checkbox" data-platform="grok">
+                  <span class="switch-track"></span>
+                </span>
+                <span class="site-icon">GK</span>
+                <span class="site-name">Grok</span>
+                <span class="site-owner" data-site-owner="grok">xAI</span>
+                <a class="site-open" href="https://grok.com/" target="_blank" rel="noreferrer" title="打开 Grok">↗</a>
               </label>
             </div>
             <div class="settings-note">

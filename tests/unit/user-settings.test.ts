@@ -45,7 +45,7 @@ describe('user-settings', () => {
     const saved = await saveUserSettings({
       enabledPlatforms: { chatgpt: false, gemini: true, doubao: true },
     })
-    expect(saved.enabledPlatforms).toEqual({ chatgpt: false, gemini: true, doubao: true, deepseek: false })
+    expect(saved.enabledPlatforms).toEqual({ chatgpt: false, gemini: true, doubao: true, deepseek: false, copilot: false, grok: false })
     expect(saved.promptTemplates.transfer).toBe(DEFAULT_USER_SETTINGS.promptTemplates.transfer)
     expect(saved.promptTemplates.summaryFinalAnswer).toBe(DEFAULT_USER_SETTINGS.promptTemplates.summaryFinalAnswer)
     await expect(loadUserSettings()).resolves.toEqual(saved)
@@ -56,7 +56,7 @@ describe('user-settings', () => {
       platformOrder: ['gemini', 'doubao', 'chatgpt'],
     })
 
-    expect(saved.platformOrder).toEqual(['gemini', 'doubao', 'chatgpt', 'deepseek'])
+    expect(saved.platformOrder).toEqual(['gemini', 'doubao', 'chatgpt', 'deepseek', 'copilot', 'grok'])
     await expect(loadUserSettings()).resolves.toEqual(saved)
   })
 
@@ -111,19 +111,19 @@ describe('user-settings', () => {
       platformOrder: ['doubao', 'chatgpt'],
     })
 
-    expect(saved.platformOrder).toEqual(['doubao', 'chatgpt', 'gemini', 'deepseek'])
+    expect(saved.platformOrder).toEqual(['doubao', 'chatgpt', 'gemini', 'deepseek', 'copilot', 'grok'])
   })
 
   it('swaps platform display order when changing a panel to an active platform', () => {
     expect(swapPlatformOrder(['gemini', 'chatgpt', 'doubao'], 'chatgpt', 'doubao'))
-      .toEqual(['gemini', 'doubao', 'chatgpt', 'deepseek'])
+      .toEqual(['gemini', 'doubao', 'chatgpt', 'deepseek', 'copilot', 'grok'])
   })
 
   it('fills missing platform preferences from defaults', async () => {
     const saved = await saveUserSettings({
       enabledPlatforms: { chatgpt: true, gemini: true },
     })
-    expect(saved.enabledPlatforms).toEqual({ chatgpt: true, gemini: true, doubao: false, deepseek: false })
+    expect(saved.enabledPlatforms).toEqual({ chatgpt: true, gemini: true, doubao: false, deepseek: false, copilot: false, grok: false })
   })
 
   it('keeps DeepSeek disabled by default while normalizing platform order', async () => {
@@ -132,7 +132,9 @@ describe('user-settings', () => {
     })
 
     expect(saved.enabledPlatforms.deepseek).toBe(false)
-    expect(saved.platformOrder).toEqual(['deepseek', 'chatgpt', 'gemini', 'doubao'])
+    expect(saved.enabledPlatforms.copilot).toBe(false)
+    expect(saved.enabledPlatforms.grok).toBe(false)
+    expect(saved.platformOrder).toEqual(['deepseek', 'chatgpt', 'gemini', 'doubao', 'copilot', 'grok'])
   })
 
   it('falls back to defaults when fewer than two platforms are enabled', async () => {

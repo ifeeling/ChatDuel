@@ -75,6 +75,7 @@ describe('filterCandidates', () => {
   it('filters by key prefix', () => {
     expect(filterCandidates(candidates, 'c')).toEqual([
       AI_PLATFORMS.chatgpt,
+      AI_PLATFORMS.copilot,
     ])
   })
   it('filters by label prefix (case-insensitive)', () => {
@@ -90,6 +91,11 @@ describe('filterCandidates', () => {
   it('filters deepseek by key prefix', () => {
     expect(filterCandidates(candidates, 'deep')).toEqual([
       AI_PLATFORMS.deepseek,
+    ])
+  })
+  it('filters grok by key prefix', () => {
+    expect(filterCandidates(candidates, 'gro')).toEqual([
+      AI_PLATFORMS.grok,
     ])
   })
   it('returns empty when no match', () => {

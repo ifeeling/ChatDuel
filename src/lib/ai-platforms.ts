@@ -36,7 +36,7 @@ export interface AIPlatformCapabilities {
 
 export const MIN_ACTIVE_PLATFORMS = 2
 export const MAX_ACTIVE_PLATFORMS = 3
-export const SUPPORTED_PLATFORMS: AIPlatform[] = ['chatgpt', 'gemini', 'doubao', 'deepseek']
+export const SUPPORTED_PLATFORMS: AIPlatform[] = ['chatgpt', 'gemini', 'doubao', 'deepseek', 'copilot', 'grok']
 
 /** 元数据表(key 必须跟 types/index.ts AIPlatform 联合一致) */
 export const AI_PLATFORMS: Record<AIPlatform, AIPlatformMeta> = {
@@ -84,6 +84,32 @@ export const AI_PLATFORMS: Record<AIPlatform, AIPlatformMeta> = {
     label: 'DeepSeek',
     icon: 'DS',
     url: 'https://chat.deepseek.com/',
+    capabilities: {
+      supportsEmbed: true,
+      supportsText: true,
+      supportsImageUpload: false,
+      supportsFileUpload: false,
+      supportsLastResponse: true,
+    },
+  },
+  copilot: {
+    key: 'copilot',
+    label: 'Copilot',
+    icon: 'CP',
+    url: 'https://copilot.microsoft.com/',
+    capabilities: {
+      supportsEmbed: true,
+      supportsText: true,
+      supportsImageUpload: false,
+      supportsFileUpload: false,
+      supportsLastResponse: true,
+    },
+  },
+  grok: {
+    key: 'grok',
+    label: 'Grok',
+    icon: 'GK',
+    url: 'https://grok.com/',
     capabilities: {
       supportsEmbed: true,
       supportsText: true,

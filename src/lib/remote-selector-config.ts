@@ -39,6 +39,8 @@ const ALLOWED_SELECTOR_KEYS: Record<AIPlatform, Set<string>> = {
   ]),
   doubao: new Set(['inputBox', 'sendButton', 'response']),
   deepseek: new Set(['inputBox', 'sendButton', 'response']),
+  copilot: new Set(['inputBox', 'sendButton', 'response']),
+  grok: new Set(['inputBox', 'sendButton', 'response']),
 }
 
 const SUPPORTED_PLATFORMS = Object.keys(ALLOWED_SELECTOR_KEYS) as AIPlatform[]
@@ -86,7 +88,7 @@ export function sanitizeRemoteSelectorConfig(value: unknown, now = Date.now()): 
     if (!isPlainObject(platformConfig) || !isPlainObject(platformConfig.selectors)) continue
 
     const allowedKeys = ALLOWED_SELECTOR_KEYS[platform]
-    const allowArray = platform === 'doubao' || platform === 'deepseek'
+    const allowArray = platform === 'doubao' || platform === 'deepseek' || platform === 'copilot' || platform === 'grok'
     const selectors: SelectorOverrideMap = {}
     for (const [key, rawSelector] of Object.entries(platformConfig.selectors)) {
       if (!allowedKeys.has(key)) continue
