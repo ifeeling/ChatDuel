@@ -37,11 +37,7 @@ function pendingResponses(targetPlatforms: AIPlatform[]): Partial<Record<AIPlatf
 }
 
 export function normalizeCapturedResponse(platform: AIPlatform, text: string): string {
-  if (platform !== 'copilot') return text.trim()
-  return text
-    .replace(/\r\n?/g, '\n')
-    .replace(/^[\s#\u200b\u200c\u200d\ufeff]*Copilot[\s\u200b\u200c\u200d\ufeff]*(?:\n[\s\u200b\u200c\u200d\ufeff]*)*said\b[\s\u200b\u200c\u200d\ufeff]*/i, '')
-    .trim()
+  return text.trim()
 }
 
 export function isMoreCompleteCapturedResponse(next: string, current: string | undefined): boolean {

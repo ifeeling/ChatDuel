@@ -79,41 +79,6 @@
         <iframe class="panel-iframe" data-platform="deepseek" src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
       </section>
 
-      <div class="splitter"></div>
-
-      <section class="panel" data-platform="copilot">
-        <header class="panel-header">
-          <span class="panel-title-wrap">
-            <span class="panel-title">Copilot</span>
-            <span class="status-item" data-platform="copilot">
-              <span class="dot"></span><span class="status-text">待接入</span>
-            </span>
-          </span>
-          <button class="panel-transfer" data-platform="copilot" title="把这里的回答转发给其它 AI">转发 ➔</button>
-          <button class="panel-switch" data-platform="copilot" title="切换这个位置的 AI" type="button">切换</button>
-          <button class="panel-open" data-platform="copilot" title="在新标签页打开官方页面">↗</button>
-          <button class="panel-close" data-platform="copilot" title="关闭这个 AI 面板" type="button">×</button>
-        </header>
-        <iframe class="panel-iframe" data-platform="copilot" src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
-      </section>
-
-      <div class="splitter"></div>
-
-      <section class="panel" data-platform="grok">
-        <header class="panel-header">
-          <span class="panel-title-wrap">
-            <span class="panel-title">Grok</span>
-            <span class="status-item" data-platform="grok">
-              <span class="dot"></span><span class="status-text">待接入</span>
-            </span>
-          </span>
-          <button class="panel-transfer" data-platform="grok" title="把这里的回答转发给其它 AI">转发 ➔</button>
-          <button class="panel-switch" data-platform="grok" title="切换这个位置的 AI" type="button">切换</button>
-          <button class="panel-open" data-platform="grok" title="在新标签页打开官方页面">↗</button>
-          <button class="panel-close" data-platform="grok" title="关闭这个 AI 面板" type="button">×</button>
-        </header>
-        <iframe class="panel-iframe" data-platform="grok" src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
-      </section>
     </main>
 
     <footer class="composer">
@@ -229,27 +194,6 @@
                 <span class="site-owner" data-site-owner="deepseek">深度求索</span>
                 <a class="site-open" href="https://chat.deepseek.com/" target="_blank" rel="noreferrer" title="打开 DeepSeek">↗</a>
               </label>
-              <label class="site-row">
-                <span class="switch">
-                  <input id="setting-copilot" type="checkbox" data-platform="copilot">
-                  <span class="switch-track"></span>
-                </span>
-                <span class="site-icon">CP</span>
-                <span class="site-name">Copilot</span>
-                <span class="site-owner" data-site-owner="copilot">Microsoft</span>
-                <span class="site-short-note" data-site-short-note="copilot-chrome">仅支持 Chrome</span>
-                <a class="site-open" href="https://copilot.microsoft.com/" target="_blank" rel="noreferrer" title="打开 Copilot">↗</a>
-              </label>
-              <label class="site-row">
-                <span class="switch">
-                  <input id="setting-grok" type="checkbox" data-platform="grok">
-                  <span class="switch-track"></span>
-                </span>
-                <span class="site-icon">GK</span>
-                <span class="site-name">Grok</span>
-                <span class="site-owner" data-site-owner="grok">xAI</span>
-                <a class="site-open" href="https://grok.com/" target="_blank" rel="noreferrer" title="打开 Grok">↗</a>
-              </label>
             </div>
             <div class="settings-note">
               <strong id="settings-note-prefix">注意：</strong><span id="settings-note-body">使用前请先确保官网可以访问，并且已经登录。打开多个官方页面会占用更多内存，建议先保持 2 个以内。</span>
@@ -304,10 +248,6 @@
               <section class="help-card">
                 <h3>官网会话</h3>
                 <p>“官网会话”保存官方网页的会话链接和当时显示的 AI 状态，不保存 AI 回复正文。点击会话历史可以还原面板并继续聊。</p>
-              </section>
-              <section class="help-card">
-                <h3>浏览器兼容</h3>
-                <p>Copilot 目前可在 Chrome 扩展环境中使用；Edge 自带 Copilot 可能会拦截扩展 iframe，暂不支持在 Edge 扩展环境中使用 Copilot。</p>
               </section>
             </div>
           </div>

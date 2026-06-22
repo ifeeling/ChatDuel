@@ -25,9 +25,6 @@ describe('i18n', () => {
     const keys = [
       'settings.noteBody',
       'site.owner.doubao',
-      'site.owner.copilot',
-      'site.owner.grok',
-      'site.note.copilot-edge',
       'help.browserCompatibility.body',
       'history.userQuestion',
       'history.responseTitle',
@@ -55,8 +52,6 @@ describe('i18n', () => {
       expect(t('en-US', key), key).not.toMatch(/[\u4e00-\u9fff]/)
     }
     expect(t('en-US', 'site.owner.doubao')).toBe('ByteDance')
-    expect(t('en-US', 'site.owner.copilot')).toBe('Microsoft')
-    expect(t('en-US', 'site.owner.grok')).toBe('xAI')
   })
 
   it('falls back to Chinese only for unknown keys, not known English keys', () => {

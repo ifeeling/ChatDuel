@@ -71,20 +71,4 @@ describe('history-format', () => {
     expect(markdown).toContain('\n\n### 风险提醒\n\n这里是风险。')
   })
 
-  it('removes Copilot speaker labels when rendering saved history', () => {
-    const markdown = formatSessionMarkdown({
-      ...makeSession(),
-      targetPlatforms: ['copilot'],
-      responses: {
-        copilot: {
-          status: 'captured',
-          text: '###### Copilot\n\nsaid\n\n你好，cong。',
-        },
-      },
-    })
-
-    expect(markdown).toContain('## Copilot 回答\n\n你好，cong。')
-    expect(markdown).not.toContain('###### Copilot')
-    expect(markdown).not.toContain('\nsaid\n')
-  })
 })

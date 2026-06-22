@@ -4,7 +4,7 @@ import { choosePlatformMessageRoute } from '../../src/chat/platform-message-rout
 describe('platform message route', () => {
   it('uses official tab routing when an embedded panel is blocked by chrome error page', () => {
     expect(choosePlatformMessageRoute({
-      platform: 'copilot',
+      platform: 'deepseek',
       iframeReady: false,
       iframeUrl: 'chrome-error://chromewebdata/',
       supportsEmbed: true,
@@ -13,18 +13,18 @@ describe('platform message route', () => {
 
   it('keeps iframe routing for ready embedded platforms', () => {
     expect(choosePlatformMessageRoute({
-      platform: 'grok',
+      platform: 'chatgpt',
       iframeReady: true,
-      iframeUrl: 'https://grok.com/',
+      iframeUrl: 'https://chatgpt.com/',
       supportsEmbed: true,
     })).toBe('iframe')
   })
 
-  it('keeps Copilot on iframe routing while it is still loading', () => {
+  it('keeps an embeddable platform on iframe routing while it is still loading', () => {
     expect(choosePlatformMessageRoute({
-      platform: 'copilot',
+      platform: 'deepseek',
       iframeReady: false,
-      iframeUrl: 'https://copilot.microsoft.com/',
+      iframeUrl: 'https://chat.deepseek.com/',
       supportsEmbed: true,
     })).toBe('iframe')
   })

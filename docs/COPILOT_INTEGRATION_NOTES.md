@@ -1,19 +1,23 @@
-# Copilot 接入记录
+# Copilot 接入归档记录
 
 ## 当前结论
 
-2026-06-21，Copilot 已作为可选平台接入 ChatDuel 扩展，默认关闭。
+2026-06-22，Copilot 接入暂时从当前主线移除。原因是用户侧优先级调整：Copilot 网页端聊天使用占比暂时较低，当前阶段只继续保留 DeepSeek 接入优化。
 
-当前接入范围：基础文本发送、读取最后回答、转发和总结目标选择。图片、PDF/XLSX 等附件暂不标记为自动上传。
+如果以后要恢复 Copilot 接入，请先查看 GitHub tag：
+
+`copilot-grok-wip-2026-06-22`
+
+该 tag 保留了 2026-06-21 的实验实现，包括基础文本发送、读取最后回答、转发和总结目标选择。图片、PDF/XLSX 等附件当时未标记为自动上传。
 
 官方入口：`https://copilot.microsoft.com/`
 
 浏览器兼容结论：
 
-- Chrome 扩展环境已验证：Copilot iframe 可以正常显示，基础文本可以发送并收到回答。
+- Chrome 扩展环境当时已验证：Copilot iframe 可以正常显示，基础文本可以发送并收到回答。
 - Edge 扩展环境暂不支持：新版 Edge 自带 Copilot 入口，实测仍会让 Copilot iframe 进入 `chrome-error://chromewebdata/` 或发送失败。当前不再继续为 Edge 追 Copilot iframe，设置界面和使用帮助会提示用户在 Chrome 中使用 Copilot。
 
-## 本次实现了什么
+## 归档版本实现了什么
 
 - 在 `AIPlatform`、`SUPPORTED_PLATFORMS` 和 `AI_PLATFORMS` 中加入 `copilot`。
 - 在用户设置中加入 Copilot，默认关闭，并加入面板顺序。

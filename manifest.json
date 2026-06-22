@@ -37,9 +37,6 @@
     "https://doubao.com/*",
     "https://www.doubao.com/*",
     "https://chat.deepseek.com/*",
-    "https://copilot.microsoft.com/*",
-    "https://grok.com/*",
-    "https://grokusercontent.com/*",
     "https://chatduel.ifeeling.app/*"
   ],
   "content_scripts": [
@@ -80,26 +77,6 @@
       ],
       "js": [
         "src/content-scripts/deepseek-content.ts"
-      ],
-      "run_at": "document_idle",
-      "all_frames": true
-    },
-    {
-      "matches": [
-        "https://copilot.microsoft.com/*"
-      ],
-      "js": [
-        "src/content-scripts/copilot-content.ts"
-      ],
-      "run_at": "document_idle",
-      "all_frames": true
-    },
-    {
-      "matches": [
-        "https://grok.com/*"
-      ],
-      "js": [
-        "src/content-scripts/grok-content.ts"
       ],
       "run_at": "document_idle",
       "all_frames": true

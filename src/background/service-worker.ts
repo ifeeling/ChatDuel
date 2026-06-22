@@ -27,8 +27,6 @@ const PLATFORM_URL_PREFIXES: Record<AIPlatform, string[]> = {
   gemini: ['https://gemini.google.com/'],
   doubao: ['https://www.doubao.com/', 'https://doubao.com/'],
   deepseek: ['https://chat.deepseek.com/'],
-  copilot: ['https://copilot.microsoft.com/'],
-  grok: ['https://grok.com/'],
 }
 
 const CHAT_TAB_IDS_KEY = 'chatTabIds'

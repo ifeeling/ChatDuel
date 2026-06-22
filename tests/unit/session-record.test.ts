@@ -76,32 +76,8 @@ describe('session-record', () => {
     })
   })
 
-  it('normalizes platform-specific labels before saving captured responses', () => {
-    const session = createSessionRecord({
-      prompt: 'hello',
-      sentPrompt: 'hello',
-      targetPlatforms: ['copilot'],
-      now: 1000,
-      id: 's1',
-    })
-
-    const updated = applyCapturedResponses(session, {
-      copilot: '###### Copilot\n\nsaid\n\n你好，cong。',
-    }, 3000)
-
-    expect(updated.responses.copilot).toEqual({
-      text: '你好，cong。',
-      status: 'captured',
-      capturedAt: 3000,
-    })
-  })
-
-  it('normalizes copied Copilot labels with extra blank lines', () => {
-    expect(normalizeCapturedResponse('copilot', '###### Copilot\n\n\nsaid\n\n晚上好，cong。')).toBe('晚上好，cong。')
-  })
-
-  it('normalizes copied Copilot labels even when whitespace is odd', () => {
-    expect(normalizeCapturedResponse('copilot', ' \n###### Copilot\n \n said\n \n晚上好，cong。')).toBe('晚上好，cong。')
+  it('trims captured response text before saving', () => {
+    expect(normalizeCapturedResponse('deepseek', ' \n你好，cong。\n ')).toBe('你好，cong。')
   })
 
   it('allows a later fuller response to replace an early partial capture', () => {
