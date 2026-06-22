@@ -74,15 +74,34 @@ function queryFirst<T extends Element = Element>(selectors: string[]): T | null 
 }
 
 function writeNativeTextareaValue(el: HTMLTextAreaElement, text: string): void {
+  el.focus()
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
   setter?.call(el, text)
+  el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }))
   el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }))
+  el.dispatchEvent(new Event('change', { bubbles: true }))
 }
 
 function writeEditableValue(el: HTMLElement, text: string): void {
+  el.focus()
   el.textContent = text
-  el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }))
+  const selection = window.getSelection?.()
+  if (selection) {
+    selection.removeAllRanges()
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    range.collapse(false)
+    selection.addRange(range)
+  }
+  if (typeof document.execCommand === 'function') {
+    document.execCommand('selectAll', false)
+    document.execCommand('insertText', false, text)
+  } else {
+    el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }))
+    el.textContent = text
+  }
   el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }))
+  el.dispatchEvent(new Event('change', { bubbles: true }))
 }
 
 function findSendControl(selectors: TextWebSelectors): HTMLElement | null {
@@ -124,6 +143,20 @@ function dispatchEnter(el: HTMLElement): void {
   el.dispatchEvent(new KeyboardEvent('keydown', init))
 }
 
+function getComposerText(el: HTMLElement): string {
+  if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) return el.value
+  return el.textContent ?? ''
+}
+
+async function waitForComposerSubmitted(el: HTMLElement, text: string): Promise<void> {
+  const deadline = Date.now() + 1200
+  while (Date.now() < deadline) {
+    if (!getComposerText(el).includes(text)) return
+    await new Promise((resolve) => setTimeout(resolve, 80))
+  }
+  throw new Error('发送后没有确认: 输入框内容仍在,可能没有真正发出')
+}
+
 function isHidden(el: HTMLElement): boolean {
   if (el.hidden || el.getAttribute('aria-hidden') === 'true') return true
   const style = window.getComputedStyle?.(el)
@@ -149,13 +182,21 @@ function responseCandidateScore(el: HTMLElement, text: string): number {
   return score
 }
 
-function getLatestResponseText(selectors: TextWebSelectors): string {
+function cleanupResponseText(platform: AIPlatform, text: string): string {
+  if (platform !== 'copilot') return text
+  return text
+    .replace(/^#{1,6}\s*Copilot\s*\n+\s*said\s*\n+/i, '')
+    .replace(/^Copilot\s+said\s*/i, '')
+    .trim()
+}
+
+function getLatestResponseText(selectors: TextWebSelectors, platform: AIPlatform): string {
   const seen = new Set<string>()
   const candidates = [...document.querySelectorAll<HTMLElement>(selectors.response.join(','))]
     .filter((el) => !isHidden(el))
     .filter((el) => !el.closest(RESPONSE_EXCLUDE_ANCESTORS))
     .map((el, index) => {
-      const text = elementToMarkdownText(el)
+      const text = cleanupResponseText(platform, elementToMarkdownText(el))
       return { text, score: responseCandidateScore(el, text), index }
     })
     .filter((candidate) => candidate.text.length > 0)
@@ -209,8 +250,11 @@ export function createTextWebAdapter(options: TextWebAdapterOptions, selectorOve
 
     async sendMessage(text: string) {
       await this.writeText(text)
+      const box = queryFirst<HTMLElement>(selectors.inputBox)
+      if (!box || !getComposerText(box).includes(text)) throw new Error('写入后没有确认: 输入框没有接收到文本')
       await new Promise((resolve) => setTimeout(resolve, 120))
       await this.triggerSend()
+      await waitForComposerSubmitted(box, text)
     },
 
     async attachImage() {
@@ -218,12 +262,12 @@ export function createTextWebAdapter(options: TextWebAdapterOptions, selectorOve
     },
 
     async getLastResponse() {
-      return getLatestResponseText(selectors)
+      return getLatestResponseText(selectors, options.platform)
     },
 
     async getConversationState(): Promise<ConversationState> {
       if (!queryFirst(selectors.inputBox)) return { status: 'error', errorMessage: options.loginErrorMessage }
-      const lastResponse = getLatestResponseText(selectors)
+      const lastResponse = getLatestResponseText(selectors, options.platform)
       if (lastResponse) return { status: 'finished', lastResponse }
       return { status: 'idle' }
     },

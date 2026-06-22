@@ -68,6 +68,7 @@ import {
   createSessionRecord,
   createSummarySessionRecord,
   isNewCapturedResponse,
+  normalizeCapturedResponse,
 } from '../lib/session-record'
 import {
   SEND_LOCK_TIMEOUT_MS,
@@ -87,6 +88,7 @@ import { buildTransferContent, buildTransferSourceOptions, type TransferSourceOp
 import { bindComposerFocusRestorer } from '../lib/focus-restore'
 import { filterSessionsByTitle } from '../lib/history-search'
 import { deleteConversation, isSpecificConversationUrl, loadConversations, renameConversation, upsertConversation } from '../lib/conversation-store'
+import { choosePlatformMessageRoute } from './platform-message-route'
 
 // ---------- DOM 引用 ----------
 const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => document.querySelector<T>(sel)!
@@ -259,6 +261,14 @@ function applyStaticUiLanguage(language: UserLanguage) {
     const platform = owner.dataset.siteOwner
     if (platform) owner.textContent = t(language, `site.owner.${platform}`)
   })
+  document.querySelectorAll<HTMLElement>('[data-site-note]').forEach((note) => {
+    const key = note.dataset.siteNote
+    if (key) note.textContent = t(language, `site.note.${key}`)
+  })
+  document.querySelectorAll<HTMLElement>('[data-site-short-note]').forEach((note) => {
+    const key = note.dataset.siteShortNote
+    if (key) note.textContent = t(language, `site.shortNote.${key}`)
+  })
   document.querySelectorAll<HTMLAnchorElement>('.site-open').forEach((link) => {
     const row = link.closest<HTMLElement>('.site-row')
     const platform = row?.querySelector<HTMLInputElement>('input[data-platform]')?.dataset.platform
@@ -321,7 +331,7 @@ function syncSummaryModeOptions(language: UserLanguage = userSettings.language) 
   }
 }
 
-const HELP_KEYS = ['send', 'attach', 'forward', 'panels', 'summary', 'records', 'officialChats']
+const HELP_KEYS = ['send', 'attach', 'forward', 'panels', 'summary', 'records', 'officialChats', 'browserCompatibility']
 
 function renderHelpContent(language: UserLanguage) {
   setElementText('[data-settings-panel="help"] .settings-lead', t(language, 'help.lead'))
@@ -849,7 +859,13 @@ async function refreshAllStatuses() {
         else setStatus(p, 'ok', t(userSettings.language, 'panel.status.opened'))
       }
     } else {
-      setStatus(p, 'err', t(userSettings.language, 'panel.status.timeout'))
+      if (platformMessageRoute(p) === 'official-tab') {
+        const state = await requestConversationState(p, 1200)
+        if (state.status === 'error') setStatus(p, 'warn', state.errorMessage ?? t(userSettings.language, 'panel.status.needCheck'))
+        else setStatus(p, 'ok', t(userSettings.language, 'panel.status.opened'))
+      } else {
+        setStatus(p, 'err', t(userSettings.language, 'panel.status.timeout'))
+      }
     }
   }
 }
@@ -861,7 +877,67 @@ function postToIframe(p: AIPlatform, action: string, extra: Record<string, unkno
   win.postMessage({ source: 'aichatroom-parent', action, ...extra }, platformOrigin(p))
 }
 
+function platformMessageRoute(p: AIPlatform) {
+  return choosePlatformMessageRoute({
+    platform: p,
+    iframeReady: readyMap[p],
+    iframeUrl: panelIframe(p).src,
+    supportsEmbed: getPlatformCapabilities(p).supportsEmbed,
+  })
+}
+
+async function sendOfficialTabCommand<T = unknown>(
+  platform: AIPlatform,
+  command: 'write-and-send' | 'get-state' | 'get-last-response',
+  payload: Record<string, unknown> = {},
+): Promise<T | null> {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'official-tab-command',
+      platform,
+      command,
+      ...payload,
+    })
+    return (response ?? null) as T | null
+  } catch {
+    return null
+  }
+}
+
+function waitForIframeWriteResult(p: AIPlatform, payload: Record<string, unknown>): Promise<{ p: AIPlatform; ok: boolean }> {
+  const win = panelIframe(p).contentWindow
+  if (!win) return Promise.resolve({ p, ok: false })
+  return new Promise((resolve) => {
+    const onMsg = (e: MessageEvent) => {
+      const d = e.data as { source?: string; event?: string; action?: string; platform?: AIPlatform; ok?: boolean } | undefined
+      if (!d || d.source !== 'aichatroom-content') return
+      if (d.event === 'result' && d.action === 'write-and-send' && d.platform === p) {
+        window.removeEventListener('message', onMsg)
+        resolve({ p, ok: !!d.ok })
+      }
+    }
+    window.addEventListener('message', onMsg)
+    postToIframe(p, 'write-and-send', payload)
+    setTimeout(() => {
+      window.removeEventListener('message', onMsg)
+      resolve({ p, ok: false })
+    }, 8000)
+  })
+}
+
+async function writeAndSendToPlatform(p: AIPlatform, payload: Record<string, unknown>): Promise<{ p: AIPlatform; ok: boolean }> {
+  if (platformMessageRoute(p) === 'official-tab') {
+    const response = await sendOfficialTabCommand<{ ok?: boolean; error?: string }>(p, 'write-and-send', payload)
+    return { p, ok: !!response?.ok }
+  }
+  return waitForIframeWriteResult(p, payload)
+}
+
 function requestLastResponse(p: AIPlatform, timeoutMs = 3000): Promise<string> {
+  if (platformMessageRoute(p) === 'official-tab') {
+    return sendOfficialTabCommand<{ type?: string; text?: string; ok?: boolean }>(p, 'get-last-response')
+      .then((response) => response?.text ?? '')
+  }
   const win = panelIframe(p).contentWindow
   if (!win) return Promise.resolve('')
   return new Promise<string>((resolve) => {
@@ -887,6 +963,13 @@ function requestLastResponse(p: AIPlatform, timeoutMs = 3000): Promise<string> {
 }
 
 function requestConversationState(p: AIPlatform, timeoutMs = 3000): Promise<ConversationState> {
+  if (platformMessageRoute(p) === 'official-tab') {
+    return sendOfficialTabCommand<{ type?: string; state?: ConversationState; ok?: boolean; error?: string }>(p, 'get-state')
+      .then((response) => {
+        if (response?.ok === false) return { status: 'error', errorMessage: response.error ?? '官方标签页不可用' }
+        return response?.state ?? { status: 'idle' }
+      })
+  }
   const win = panelIframe(p).contentWindow
   if (!win) return Promise.resolve({ status: 'idle' })
   return new Promise<ConversationState>((resolve) => {
@@ -979,15 +1062,15 @@ async function backfillSessionResponses(
     const session = await getSession(sessionId)
     if (!session) return
 
-    const pendingPlatforms = platforms.filter((platform) => {
+    const trackedPlatforms = platforms.filter((platform) => {
       const response = session.responses[platform]
-      return response?.status === 'pending'
+      return response?.status === 'pending' || response?.status === 'captured'
     })
-    if (pendingPlatforms.length === 0) return
+    if (trackedPlatforms.length === 0) return
 
     const captured: Partial<Record<AIPlatform, string>> = {}
     const nextProgress = { ...progress }
-    await Promise.all(pendingPlatforms.map(async (platform) => {
+    await Promise.all(trackedPlatforms.map(async (platform) => {
       const state = await requestConversationState(platform, 1500)
       if (state.status === 'streaming') {
         setStatus(platform, 'warn', t(userSettings.language, 'send.statusResponding'))
@@ -1012,7 +1095,7 @@ async function backfillSessionResponses(
     const updated = applyCapturedResponses(session, captured)
     if (updated !== session) await updateSession(updated)
 
-    const remaining = pendingPlatforms.filter((platform) => !captured[platform])
+    const remaining = trackedPlatforms
     scheduleSessionResponseBackfill(sessionId, remaining, baselines, nextProgress, attempt + 1)
   } catch (e) {
     console.error('[AIChatRoom chat] response backfill failed', e)
@@ -1137,47 +1220,19 @@ async function onSend() {
 
   const responseBaselines = await captureResponseBaselines(targets)
 
-  // 2. 发文字 + 附件到 iframe(由 content script 交给 adapter)。
-  // 给每个目标发;分别等结果(不阻塞,但用 Promise 收集成功/失败)
+  // 2. 发文字 + 附件到官方页面。iframe 被 CSP 拦住的平台会走官方标签页兜底。
   const results: Array<{ p: AIPlatform; ok: boolean }> = []
   await Promise.all(
-    targets.map(
-      (p) =>
-        new Promise<void>((resolve) => {
-          const shouldUploadFile = deliveryPlan.autoUploadTargets.includes(p)
-          const win = panelIframe(p).contentWindow
-          if (!win) {
-            results.push({ p, ok: false })
-            resolve()
-            return
-          }
-          // 注册一次性结果监听
-          const onMsg = (e: MessageEvent) => {
-            const d = e.data as { source?: string; event?: string; action?: string; platform?: AIPlatform; ok?: boolean } | undefined
-            if (!d || d.source !== 'aichatroom-content') return
-            if (d.event === 'result' && d.action === 'write-and-send' && d.platform === p) {
-              window.removeEventListener('message', onMsg)
-              results.push({ p, ok: !!d.ok })
-              resolve()
-            }
-          }
-          window.addEventListener('message', onMsg)
-          postToIframe(p, 'write-and-send', {
-            text: textToSend,
-            imageDataUrl: shouldUploadFile ? imageDataUrl : undefined,
-            imageMime: shouldUploadFile ? imageMime : undefined,
-            imageName: shouldUploadFile ? imageName : undefined,
-          })
-          // 8 秒兜底:iframe 没回 result 也算 ok(可能 result 已发过)
-          setTimeout(() => {
-            window.removeEventListener('message', onMsg)
-            if (!results.find((r) => r.p === p)) {
-              results.push({ p, ok: true })
-              resolve()
-            }
-          }, 8000)
-        }),
-    ),
+    targets.map(async (p) => {
+      const shouldUploadFile = deliveryPlan.autoUploadTargets.includes(p)
+      const result = await writeAndSendToPlatform(p, {
+        text: textToSend,
+        imageDataUrl: shouldUploadFile ? imageDataUrl : undefined,
+        imageMime: shouldUploadFile ? imageMime : undefined,
+        imageName: shouldUploadFile ? imageName : undefined,
+      })
+      results.push(result)
+    }),
   )
 
   markCurrentSendSubmitted()
@@ -1862,7 +1917,6 @@ function renderHistoryList() {
       selectedHistoryId = session.id
       renderHistoryList()
       renderHistoryDetail(session)
-      void refreshAndRenderHistorySession(session)
     })
     historyList.appendChild(item)
   }
@@ -1934,7 +1988,7 @@ function renderHistoryDetail(session?: Session) {
     const label = getPlatformMeta(platform)?.label ?? platform
     const response = session.responses[platform]
     const text = response?.status === 'captured' && response.text.trim()
-      ? formatCapturedMarkdownText(response.text)
+      ? formatCapturedMarkdownText(normalizeCapturedResponse(platform, response.text))
       : responseLabel(response)
     appendHistorySection(uiText('history.responseTitle', { label }), text)
   }
@@ -2031,26 +2085,6 @@ async function deleteHistorySession(id: string) {
   showToast(t(userSettings.language, 'history.deleteSuccess'), 'success', 1600)
 }
 
-async function refreshAndRenderHistorySession(session: Session) {
-  const refreshed = await refreshSessionResponses(session)
-  if (refreshed === session) return
-  historySessions = historySessions.map((s) => (s.id === refreshed.id ? refreshed : s))
-  renderHistoryList()
-  if (selectedHistoryId === refreshed.id) renderHistoryDetail(refreshed)
-}
-
-async function refreshSessionResponses(session: Session): Promise<Session> {
-  const captured: Partial<Record<AIPlatform, string>> = {}
-  for (const platform of session.targetPlatforms) {
-    const current = session.responses[platform]
-    if (current?.status === 'captured' && current.text.trim()) continue
-    captured[platform] = await requestLastResponse(platform)
-  }
-  const updated = applyCapturedResponses(session, captured)
-  if (updated !== session) await updateSession(updated)
-  return updated
-}
-
 async function openHistory() {
   historyOverlay.hidden = false
   historySearchInput.value = ''
@@ -2060,10 +2094,6 @@ async function openHistory() {
   loading.textContent = t(userSettings.language, 'history.refreshing')
   historyDetail.appendChild(loading)
   historySessions = (await loadSessions()).sort((a, b) => b.createdAt - a.createdAt)
-  if (historySessions[0]) {
-    const refreshed = await refreshSessionResponses(historySessions[0])
-    historySessions = historySessions.map((s) => (s.id === refreshed.id ? refreshed : s))
-  }
   selectedHistoryId = historySessions[0]?.id ?? null
   renderHistoryList()
   renderHistoryDetail(historySessions[0])
@@ -2443,9 +2473,7 @@ async function openSummaryDialog() {
 
   summarySessions = (await loadSessions()).sort((a, b) => b.createdAt - a.createdAt)
   if (summarySessions[0]) {
-    const refreshed = await refreshSessionResponses(summarySessions[0])
-    summarySessions = summarySessions.map((s) => (s.id === refreshed.id ? refreshed : s))
-    selectedSummaryIds.add(refreshed.id)
+    selectedSummaryIds.add(summarySessions[0].id)
   }
   resetSummarySourceSelection()
   renderSummaryList()

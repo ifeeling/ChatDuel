@@ -39,6 +39,7 @@
     "https://chat.deepseek.com/*",
     "https://copilot.microsoft.com/*",
     "https://grok.com/*",
+    "https://grokusercontent.com/*",
     "https://chatduel.ifeeling.app/*"
   ],
   "content_scripts": [

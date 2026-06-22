@@ -40,6 +40,7 @@ describe('manifest', () => {
   it('declares copilot and grok host permissions and content script probes', () => {
     expect(manifest.host_permissions).toContain('https://copilot.microsoft.com/*')
     expect(manifest.host_permissions).toContain('https://grok.com/*')
+    expect(manifest.host_permissions).toContain('https://grokusercontent.com/*')
 
     const copilotScript = manifest.content_scripts.find((script) => script.js.includes('src/content-scripts/copilot-content.ts'))
     expect(copilotScript).toBeTruthy()

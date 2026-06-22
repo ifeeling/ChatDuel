@@ -50,6 +50,53 @@ describe('deepseek adapter', () => {
     ].join('\n'))
   })
 
+  it('includes continuation text outside DeepSeek inner markdown blocks', async () => {
+    document.body.innerHTML = `
+      <main>
+        <div class="message user">你们好</div>
+        <section class="ds-turn">
+          <div class="markdown">
+            <p>你好！很高兴见到你！😊</p>
+            <p>我是DeepSeek，一个乐于助人的AI助手。无论你是想聊天、问问题、寻求建议，还是需要帮忙解决某个具体问题，我都非常乐意为你提供帮助。</p>
+          </div>
+          <p>今天有什么我可以为你做的呢？请随时告诉我！✨</p>
+          <div class="actions"><button>复制</button><button>重新生成</button></div>
+        </section>
+      </main>
+      <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+    `
+
+    await expect(createDeepSeekAdapter().getLastResponse()).resolves.toBe([
+      '你好！很高兴见到你！😊',
+      '',
+      '我是DeepSeek，一个乐于助人的AI助手。无论你是想聊天、问问题、寻求建议，还是需要帮忙解决某个具体问题，我都非常乐意为你提供帮助。',
+      '',
+      '今天有什么我可以为你做的呢？请随时告诉我！✨',
+    ].join('\n'))
+  })
+
+  it('expands from a middle DeepSeek response fragment to the surrounding answer block', async () => {
+    document.body.innerHTML = `
+      <main>
+        <section class="ds-turn">
+          <p>你好呀！😊 很高兴见到你！</p>
+          <p class="answer">我是DeepSeek，你的AI助手，随时准备帮你解答问题。</p>
+          <p>今天有什么我可以帮你的吗？尽管说，别客气～</p>
+          <div class="actions"><button>复制</button></div>
+        </section>
+      </main>
+      <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+    `
+
+    await expect(createDeepSeekAdapter().getLastResponse()).resolves.toBe([
+      '你好呀！😊 很高兴见到你！',
+      '',
+      '我是DeepSeek，你的AI助手，随时准备帮你解答问题。',
+      '',
+      '今天有什么我可以帮你的吗？尽管说，别客气～',
+    ].join('\n'))
+  })
+
   it('preserves headings and ordered lists in DeepSeek responses', async () => {
     document.body.innerHTML = `
       <main>

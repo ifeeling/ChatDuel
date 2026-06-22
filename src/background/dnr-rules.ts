@@ -3,131 +3,69 @@
 // 的 X-Frame-Options 删掉,把它们 CSP 里的 frame-ancestors 改写为允许
 // 被 chrome-extension://* 页面嵌入,这样 chat.html 才能用 iframe 嵌官方页面。
 //
-// ⚠️ 重要:urlFilter 在 modifyHeaders 动作下不接受 `||...^` 这种
-// declarativeNetRequest 专用语法,只接受"普通子串匹配"。误用会导致
-// updateDynamicRules 静默失败,iframe 嵌入不进去,content script 也没法注入。
+// Copilot 实测必须按 ChatBrawl 的方式使用 host-scoped sub_frame 规则:
+// urlFilter = "||host/*" 且 frame-ancestors 放开到 chrome-extension://*。
+// 用精确 extension id 或把 main_frame 也塞进规则时,Edge 里仍会显示原始 CSP。
+// 2026-06-21:Chrome 扩展环境已验证 Copilot iframe 和文本发送可用;Edge 新版自带
+// Copilot 会让扩展 iframe 继续失败,产品侧先标注 Edge 暂不支持 Copilot。
 // 详见 docs/postmortems/2026-06-09-iframe-no-response.md
 
-const RULE_IDS = { chatgpt: 1, gemini: 2, doubao: 4, deepseek: 5, copilot: 6, grok: 7 } as const
-const REMOVE_RULE_IDS = [1, 2, 3, 4, 5, 6, 7]
-
-const FRAME_ANCESTORS_VALUE = "frame-ancestors 'self' chrome-extension://*"
+const RULE_IDS = { chatgpt: 1, gemini: 2, doubao: 4, deepseek: 5, copilot: 6, grok: 7, grokAssets: 8 } as const
+const REMOVE_RULE_IDS = [1, 2, 3, 4, 5, 6, 7, 8]
 
 type ModifyHeadersRule = chrome.declarativeNetRequest.Rule
+const SUB_FRAME = 'sub_frame' as chrome.declarativeNetRequest.ResourceType
+const MODIFY_HEADERS = 'modifyHeaders' as chrome.declarativeNetRequest.RuleActionType
+const SET_HEADER = 'set' as chrome.declarativeNetRequest.HeaderOperation
+const REMOVE_HEADER = 'remove' as chrome.declarativeNetRequest.HeaderOperation
 
-function buildChatGPTRule(): ModifyHeadersRule {
+export function getEmbedRuleCleanupIds(): number[] {
+  return [...REMOVE_RULE_IDS]
+}
+
+export function getFrameAncestorsValue(): string {
+  return "frame-ancestors 'self' chrome-extension://*"
+}
+
+function hostFilter(host: string): string {
+  return `||${host}/*`
+}
+
+function buildRule(id: number, host: string, frameAncestorsValue: string): ModifyHeadersRule {
   return {
-    id: RULE_IDS.chatgpt,
+    id,
     priority: 1,
     condition: {
-      // 普通子串,不要用 "||chatgpt.com^" 那种声明式语法
-      urlFilter: 'chatgpt.com',
-      resourceTypes: [chrome.declarativeNetRequest.ResourceType.SUB_FRAME, chrome.declarativeNetRequest.ResourceType.MAIN_FRAME],
+      urlFilter: hostFilter(host),
+      resourceTypes: [SUB_FRAME],
     },
     action: {
-      type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
+      type: MODIFY_HEADERS,
       responseHeaders: [
-        { header: 'Content-Security-Policy', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: FRAME_ANCESTORS_VALUE },
-        { header: 'X-Frame-Options', operation: chrome.declarativeNetRequest.HeaderOperation.REMOVE },
+        { header: 'Content-Security-Policy', operation: SET_HEADER, value: frameAncestorsValue },
+        { header: 'X-Frame-Options', operation: REMOVE_HEADER },
       ],
     },
   }
 }
 
-function buildGeminiRule(): ModifyHeadersRule {
-  return {
-    id: RULE_IDS.gemini,
-    priority: 1,
-    condition: {
-      urlFilter: 'gemini.google.com',
-      resourceTypes: [chrome.declarativeNetRequest.ResourceType.SUB_FRAME, chrome.declarativeNetRequest.ResourceType.MAIN_FRAME],
-    },
-    action: {
-      type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
-      responseHeaders: [
-        { header: 'Content-Security-Policy', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: FRAME_ANCESTORS_VALUE },
-        { header: 'X-Frame-Options', operation: chrome.declarativeNetRequest.HeaderOperation.REMOVE },
-      ],
-    },
-  }
-}
-
-function buildDoubaoRule(): ModifyHeadersRule {
-  return {
-    id: RULE_IDS.doubao,
-    priority: 1,
-    condition: {
-      urlFilter: 'doubao.com',
-      resourceTypes: [chrome.declarativeNetRequest.ResourceType.SUB_FRAME, chrome.declarativeNetRequest.ResourceType.MAIN_FRAME],
-    },
-    action: {
-      type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
-      responseHeaders: [
-        { header: 'Content-Security-Policy', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: FRAME_ANCESTORS_VALUE },
-        { header: 'X-Frame-Options', operation: chrome.declarativeNetRequest.HeaderOperation.REMOVE },
-      ],
-    },
-  }
-}
-
-function buildDeepSeekRule(): ModifyHeadersRule {
-  return {
-    id: RULE_IDS.deepseek,
-    priority: 1,
-    condition: {
-      urlFilter: 'chat.deepseek.com',
-      resourceTypes: [chrome.declarativeNetRequest.ResourceType.SUB_FRAME, chrome.declarativeNetRequest.ResourceType.MAIN_FRAME],
-    },
-    action: {
-      type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
-      responseHeaders: [
-        { header: 'Content-Security-Policy', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: FRAME_ANCESTORS_VALUE },
-        { header: 'X-Frame-Options', operation: chrome.declarativeNetRequest.HeaderOperation.REMOVE },
-      ],
-    },
-  }
-}
-
-function buildCopilotRule(): ModifyHeadersRule {
-  return {
-    id: RULE_IDS.copilot,
-    priority: 1,
-    condition: {
-      urlFilter: 'copilot.microsoft.com',
-      resourceTypes: [chrome.declarativeNetRequest.ResourceType.SUB_FRAME, chrome.declarativeNetRequest.ResourceType.MAIN_FRAME],
-    },
-    action: {
-      type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
-      responseHeaders: [
-        { header: 'Content-Security-Policy', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: FRAME_ANCESTORS_VALUE },
-        { header: 'X-Frame-Options', operation: chrome.declarativeNetRequest.HeaderOperation.REMOVE },
-      ],
-    },
-  }
-}
-
-function buildGrokRule(): ModifyHeadersRule {
-  return {
-    id: RULE_IDS.grok,
-    priority: 1,
-    condition: {
-      urlFilter: 'grok.com',
-      resourceTypes: [chrome.declarativeNetRequest.ResourceType.SUB_FRAME, chrome.declarativeNetRequest.ResourceType.MAIN_FRAME],
-    },
-    action: {
-      type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
-      responseHeaders: [
-        { header: 'Content-Security-Policy', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: FRAME_ANCESTORS_VALUE },
-        { header: 'X-Frame-Options', operation: chrome.declarativeNetRequest.HeaderOperation.REMOVE },
-      ],
-    },
-  }
+export function buildEmbedRules(frameAncestorsValue: string): ModifyHeadersRule[] {
+  return [
+    buildRule(RULE_IDS.chatgpt, 'chatgpt.com', frameAncestorsValue),
+    buildRule(RULE_IDS.gemini, 'gemini.google.com', frameAncestorsValue),
+    buildRule(RULE_IDS.doubao, 'doubao.com', frameAncestorsValue),
+    buildRule(RULE_IDS.deepseek, 'chat.deepseek.com', frameAncestorsValue),
+    buildRule(RULE_IDS.copilot, 'copilot.microsoft.com', frameAncestorsValue),
+    buildRule(RULE_IDS.grok, 'grok.com', frameAncestorsValue),
+    buildRule(RULE_IDS.grokAssets, 'grokusercontent.com', frameAncestorsValue),
+  ]
 }
 
 export async function enableEmbedRules(): Promise<void> {
+  const frameAncestorsValue = getFrameAncestorsValue()
   await chrome.declarativeNetRequest.updateDynamicRules({
     removeRuleIds: REMOVE_RULE_IDS,
-    addRules: [buildChatGPTRule(), buildGeminiRule(), buildDoubaoRule(), buildDeepSeekRule(), buildCopilotRule(), buildGrokRule()],
+    addRules: buildEmbedRules(frameAncestorsValue),
   })
   const rules = await chrome.declarativeNetRequest.getDynamicRules()
   console.log('[AIChatRoom] embed rules enabled, count =', rules.length)

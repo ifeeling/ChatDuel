@@ -35,6 +35,46 @@ Grok 暂用通用文本网页选择器：
 
 这些选择器是基础版兜底，后续应在真实登录后的 Grok iframe 里验证并收窄。
 
+## 2026-06-21 文本发送假成功问题
+
+用户实测时，Grok iframe 已加载，控制台显示：
+
+```text
+[AIChatRoom chat] ready: grok
+[AIChatRoom chat] write-and-send result for grok: ok=true error=
+```
+
+但官方 Grok 页面仍停在输入区，没有出现用户消息，也没有开始回答。
+
+根因判断：
+
+- 旧通用 adapter 对 `contenteditable` / `role="textbox"` 只设置 `textContent` 并派发 `input` 事件。
+- Grok 这类 React 输入框不一定把直接改 DOM 当成真实用户输入。
+- `chat.ts` 旧逻辑还有一个 8 秒兜底：iframe 没回 result 也算 `ok=true`，这会把失败包装成“已发送，等待回答”。
+
+修正：
+
+- `src/adapters/generic/text-web-adapter.ts` 对非 textarea 输入框先 `focus()`，再优先走 `document.execCommand('insertText')`，更接近手动输入。
+- 对 contenteditable 写入后补发 `input` 和 `change` 事件，和 ChatBrawl 的 Grok 注入脚本行为保持一致。
+- `src/adapters/grok/adapter.ts` 按 ChatBrawl 可工作路径收窄选择器：
+  - 输入框优先 `textarea[aria-label]`，其次 `div[contenteditable="true"]`。
+  - 发送按钮优先 `button[type="submit"]`，避免误点附件、模型、语音等其它按钮。
+- `sendMessage()` 现在会做两次确认：
+  - 写入后，输入框必须真的包含待发送文本。
+  - 点击发送后，输入框必须清掉这段文本；否则抛出“发送后没有确认”。
+- `src/chat/chat.ts` 去掉“没收到 result 也算成功”的兜底。超时或 adapter 报错都算发送失败。
+- 新增/更新 `tests/unit/text-web-adapter.test.ts` 覆盖：
+  - contenteditable 使用 `insertText`。
+  - contenteditable 写入后派发 `change`。
+  - Grok 优先点击 `button[type="submit"]`，不会点到附件按钮。
+  - 输入框内容没有清掉时不再返回成功。
+
+后续如果 Grok 文本发送又坏了，先看这三处：
+
+1. 输入框是不是还能被 `inputBox` 选择器找到。
+2. `document.execCommand('insertText')` 后输入框内容是否真的变化。
+3. 点击发送后输入框是否清空；如果 Grok 改成“发送时输入框不清空”，需要换成“出现用户气泡/发送中状态”的确认条件。
+
 ## 附件上传待验证
 
 当前平台能力：

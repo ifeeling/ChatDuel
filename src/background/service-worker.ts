@@ -10,7 +10,7 @@
 // 的官方页面之间通信走 window.postMessage 直连,不经过 SW(因为 iframe
 // 没有 tabId,SW 找不到它们)。详见 docs/postmortems/2026-06-09-iframe-no-response.md
 
-import { enableEmbedRules, disableEmbedRules } from './dnr-rules'
+import { enableEmbedRules, disableEmbedRules, getEmbedRuleCleanupIds } from './dnr-rules'
 import { SUPPORTED_PLATFORMS } from '../lib/ai-platforms'
 import {
   REMOTE_SELECTOR_CONFIG_STORAGE_KEY,
@@ -59,6 +59,14 @@ async function findOfficialTab(platform: AIPlatform): Promise<chrome.tabs.Tab | 
   return null
 }
 
+async function sendOfficialTabMessage(platform: AIPlatform, message: unknown): Promise<unknown> {
+  const tab = await findOfficialTab(platform)
+  if (!tab?.id) {
+    throw new Error(`${platform} 官方标签页没有打开`)
+  }
+  return chrome.tabs.sendMessage(tab.id, message)
+}
+
 async function broadcastToChatTabs(msg: unknown): Promise<void> {
   const ids = await getChatTabIds()
   for (const id of ids) {
@@ -105,7 +113,7 @@ chrome.runtime.onInstalled.addListener(() => {
   scheduleSelectorConfigRefresh()
   void refreshRemoteSelectorConfig()
   chrome.declarativeNetRequest
-    .updateDynamicRules({ removeRuleIds: [1, 2, 3, 4, 5] })
+    .updateDynamicRules({ removeRuleIds: getEmbedRuleCleanupIds() })
     .catch((e) => console.warn('[ChatDuel] startup cleanup failed', e))
 })
 
@@ -179,6 +187,28 @@ chrome.runtime.onMessage.addListener((msg: { type: string; [k: string]: unknown 
   if (msg.type === 'check-tab-exists') {
     findOfficialTab(msg.platform as AIPlatform)
       .then((tab) => sendResponse({ ok: true, exists: !!tab }))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }))
+    return true
+  }
+  if (msg.type === 'official-tab-command') {
+    const platform = msg.platform as AIPlatform
+    const command = msg.command as string
+    const text = typeof msg.text === 'string' ? msg.text : ''
+    const imageDataUrl = typeof msg.imageDataUrl === 'string' ? msg.imageDataUrl : undefined
+    const contentMessage =
+      command === 'write-and-send'
+        ? { type: 'write-and-send', text, imageDataUrl }
+        : command === 'get-state'
+          ? { type: 'get-state' }
+          : command === 'get-last-response'
+            ? { type: 'get-last-response' }
+            : null
+    if (!contentMessage) {
+      sendResponse({ ok: false, error: `unknown official-tab-command: ${command}` })
+      return false
+    }
+    sendOfficialTabMessage(platform, contentMessage)
+      .then((response) => sendResponse(response ?? { ok: true }))
       .catch((e) => sendResponse({ ok: false, error: String(e) }))
     return true
   }

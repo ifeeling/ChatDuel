@@ -36,6 +36,23 @@ function pendingResponses(targetPlatforms: AIPlatform[]): Partial<Record<AIPlatf
   ) as Partial<Record<AIPlatform, SessionResponse>>
 }
 
+export function normalizeCapturedResponse(platform: AIPlatform, text: string): string {
+  if (platform !== 'copilot') return text.trim()
+  return text
+    .replace(/\r\n?/g, '\n')
+    .replace(/^[\s#\u200b\u200c\u200d\ufeff]*Copilot[\s\u200b\u200c\u200d\ufeff]*(?:\n[\s\u200b\u200c\u200d\ufeff]*)*said\b[\s\u200b\u200c\u200d\ufeff]*/i, '')
+    .trim()
+}
+
+export function isMoreCompleteCapturedResponse(next: string, current: string | undefined): boolean {
+  const nextText = next.trim()
+  const currentText = current?.trim() ?? ''
+  if (!nextText || nextText === currentText) return false
+  if (!currentText) return true
+  if (nextText.includes(currentText)) return true
+  return nextText.length >= currentText.length + 30
+}
+
 export function createSessionRecord(input: CreateSessionRecordInput): Session {
   const now = input.now ?? Date.now()
   return {
@@ -90,8 +107,9 @@ export function applyCapturedResponses(
   const responses = { ...session.responses }
   let changed = false
   for (const platform of session.targetPlatforms) {
-    const text = captured[platform]?.trim()
-    if (!text) continue
+    const rawText = captured[platform]?.trim()
+    const text = rawText ? normalizeCapturedResponse(platform, rawText) : ''
+    if (!isMoreCompleteCapturedResponse(text, responses[platform]?.text)) continue
     responses[platform] = {
       text,
       status: 'captured',

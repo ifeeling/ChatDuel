@@ -68,6 +68,8 @@ describe('chat.html', () => {
     expect(helpText).toContain('每一次用户提交的问题')
     expect(helpText).toContain('会话')
     expect(helpText).toContain('官方网页的会话链接')
+    expect(helpText).toContain('Copilot')
+    expect(helpText).toContain('Edge')
   })
 
   it('edits one prompt template at a time in settings', () => {
@@ -175,6 +177,9 @@ describe('chat.html', () => {
     expect(grokPanel).toBeTruthy()
     expect(grokPanel?.textContent).toContain('Grok')
     expect(copilotSiteRow?.textContent).toContain('Microsoft')
+    expect(copilotSiteRow?.textContent).toContain('Chrome')
+    expect(copilotSiteRow?.textContent).not.toContain('Edge')
+    expect(document.querySelector<HTMLElement>('[data-site-note="copilot-edge"]')).toBeNull()
     expect(grokSiteRow?.textContent).toContain('xAI')
   })
 

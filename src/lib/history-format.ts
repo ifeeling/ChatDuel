@@ -1,5 +1,6 @@
 import type { AIPlatform, Session, SessionAttachment, SessionResponse } from '../types'
 import { getPlatformMeta } from './ai-platforms'
+import { normalizeCapturedResponse } from './session-record'
 
 function platformLabel(platform: AIPlatform): string {
   return getPlatformMeta(platform)?.label ?? platform
@@ -80,7 +81,7 @@ export function formatSessionMarkdown(session: Session): string {
     const response = session.responses[platform]
     parts.push('', `## ${label} 回答`, '')
     if (response?.status === 'captured' && response.text.trim()) {
-      parts.push(formatCapturedMarkdownText(response.text))
+      parts.push(formatCapturedMarkdownText(normalizeCapturedResponse(platform, response.text)))
     } else {
       parts.push(responseStatusLabel(response))
     }

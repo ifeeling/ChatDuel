@@ -261,6 +261,27 @@ function responseCandidateScore(el: HTMLElement, text: string): number {
   return score
 }
 
+function canUseExpandedResponseRoot(el: HTMLElement, text: string): boolean {
+  if (isHidden(el) || el.closest(RESPONSE_EXCLUDE_ANCESTORS) || isUserMessage(el)) return false
+  if ([...el.querySelectorAll<HTMLElement>('*')].some(isUserMessage)) return false
+  if (el.querySelector('textarea, input, [contenteditable="true"], [role="textbox"]')) return false
+  const expandedText = elementToMarkdownText(el)
+  if (expandedText.length <= text.length) return false
+  return expandedText.includes(text)
+}
+
+function expandResponseCandidate(el: HTMLElement, text: string): { el: HTMLElement; text: string } {
+  let bestEl = el
+  let bestText = text
+  let parent = el.parentElement
+  for (let depth = 0; parent && depth < 3; depth += 1, parent = parent.parentElement) {
+    if (!canUseExpandedResponseRoot(parent, bestText)) break
+    bestEl = parent
+    bestText = elementToMarkdownText(parent)
+  }
+  return { el: bestEl, text: bestText }
+}
+
 function getLatestResponseText(selectors: DeepSeekSelectors): string {
   const seen = new Set<string>()
   const candidates = [...document.querySelectorAll<HTMLElement>(selectors.response.join(','))]
@@ -269,7 +290,8 @@ function getLatestResponseText(selectors: DeepSeekSelectors): string {
     .filter((el) => !isUserMessage(el))
     .map((el, index) => {
       const text = elementToMarkdownText(el)
-      return { text, score: responseCandidateScore(el, text), index }
+      const expanded = expandResponseCandidate(el, text)
+      return { text: expanded.text, score: responseCandidateScore(expanded.el, expanded.text), index }
     })
     .filter((candidate) => candidate.text.length > 0)
     .filter((candidate) => {

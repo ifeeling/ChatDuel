@@ -4,7 +4,9 @@ import {
   applySendResults,
   createSessionRecord,
   createSummarySessionRecord,
+  isMoreCompleteCapturedResponse,
   isNewCapturedResponse,
+  normalizeCapturedResponse,
 } from '../../src/lib/session-record'
 
 describe('session-record', () => {
@@ -72,6 +74,42 @@ describe('session-record', () => {
       status: 'captured',
       capturedAt: 3000,
     })
+  })
+
+  it('normalizes platform-specific labels before saving captured responses', () => {
+    const session = createSessionRecord({
+      prompt: 'hello',
+      sentPrompt: 'hello',
+      targetPlatforms: ['copilot'],
+      now: 1000,
+      id: 's1',
+    })
+
+    const updated = applyCapturedResponses(session, {
+      copilot: '###### Copilot\n\nsaid\n\n你好，cong。',
+    }, 3000)
+
+    expect(updated.responses.copilot).toEqual({
+      text: '你好，cong。',
+      status: 'captured',
+      capturedAt: 3000,
+    })
+  })
+
+  it('normalizes copied Copilot labels with extra blank lines', () => {
+    expect(normalizeCapturedResponse('copilot', '###### Copilot\n\n\nsaid\n\n晚上好，cong。')).toBe('晚上好，cong。')
+  })
+
+  it('normalizes copied Copilot labels even when whitespace is odd', () => {
+    expect(normalizeCapturedResponse('copilot', ' \n###### Copilot\n \n said\n \n晚上好，cong。')).toBe('晚上好，cong。')
+  })
+
+  it('allows a later fuller response to replace an early partial capture', () => {
+    expect(isMoreCompleteCapturedResponse(
+      '第一段。\n\n第二段。\n\n第三段。',
+      '第二段。',
+    )).toBe(true)
+    expect(isMoreCompleteCapturedResponse('第二段。', '第一段。\n\n第二段。\n\n第三段。')).toBe(false)
   })
 
   it('detects whether a captured response is newer than the baseline', () => {

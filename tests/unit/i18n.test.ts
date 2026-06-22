@@ -27,6 +27,8 @@ describe('i18n', () => {
       'site.owner.doubao',
       'site.owner.copilot',
       'site.owner.grok',
+      'site.note.copilot-edge',
+      'help.browserCompatibility.body',
       'history.userQuestion',
       'history.responseTitle',
       'history.status.captured',
