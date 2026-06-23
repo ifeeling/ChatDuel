@@ -388,6 +388,7 @@ function responseCandidateScore(el: HTMLElement): number {
 }
 
 function getLatestResponseText(selectors: DoubaoSelectors): string {
+  // 豆包会出现外层列表、搜索块和建议问题；改候选选择前先看 docs/RESPONSE_CAPTURE_MAINTENANCE.md。
   const seen = new Set<string>()
   const candidates = collectResponseCandidateElements(selectors)
     .filter((el) => !isHidden(el))

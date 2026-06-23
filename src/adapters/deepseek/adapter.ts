@@ -350,6 +350,7 @@ function expandResponseCandidate(el: HTMLElement, text: string, responseSelector
 }
 
 function getLatestResponseText(selectors: DeepSeekSelectors): string {
+  // DeepSeek 的混淆 class 会变化；改候选选择前先看 docs/RESPONSE_CAPTURE_MAINTENANCE.md。
   const seen = new Set<string>()
   const responseSelector = selectors.response.join(',')
   const candidates = [...document.querySelectorAll<HTMLElement>(responseSelector)]

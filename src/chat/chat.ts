@@ -1053,6 +1053,7 @@ function scheduleSessionResponseBackfill(
   progress: Partial<Record<AIPlatform, ResponseCaptureProgress>> = {},
   attempt = 0,
 ) {
+  // 修改回答回填前先看 docs/RESPONSE_CAPTURE_MAINTENANCE.md，避免再次覆盖旧历史或无限等待。
   if (platforms.length === 0) return
   if (attempt >= RESPONSE_BACKFILL_MAX_ATTEMPTS) {
     void (async () => {

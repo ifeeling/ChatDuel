@@ -55,5 +55,6 @@ npm run typecheck
 - 隐私政策草稿：`docs/store/privacy-policy.md`
 - Chrome / Edge 上架材料草稿：`docs/store/chrome-edge-listing.md`
 - DeepSeek 接入记录：`docs/DEEPSEEK_INTEGRATION_NOTES.md`
+- 回答抓取维护手册：`docs/RESPONSE_CAPTURE_MAINTENANCE.md`
 - Copilot 接入记录：`docs/COPILOT_INTEGRATION_NOTES.md`
 - Grok 接入记录：`docs/GROK_INTEGRATION_NOTES.md`
