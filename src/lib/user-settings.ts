@@ -17,6 +17,7 @@ export interface UserSettings {
   enabledPlatforms: Record<AIPlatform, boolean>
   platformOrder: AIPlatform[]
   language: UserLanguage
+  captureDebug: boolean
   promptTemplates: UserPromptTemplates
   promptTemplateCustomizations: UserPromptTemplateCustomizations
 }
@@ -205,6 +206,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   },
   platformOrder: ['gemini', 'chatgpt', 'doubao', 'deepseek'],
   language: 'zh-CN',
+  captureDebug: false,
   promptTemplates: getDefaultUserPromptTemplates('zh-CN'),
   promptTemplateCustomizations: DEFAULT_PROMPT_CUSTOMIZATIONS,
 }
@@ -283,7 +285,14 @@ function normalizeSettings(value: PartialUserSettings | undefined): UserSettings
     }
   }
 
-  return { enabledPlatforms, platformOrder, language, promptTemplates, promptTemplateCustomizations }
+  return {
+    enabledPlatforms,
+    platformOrder,
+    language,
+    captureDebug: value?.captureDebug === true,
+    promptTemplates,
+    promptTemplateCustomizations,
+  }
 }
 
 export async function loadUserSettings(): Promise<UserSettings> {

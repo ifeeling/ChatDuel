@@ -23,6 +23,8 @@ beforeAll(() => {
 describe('deepseek adapter', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
+    localStorage.clear()
+    vi.restoreAllMocks()
   })
 
   it('captures the full latest assistant block instead of the last paragraph only', async () => {
@@ -48,6 +50,24 @@ describe('deepseek adapter', () => {
       '',
       '请随意告诉我你的需求，我们一起开始吧～ ✨',
     ].join('\n'))
+  })
+
+  it('reports streaming while DeepSeek shows a stop generating button', async () => {
+    document.body.innerHTML = `
+      <main>
+        <div class="message user">世界杯的情况</div>
+        <div class="message assistant">
+          <p>目前世界杯正在进行中。</p>
+        </div>
+      </main>
+      <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+      <button aria-label="停止生成"><svg></svg></button>
+    `
+
+    await expect(createDeepSeekAdapter().getConversationState()).resolves.toMatchObject({
+      status: 'streaming',
+      lastResponse: '目前世界杯正在进行中。',
+    })
   })
 
   it('includes continuation text outside DeepSeek inner markdown blocks', async () => {
@@ -117,6 +137,242 @@ describe('deepseek adapter', () => {
       '1. 描述一下：告诉我图片里有什么',
       '2. 提供文字信息：如果图里有文字，你可以打出来',
     ].join('\n'))
+  })
+
+  it('captures the whole DeepSeek answer instead of a later score fragment', async () => {
+    document.body.innerHTML = `
+      <main>
+        <div class="message user">昨天世界杯战况如何?</div>
+        <section class="ds-turn">
+          <div class="answer-content">
+            <p>昨天（2026年6月21日）进行了几场世界杯小组赛第二轮的比赛，多场对决都踢得相当激烈。</p>
+            <p>我把具体赛果整理了一下：</p>
+            <div class="score-table">
+              <div class="score-row">
+                <span>E组</span>
+                <span>德国 vs 特拉迪瓦</span>
+                <span>2-1</span>
+              </div>
+              <div class="score-row">
+                <span>F组</span>
+                <span>荷兰 vs 瑞典</span>
+                <span>5-1</span>
+              </div>
+            </div>
+          </div>
+          <div class="answer-actions"><button>复制</button><button>重新生成</button></div>
+          <div class="meta-layer">
+            <div>
+              <div>
+                <div>
+                  <span class="floating-answer-fragment">-6</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+      <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+    `
+
+    const text = await createDeepSeekAdapter().getLastResponse()
+
+    expect(text).toContain('昨天（2026年6月21日）进行了几场世界杯小组赛第二轮的比赛')
+    expect(text).toContain('德国 vs 特拉迪瓦')
+    expect(text).toContain('荷兰 vs 瑞典')
+    expect(text).not.toBe('-6')
+  })
+
+  it('captures only the latest DeepSeek turn when a chat contains multiple answers', async () => {
+    document.body.innerHTML = `
+      <main>
+        <section class="answer-list">
+          <article class="ds-turn">
+            <div class="bubble">你们好</div>
+            <div class="answer-content">
+              <p>你好呀！😊 很高兴见到你！</p>
+              <p>我是DeepSeek，由深度求索公司创造的AI助手。</p>
+            </div>
+          </article>
+          <article class="ds-turn">
+            <div class="bubble">今天世界杯是哪几场比赛?</div>
+            <div class="answer-content">
+              <p>根据搜索结果，2026年6月22日（今天）的世界杯赛程安排如下：</p>
+              <ul>
+                <li>00:00：西班牙 vs 沙特阿拉伯</li>
+                <li>03:00：比利时 vs 伊朗</li>
+                <li>06:00：乌拉圭 vs 佛得角</li>
+              </ul>
+            </div>
+          </article>
+        </section>
+      </main>
+      <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+    `
+
+    const text = await createDeepSeekAdapter().getLastResponse()
+
+    expect(text).toContain('根据搜索结果，2026年6月22日')
+    expect(text).toContain('西班牙 vs 沙特阿拉伯')
+    expect(text).not.toContain('你好呀')
+    expect(text).not.toContain('我是DeepSeek，由深度求索公司创造的AI助手')
+  })
+
+  it('captures the DeepSeek answer instead of a later search references block', async () => {
+    document.body.innerHTML = `
+      <main>
+        <div class="message user">下一场世界杯比赛是哪一个队?</div>
+        <div class="message assistant">
+          <p>下一场世界杯比赛是阿根廷 vs 奥地利。</p>
+          <p>比赛时间是北京时间 6 月 23 日 01:00。</p>
+          <div class="actions"><button>复制</button><button>重新生成</button></div>
+        </div>
+        <div class="message assistant search-references">
+          已阅读 10 个网页
+        </div>
+      </main>
+      <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+    `
+
+    const text = await createDeepSeekAdapter().getLastResponse()
+
+    expect(text).toContain('下一场世界杯比赛是阿根廷 vs 奥地利')
+    expect(text).toContain('6 月 23 日 01:00')
+    expect(text).not.toBe('已阅读 10 个网页')
+  })
+
+  it('prefers the latest complete DeepSeek answer over an older markdown paragraph', async () => {
+    document.body.innerHTML = `
+      <main>
+        <div class="_9663006 _2c189bc">你们好</div>
+        <div class="_4f9bf79 _43c05b5">
+          <p class="ds-markdown-paragraph">你好！很高兴见到你！😊</p>
+          <p class="ds-markdown-paragraph">我是DeepSeek，一个由深度求索公司创造的AI助手。</p>
+          <p class="ds-markdown-paragraph">有什么我可以帮你的吗？</p>
+        </div>
+        <div class="_9663006">今天世界杯,进球最多的队是哪一个?</div>
+        <div class="_4f9bf79 d7dc56a8 _43c05b5">
+          <p class="ds-markdown-paragraph">关于2026年世界杯“进球最多的队”，要分两种情况来看：</p>
+          <ul>
+            <li>历史总进球数最多的球队：巴西队。</li>
+            <li>本届赛事目前进球最多的球队：德国队。</li>
+          </ul>
+        </div>
+      </main>
+      <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+    `
+
+    const text = await createDeepSeekAdapter().getLastResponse()
+
+    expect(text).toContain('关于2026年世界杯')
+    expect(text).toContain('德国队')
+    expect(text).not.toContain('我是DeepSeek，一个由深度求索公司创造的AI助手')
+  })
+
+  it('does not capture an obfuscated DeepSeek user bubble as the assistant answer', async () => {
+    document.body.innerHTML = `
+      <main>
+        <div class="_9663006 _2c189bc">你们好, 接下来你们用最简短的语言来回答我的问题</div>
+        <div class="_4f9bf79 d7dc56a8 _43c05b5">好的，请问。</div>
+      </main>
+      <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+    `
+
+    await expect(createDeepSeekAdapter({ response: ['main div'] }).getLastResponse()).resolves.toBe('好的，请问。')
+  })
+
+  it('does not capture a DeepSeek ds-message user bubble as a short assistant answer', async () => {
+    document.body.innerHTML = `
+      <main>
+        <div class="d29f3d7d ds-message _63c77b1">你们好, 接下来你们用最简短的语言来回答我的问题</div>
+        <div class="_4f9bf79 d7dc56a8 _43c05b5">好的，请问。</div>
+      </main>
+      <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+    `
+
+    await expect(createDeepSeekAdapter({ response: ['main div'] }).getLastResponse()).resolves.toBe('好的，请问。')
+  })
+
+  it('uses the current DeepSeek answer marker instead of ds-message user bubbles', async () => {
+    document.body.innerHTML = `
+      <main>
+        <div class="d29f3d7d ds-message _63c77b1">你们好, 接下来你们用最简短的语言来回答我的问题</div>
+        <div class="_4f9bf79 _43c05b5">好的，请问。</div>
+        <div class="d29f3d7d ds-message _63c77b1">今天进球最多的人是谁? 给我1个名字就好了</div>
+        <div class="_4f9bf79 d7dc56a8 _43c05b5">已阅读 10 个网页 奥亚萨瓦尔-1 10 个网页</div>
+      </main>
+      <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+    `
+
+    await expect(createDeepSeekAdapter({ response: ['main div'] }).getLastResponse()).resolves.toBe('已阅读 10 个网页 奥亚萨瓦尔-1 10 个网页')
+  })
+
+  it('expands a searched DeepSeek answer to the toolbar-bounded response block', async () => {
+    document.body.innerHTML = `
+      <main>
+        <div class="ds-message">
+          <div class="bubble">世界杯的情况</div>
+        </div>
+        <div class="ds-message">
+          <p>目前的2026年世界杯正处于小组赛阶段。</p>
+          <p>以下是今天的相关赛事情况：</p>
+          <ul>
+            <li>新西兰 vs 埃及：比赛正在进行中。</li>
+            <li>西班牙 4-0 沙特阿拉伯。</li>
+          </ul>
+          <div class="ds-flex actions">
+            <button>复制</button>
+            <button>重新生成</button>
+            <button>点赞</button>
+          </div>
+        </div>
+        <div class="ds-message search-references">已阅读 10 个网页</div>
+      </main>
+      <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+    `
+
+    const text = await createDeepSeekAdapter().getLastResponse()
+
+    expect(text).toContain('目前的2026年世界杯正处于小组赛阶段')
+    expect(text).toContain('以下是今天的相关赛事情况')
+    expect(text).toContain('西班牙 4-0 沙特阿拉伯')
+    expect(text).not.toBe('目前的2026年世界杯正处于小组赛阶段。')
+    expect(text).not.toBe('已阅读 10 个网页')
+  })
+
+  it('prints DeepSeek capture candidates only when capture debug is enabled', async () => {
+    document.body.innerHTML = `
+      <main>
+        <div class="message user">下一场世界杯比赛是哪一个队?</div>
+        <div class="message assistant">
+          <p>下一场世界杯比赛是阿根廷 vs 奥地利。</p>
+        </div>
+        <div class="message assistant search-references">已阅读 10 个网页</div>
+      </main>
+      <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+    `
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+
+    await createDeepSeekAdapter().getLastResponse()
+    expect(logSpy).not.toHaveBeenCalled()
+
+    localStorage.setItem('CHATDUEL_DEBUG_CAPTURE', '1')
+    await createDeepSeekAdapter().getLastResponse()
+
+    await vi.waitFor(() => {
+      expect(logSpy).toHaveBeenCalledWith(
+        '[ChatDuel capture debug]',
+        expect.stringContaining('"platform":"deepseek"'),
+      )
+      expect(logSpy).toHaveBeenCalledWith(
+        '[ChatDuel capture debug]',
+        expect.stringContaining('"event":"candidates"'),
+      )
+      expect(logSpy).toHaveBeenCalledWith(
+        '[ChatDuel capture debug]',
+        expect.stringContaining('阿根廷 vs 奥地利'),
+      )
+    })
   })
 
   it('attaches an image through an explicit DeepSeek file input', async () => {

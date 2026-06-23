@@ -103,6 +103,7 @@ export function applyCapturedResponses(
   const responses = { ...session.responses }
   let changed = false
   for (const platform of session.targetPlatforms) {
+    if (responses[platform]?.status === 'captured') continue
     const rawText = captured[platform]?.trim()
     const text = rawText ? normalizeCapturedResponse(platform, rawText) : ''
     if (!isMoreCompleteCapturedResponse(text, responses[platform]?.text)) continue
@@ -110,6 +111,32 @@ export function applyCapturedResponses(
       text,
       status: 'captured',
       capturedAt: now,
+    }
+    changed = true
+  }
+  if (!changed) return session
+  return {
+    ...session,
+    updatedAt: now,
+    responses,
+  }
+}
+
+export function applyCaptureFailures(
+  session: Session,
+  failures: Partial<Record<AIPlatform, string>>,
+  now = Date.now(),
+): Session {
+  const responses = { ...session.responses }
+  let changed = false
+  for (const platform of session.targetPlatforms) {
+    if (responses[platform]?.status !== 'pending') continue
+    const error = failures[platform]?.trim()
+    if (!error) continue
+    responses[platform] = {
+      text: responses[platform]?.text ?? '',
+      status: 'failed',
+      error,
     }
     changed = true
   }

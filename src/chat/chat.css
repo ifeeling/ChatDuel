@@ -131,7 +131,7 @@ body { overflow: hidden; }
 }
 
 .splitter {
-  width: 4px;
+  width: 2px;
   cursor: col-resize;
   background: var(--border);
   flex-shrink: 0;

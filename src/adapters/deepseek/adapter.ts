@@ -2,6 +2,7 @@ import type { AIAdapter } from '../base'
 import type { ConversationState, StreamEvent } from '../../types'
 import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
 import { elementToMarkdownText } from '../../lib/dom-response-text'
+import { describeCaptureElement, logCaptureDebug } from '../../lib/capture-debug'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 
 const DEFAULT_INPUT_SELECTORS = [
@@ -24,6 +25,29 @@ const DEFAULT_SEND_BUTTON_SELECTORS = [
   '[role="button"][title*="Send" i]',
   '[role="button"][aria-label*="发送"]',
   '[role="button"][title*="发送"]',
+]
+
+const DEFAULT_STOP_BUTTON_SELECTORS = [
+  'button[aria-label*="停止"]',
+  'button[title*="停止"]',
+  'button[aria-label*="中止"]',
+  'button[title*="中止"]',
+  'button[aria-label*="stop" i]',
+  'button[title*="stop" i]',
+  'button[aria-label*="cancel" i]',
+  'button[title*="cancel" i]',
+  '[role="button"][aria-label*="停止"]',
+  '[role="button"][title*="停止"]',
+  '[role="button"][aria-label*="中止"]',
+  '[role="button"][title*="中止"]',
+  '[role="button"][aria-label*="stop" i]',
+  '[role="button"][title*="stop" i]',
+  '[role="button"][aria-label*="cancel" i]',
+  '[role="button"][title*="cancel" i]',
+  '[data-testid*="stop" i]',
+  '[data-testid*="cancel" i]',
+  '[class*="stop" i]',
+  '[class*="cancel" i]',
 ]
 
 const DEFAULT_RESPONSE_SELECTORS = [
@@ -55,12 +79,14 @@ interface DeepSeekSelectors {
   [key: string]: string[]
   inputBox: string[]
   sendButton: string[]
+  stopButton: string[]
   response: string[]
 }
 
 const DEFAULT_SELECTORS: DeepSeekSelectors = {
   inputBox: DEFAULT_INPUT_SELECTORS,
   sendButton: DEFAULT_SEND_BUTTON_SELECTORS,
+  stopButton: DEFAULT_STOP_BUTTON_SELECTORS,
   response: DEFAULT_RESPONSE_SELECTORS,
 }
 
@@ -196,6 +222,21 @@ function findSendControl(selectors: DeepSeekSelectors): HTMLElement | null {
   return null
 }
 
+function hasStopGeneratingButton(selectors: DeepSeekSelectors): boolean {
+  if (queryFirst<HTMLElement>(selectors.stopButton)) return true
+  return [...document.querySelectorAll<HTMLElement>('button, [role="button"]')]
+    .some((button) => {
+      const marker = [
+        button.getAttribute('aria-label') ?? '',
+        button.getAttribute('title') ?? '',
+        button.getAttribute('data-testid') ?? '',
+        button.className?.toString() ?? '',
+        button.textContent ?? '',
+      ].join(' ')
+      return /停止|中止|取消|stop|cancel/i.test(marker)
+    })
+}
+
 function activateControl(button: HTMLElement): void {
   const mouseInit: MouseEventInit = { bubbles: true, cancelable: true, composed: true }
   button.dispatchEvent(new MouseEvent('mousedown', mouseInit))
@@ -239,6 +280,7 @@ function isUserMessage(el: HTMLElement): boolean {
     el.className?.toString() ?? '',
     el.getAttribute('aria-label') ?? '',
   ].join(' ')
+  if (/\b(_9663006|d29f3d7d)\b/.test(marker)) return true
   return /\b(user|human|question|query)\b/i.test(marker) && !/\b(assistant|answer)\b/i.test(marker)
 }
 
@@ -251,31 +293,56 @@ function elementMarker(el: HTMLElement): string {
   ].join(' ')
 }
 
+function isResponseActionBar(el: HTMLElement): boolean {
+  const marker = elementMarker(el)
+  if (/\b(action|toolbar|operate|feedback|copy|regenerate)\b/i.test(marker)) return true
+  const buttonText = normalizeText(el.textContent ?? '')
+  return /复制|重新生成|点赞|点踩|分享|copy|regenerate/i.test(buttonText)
+}
+
+function hasDirectResponseActions(el: HTMLElement): boolean {
+  return [...el.children].some((child) => child instanceof HTMLElement && isResponseActionBar(child))
+}
+
 function responseCandidateScore(el: HTMLElement, text: string): number {
   const marker = elementMarker(el)
   let score = 0
-  if (/\b(assistant|answer|markdown)\b/i.test(marker) || el.matches('article, [role="article"]')) score += 100
+  const isFragment = el.matches('p, li')
+  if ((/\b(assistant|answer|markdown)\b/i.test(marker) || el.matches('article, [role="article"]')) && !isFragment) score += 100
   if (/\b(user|human|question|query|recommend|suggest|guide|prompt|chip|card)\b/i.test(marker)) score -= 100
+  if (hasDirectResponseActions(el)) score += 120
+  if (/^[^\n]{1,80}[?？]$/.test(text)) score -= 80
+  if (text.length <= 80 && !hasDirectResponseActions(el)) score -= 20
   if (el.closest('main')) score += 10
   score += Math.min(text.length, 1000) / 100
   return score
 }
 
-function canUseExpandedResponseRoot(el: HTMLElement, text: string): boolean {
+function hasOtherResponseCandidate(root: HTMLElement, current: HTMLElement, responseSelector: string): boolean {
+  return [...root.querySelectorAll<HTMLElement>(responseSelector)]
+    .some((candidate) => {
+      if (candidate === current || current.contains(candidate) || candidate.contains(current)) return false
+      if (isHidden(candidate) || candidate.closest(RESPONSE_EXCLUDE_ANCESTORS) || isUserMessage(candidate)) return false
+      return elementToMarkdownText(candidate).length > 0
+    })
+}
+
+function canUseExpandedResponseRoot(el: HTMLElement, text: string, current: HTMLElement, responseSelector: string): boolean {
   if (isHidden(el) || el.closest(RESPONSE_EXCLUDE_ANCESTORS) || isUserMessage(el)) return false
   if ([...el.querySelectorAll<HTMLElement>('*')].some(isUserMessage)) return false
   if (el.querySelector('textarea, input, [contenteditable="true"], [role="textbox"]')) return false
+  if (hasOtherResponseCandidate(el, current, responseSelector) && !hasDirectResponseActions(el)) return false
   const expandedText = elementToMarkdownText(el)
-  if (expandedText.length <= text.length) return false
+  if (expandedText.length < text.length) return false
   return expandedText.includes(text)
 }
 
-function expandResponseCandidate(el: HTMLElement, text: string): { el: HTMLElement; text: string } {
+function expandResponseCandidate(el: HTMLElement, text: string, responseSelector: string): { el: HTMLElement; text: string } {
   let bestEl = el
   let bestText = text
   let parent = el.parentElement
-  for (let depth = 0; parent && depth < 3; depth += 1, parent = parent.parentElement) {
-    if (!canUseExpandedResponseRoot(parent, bestText)) break
+  for (let depth = 0; parent && depth < 8; depth += 1, parent = parent.parentElement) {
+    if (!canUseExpandedResponseRoot(parent, bestText, el, responseSelector)) break
     bestEl = parent
     bestText = elementToMarkdownText(parent)
   }
@@ -284,14 +351,15 @@ function expandResponseCandidate(el: HTMLElement, text: string): { el: HTMLEleme
 
 function getLatestResponseText(selectors: DeepSeekSelectors): string {
   const seen = new Set<string>()
-  const candidates = [...document.querySelectorAll<HTMLElement>(selectors.response.join(','))]
+  const responseSelector = selectors.response.join(',')
+  const candidates = [...document.querySelectorAll<HTMLElement>(responseSelector)]
     .filter((el) => !isHidden(el))
     .filter((el) => !el.closest(RESPONSE_EXCLUDE_ANCESTORS))
     .filter((el) => !isUserMessage(el))
     .map((el, index) => {
       const text = elementToMarkdownText(el)
-      const expanded = expandResponseCandidate(el, text)
-      return { text: expanded.text, score: responseCandidateScore(expanded.el, expanded.text), index }
+      const expanded = expandResponseCandidate(el, text, responseSelector)
+      return { el: expanded.el, text: expanded.text, score: responseCandidateScore(expanded.el, expanded.text), index }
     })
     .filter((candidate) => candidate.text.length > 0)
     .filter((candidate) => {
@@ -303,6 +371,25 @@ function getLatestResponseText(selectors: DeepSeekSelectors): string {
       if (a.score !== b.score) return a.score - b.score
       return a.index - b.index
     })
+
+  logCaptureDebug({
+    platform: 'deepseek',
+    event: 'candidates',
+    candidates: candidates.map((candidate) => ({
+      ...describeCaptureElement(candidate.el, candidate.text),
+      index: candidate.index,
+      score: candidate.score,
+      isUserMessage: false,
+    })),
+    selected: candidates.length > 0
+      ? {
+          ...describeCaptureElement(candidates[candidates.length - 1].el, candidates[candidates.length - 1].text),
+          index: candidates[candidates.length - 1].index,
+          score: candidates[candidates.length - 1].score,
+          isUserMessage: false,
+        }
+      : undefined,
+  })
 
   return candidates[candidates.length - 1]?.text ?? ''
 }
@@ -359,6 +446,7 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
     async getConversationState(): Promise<ConversationState> {
       if (!queryFirst(selectors.inputBox)) return { status: 'error', errorMessage: 'DeepSeek 输入框未识别' }
       const lastResponse = getLatestResponseText(selectors)
+      if (hasStopGeneratingButton(selectors)) return { status: 'streaming', lastResponse }
       if (lastResponse) return { status: 'finished', lastResponse }
       return { status: 'idle' }
     },

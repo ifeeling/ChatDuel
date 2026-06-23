@@ -69,6 +69,13 @@ describe('user-settings', () => {
     await expect(loadUserSettings()).resolves.toEqual(saved)
   })
 
+  it('saves response capture debug preference', async () => {
+    const saved = await saveUserSettings({ captureDebug: true })
+
+    expect(saved.captureDebug).toBe(true)
+    await expect(loadUserSettings()).resolves.toMatchObject({ captureDebug: true })
+  })
+
   it('accepts the requested European languages', async () => {
     const saved = await saveUserSettings({ language: 'fr-FR' })
     expect(saved.language).toBe('fr-FR')

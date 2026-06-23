@@ -72,6 +72,16 @@ describe('chat.html', () => {
     expect(helpText).not.toContain('Grok')
   })
 
+  it('renders diagnostics settings for response capture debugging', () => {
+    document.body.innerHTML = html
+
+    expect(document.querySelector<HTMLButtonElement>('[data-settings-tab="diagnostics"]')?.textContent)
+      .toContain('诊断')
+    expect(document.querySelector('#setting-capture-debug')).toBeTruthy()
+    expect(document.querySelector('#diagnostics-capture-help')?.textContent)
+      .toContain('[ChatDuel capture debug]')
+  })
+
   it('edits one prompt template at a time in settings', () => {
     document.body.innerHTML = html
 
@@ -248,6 +258,12 @@ describe('chat.html', () => {
 
   it('keeps hidden panels out of the split layout', () => {
     expect(css).toContain('[hidden] { display: none !important; }')
+  })
+
+  it('keeps panel splitters visually light', () => {
+    const splitterRule = css.match(/\.splitter\s*\{[^}]+\}/)?.[0] ?? ''
+
+    expect(splitterRule).toContain('width: 2px;')
   })
 
   it('keeps toast notifications above modal overlays', () => {

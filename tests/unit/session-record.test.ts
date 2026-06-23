@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  applyCaptureFailures,
   applyCapturedResponses,
   applySendResults,
   createSessionRecord,
@@ -86,6 +87,68 @@ describe('session-record', () => {
       '第二段。',
     )).toBe(true)
     expect(isMoreCompleteCapturedResponse('第二段。', '第一段。\n\n第二段。\n\n第三段。')).toBe(false)
+  })
+
+  it('does not overwrite an already captured response with a later conversation response', () => {
+    const session = createSessionRecord({
+      prompt: '你们好',
+      sentPrompt: '你们好',
+      targetPlatforms: ['gemini', 'chatgpt', 'deepseek'],
+      now: 1000,
+      id: 's1',
+    })
+    const captured = applyCapturedResponses(session, {
+      gemini: 'Gemini 的问候回复',
+      chatgpt: 'ChatGPT 的问候回复',
+      deepseek: 'DeepSeek 的问候回复',
+    }, 2000)
+
+    const updated = applyCapturedResponses(captured, {
+      gemini: '世界杯战况的更长回复，包含很多后续赛事信息，不能覆盖第一轮历史。这里继续补充很多文字，让它明显比旧回答长。',
+      chatgpt: '世界杯战况的更长回复，包含很多后续赛事信息，不能覆盖第一轮历史。这里继续补充很多文字，让它明显比旧回答长。',
+      deepseek: 'DeepSeek 的问候回复\n\n世界杯战况的更长回复，也不能覆盖第一轮历史。这里继续补充很多文字，让它明显比旧回答长。',
+    }, 3000)
+
+    expect(updated.responses.gemini?.text).toBe('Gemini 的问候回复')
+    expect(updated.responses.chatgpt?.text).toBe('ChatGPT 的问候回复')
+    expect(updated.responses.deepseek?.text).toBe('DeepSeek 的问候回复')
+    expect(updated.updatedAt).toBe(2000)
+  })
+
+  it('marks only pending responses as failed when capture backfill times out', () => {
+    const session = createSessionRecord({
+      prompt: '世界杯的情况',
+      sentPrompt: '世界杯的情况',
+      targetPlatforms: ['gemini', 'doubao', 'deepseek'],
+      now: 1000,
+      id: 's1',
+    })
+    const captured = applyCapturedResponses(session, {
+      gemini: 'Gemini 的世界杯回复',
+    }, 2000)
+
+    const updated = applyCaptureFailures(captured, {
+      gemini: 'response capture timed out',
+      doubao: 'response capture timed out',
+      deepseek: 'response capture timed out',
+    }, 3000)
+
+    expect(updated.responses.gemini).toEqual({
+      text: 'Gemini 的世界杯回复',
+      status: 'captured',
+      capturedAt: 2000,
+    })
+    expect(updated.responses.doubao).toEqual({
+      text: '',
+      status: 'failed',
+      error: 'response capture timed out',
+    })
+    expect(updated.responses.deepseek).toEqual({
+      text: '',
+      status: 'failed',
+      error: 'response capture timed out',
+    })
+    expect(updated.updatedAt).toBe(3000)
   })
 
   it('detects whether a captured response is newer than the baseline', () => {

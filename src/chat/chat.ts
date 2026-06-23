@@ -63,6 +63,7 @@ import { t, type UserLanguage } from '../lib/i18n'
 import { getSendButtonState } from '../lib/send-button-state'
 import { addSession, deleteSession, getSession, loadSessions, updateSession } from '../lib/session-store'
 import {
+  applyCaptureFailures,
   applyCapturedResponses,
   applySendResults,
   createSessionRecord,
@@ -88,6 +89,7 @@ import { buildTransferContent, buildTransferSourceOptions, type TransferSourceOp
 import { bindComposerFocusRestorer } from '../lib/focus-restore'
 import { filterSessionsByTitle } from '../lib/history-search'
 import { deleteConversation, isSpecificConversationUrl, loadConversations, renameConversation, upsertConversation } from '../lib/conversation-store'
+import { logCaptureDebug, textPreview } from '../lib/capture-debug'
 import { choosePlatformMessageRoute } from './platform-message-route'
 
 // ---------- DOM 引用 ----------
@@ -127,6 +129,7 @@ const settingPromptKind = $<HTMLSelectElement>('#setting-prompt-kind')
 const settingPromptLabel = $<HTMLSpanElement>('#setting-prompt-label')
 const settingPromptTemplate = $<HTMLTextAreaElement>('#setting-prompt-template')
 const settingPromptHelp = $<HTMLParagraphElement>('#setting-prompt-help')
+const settingCaptureDebug = $<HTMLInputElement>('#setting-capture-debug')
 const btnResetPromptTemplate = $<HTMLButtonElement>('#btn-reset-prompt-template')
 const historyOverlay = $<HTMLDivElement>('#history-overlay')
 const btnHistoryClose = $<HTMLButtonElement>('#btn-history-close')
@@ -246,12 +249,16 @@ function applyStaticUiLanguage(language: UserLanguage) {
   setElementText('#settings-title', t(language, 'app.settings'))
   setElementText('[data-settings-tab="sites"]', t(language, 'settings.sitesTab'))
   setElementText('[data-settings-tab="prompts"]', t(language, 'settings.promptsTab'))
+  setElementText('[data-settings-tab="diagnostics"]', t(language, 'settings.diagnosticsTab'))
   setElementText('.settings-nav-item:disabled', t(language, 'settings.shortcutsTab'))
   setElementText('[data-settings-tab="help"]', t(language, 'settings.helpTab'))
   setElementText('[data-settings-panel="sites"] .settings-lead', t(language, 'settings.sitesLead'))
   setElementText('[data-settings-panel="prompts"] .settings-lead', t(language, 'settings.promptLead'))
   setElementText('.prompt-kind-field span', t(language, 'settings.promptKind'))
   setElementText('#btn-reset-prompt-template', t(language, 'settings.resetPrompt'))
+  setElementText('#diagnostics-lead', t(language, 'settings.diagnosticsLead'))
+  setElementText('#diagnostics-capture-title', t(language, 'settings.captureDebugTitle'))
+  setElementText('#diagnostics-capture-help', t(language, 'settings.captureDebugHelp'))
   setElementText('.settings-field span', t(language, 'settings.language'))
   setElementText('#btn-refresh', t(language, 'settings.refreshStatus'))
   setElementTitle('#btn-refresh', t(language, 'settings.refreshStatusTitle'))
@@ -649,6 +656,7 @@ function renderSettingsForm() {
   }
   promptTemplateDrafts = { ...userSettings.promptTemplates }
   promptTemplateCustomizationDrafts = { ...userSettings.promptTemplateCustomizations }
+  settingCaptureDebug.checked = userSettings.captureDebug
   selectedPromptTemplateKey = settingPromptKind.value as UserPromptTemplateKey || 'transfer'
   renderPromptTemplateEditor()
 }
@@ -714,6 +722,7 @@ async function onSaveSettings() {
     enabledPlatforms,
     platformOrder: userSettings.platformOrder,
     language: settingLanguage.value as UserLanguage,
+    captureDebug: settingCaptureDebug.checked,
     promptTemplates: promptTemplateDrafts,
     promptTemplateCustomizations: promptTemplateCustomizationDrafts,
   }
@@ -1044,7 +1053,44 @@ function scheduleSessionResponseBackfill(
   progress: Partial<Record<AIPlatform, ResponseCaptureProgress>> = {},
   attempt = 0,
 ) {
-  if (platforms.length === 0 || attempt >= RESPONSE_BACKFILL_MAX_ATTEMPTS) return
+  if (platforms.length === 0) return
+  if (attempt >= RESPONSE_BACKFILL_MAX_ATTEMPTS) {
+    void (async () => {
+      const session = await getSession(sessionId)
+      if (!session) return
+      const failures: Partial<Record<AIPlatform, string>> = {}
+      for (const platform of platforms) {
+        const response = session.responses[platform]
+        if (response?.status !== 'pending') continue
+        failures[platform] = 'response capture timed out'
+        setStatus(platform, 'err', t(userSettings.language, 'send.statusFailed'))
+        finishSendLockPlatform(platform)
+        logCaptureDebug({
+          platform,
+          event: 'backfill-timeout',
+          sessionId,
+          attempt,
+          lastTextPreview: textPreview(progress[platform]?.lastText ?? ''),
+          lastStableCount: progress[platform]?.stableCount ?? 0,
+          requiredStableCount: RESPONSE_STABLE_REQUIRED_POLLS,
+        })
+      }
+      const updated = applyCaptureFailures(session, failures)
+      if (updated !== session) await updateSession(updated)
+    })().catch((e) => console.error('[AIChatRoom chat] response backfill timeout failed', e))
+    for (const platform of platforms) {
+      logCaptureDebug({
+        platform,
+        event: 'backfill-timeout-scheduled',
+        sessionId,
+        attempt,
+        lastTextPreview: textPreview(progress[platform]?.lastText ?? ''),
+        lastStableCount: progress[platform]?.stableCount ?? 0,
+        requiredStableCount: RESPONSE_STABLE_REQUIRED_POLLS,
+      })
+    }
+    return
+  }
 
   setTimeout(() => {
     void backfillSessionResponses(sessionId, platforms, baselines, progress, attempt)
@@ -1064,7 +1110,7 @@ async function backfillSessionResponses(
 
     const trackedPlatforms = platforms.filter((platform) => {
       const response = session.responses[platform]
-      return response?.status === 'pending' || response?.status === 'captured'
+      return response?.status === 'pending'
     })
     if (trackedPlatforms.length === 0) return
 
@@ -1083,16 +1129,45 @@ async function backfillSessionResponses(
         RESPONSE_STABLE_REQUIRED_POLLS,
       )
       nextProgress[platform] = decision.progress
-      if (isResponseCompleteForUnlock({ text, status: state.status }, baselines[platform])) {
+      const completeForUnlock = isResponseCompleteForUnlock({ text, status: state.status }, baselines[platform])
+      const willCapture = decision.shouldCapture && isNewCapturedResponse(decision.text, baselines[platform])
+      logCaptureDebug({
+        platform,
+        event: 'backfill-poll',
+        sessionId,
+        attempt,
+        stateStatus: state.status,
+        route: platformMessageRoute(platform),
+        textLength: text.trim().length,
+        textPreview: textPreview(text),
+        baselinePreview: textPreview(baselines[platform] ?? ''),
+        previousStableCount: progress[platform]?.stableCount ?? 0,
+        nextStableCount: decision.progress.stableCount,
+        requiredStableCount: RESPONSE_STABLE_REQUIRED_POLLS,
+        shouldCapture: decision.shouldCapture,
+        willCapture,
+        completeForUnlock,
+      })
+      if (completeForUnlock) {
         setStatus(platform, 'ok', t(userSettings.language, 'send.statusDone'))
         finishSendLockPlatform(platform)
       }
-      if (decision.shouldCapture && isNewCapturedResponse(decision.text, baselines[platform])) {
+      if (willCapture) {
         captured[platform] = decision.text
       }
     }))
 
     const updated = applyCapturedResponses(session, captured)
+    for (const [platform, text] of Object.entries(captured) as Array<[AIPlatform, string]>) {
+      logCaptureDebug({
+        platform,
+        event: 'history-capture',
+        sessionId,
+        attempt,
+        textLength: text.trim().length,
+        textPreview: textPreview(text),
+      })
+    }
     if (updated !== session) await updateSession(updated)
 
     const remaining = trackedPlatforms
@@ -2814,6 +2889,7 @@ async function onSwitchPanel(source: AIPlatform, target: AIPlatform) {
     enabledPlatforms,
     platformOrder: swapPlatformOrder(userSettings.platformOrder, source, target),
     language: userSettings.language,
+    captureDebug: userSettings.captureDebug,
     promptTemplates: userSettings.promptTemplates,
     promptTemplateCustomizations: userSettings.promptTemplateCustomizations,
   }
@@ -2833,6 +2909,7 @@ async function onAddPanel(platform: AIPlatform) {
     enabledPlatforms,
     platformOrder: userSettings.platformOrder,
     language: userSettings.language,
+    captureDebug: userSettings.captureDebug,
     promptTemplates: userSettings.promptTemplates,
     promptTemplateCustomizations: userSettings.promptTemplateCustomizations,
   }, t(userSettings.language, 'panelMenu.added'), t(userSettings.language, 'panelMenu.addFailed'))
@@ -2849,6 +2926,7 @@ async function onClosePanel(platform: AIPlatform) {
     enabledPlatforms,
     platformOrder: userSettings.platformOrder,
     language: userSettings.language,
+    captureDebug: userSettings.captureDebug,
     promptTemplates: userSettings.promptTemplates,
     promptTemplateCustomizations: userSettings.promptTemplateCustomizations,
   }, t(userSettings.language, 'panelMenu.closed'), t(userSettings.language, 'panelMenu.closeFailed'))

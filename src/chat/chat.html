@@ -132,6 +132,7 @@
         <nav class="settings-nav" aria-label="设置分类">
           <button class="settings-nav-item active" type="button" data-settings-tab="sites">显示站点</button>
           <button class="settings-nav-item" type="button" data-settings-tab="prompts">提示词</button>
+          <button class="settings-nav-item" type="button" data-settings-tab="diagnostics">诊断</button>
           <button class="settings-nav-item" type="button" disabled>快捷键</button>
           <button class="settings-nav-item" type="button" data-settings-tab="help">使用帮助</button>
         </nav>
@@ -217,6 +218,18 @@
             </label>
             <p class="settings-help" id="setting-prompt-help">可用变量：{{fromLabel}} 表示来源 AI 名字，{{content}} 表示要转发的回答内容。</p>
             <button id="btn-reset-prompt-template" class="settings-secondary" type="button">恢复当前提示词默认值</button>
+          </div>
+          <div class="settings-panel" data-settings-panel="diagnostics">
+            <p class="settings-lead" id="diagnostics-lead">遇到历史记录抓错回答、内容不完整或混入参考资料时，可以临时打开诊断日志。</p>
+            <label class="site-row diagnostic-row">
+              <span class="switch">
+                <input id="setting-capture-debug" type="checkbox">
+                <span class="switch-track"></span>
+              </span>
+              <span class="site-icon">DBG</span>
+              <span class="site-name" id="diagnostics-capture-title">回答抓取调试日志</span>
+            </label>
+            <p class="settings-help" id="diagnostics-capture-help">开启后请复现问题，并把浏览器控制台中 [ChatDuel capture debug] 开头的日志发给开发者。日志可能包含部分对话内容，请确认后再发送。</p>
           </div>
           <div class="settings-panel" data-settings-panel="help">
             <p class="settings-lead">常用功能说明</p>

@@ -1,6 +1,8 @@
 import type { AIAdapter } from '../base'
 import type { ConversationState, StreamEvent } from '../../types'
 import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
+import { elementToMarkdownText } from '../../lib/dom-response-text'
+import { describeCaptureElement, logCaptureDebug } from '../../lib/capture-debug'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 
 const DEFAULT_INPUT_SELECTORS = [
@@ -16,6 +18,33 @@ const DEFAULT_SEND_BUTTON_SELECTORS = [
   'button[type="submit"]',
   '[role="button"][aria-label*="发送"]',
   '[role="button"][title*="发送"]',
+]
+
+const DEFAULT_STOP_BUTTON_SELECTORS = [
+  'button[aria-label*="停止"]',
+  'button[title*="停止"]',
+  'button[aria-label*="中止"]',
+  'button[title*="中止"]',
+  'button[aria-label*="取消"]',
+  'button[title*="取消"]',
+  'button[aria-label*="stop" i]',
+  'button[title*="stop" i]',
+  'button[aria-label*="cancel" i]',
+  'button[title*="cancel" i]',
+  '[role="button"][aria-label*="停止"]',
+  '[role="button"][title*="停止"]',
+  '[role="button"][aria-label*="中止"]',
+  '[role="button"][title*="中止"]',
+  '[role="button"][aria-label*="取消"]',
+  '[role="button"][title*="取消"]',
+  '[role="button"][aria-label*="stop" i]',
+  '[role="button"][title*="stop" i]',
+  '[role="button"][aria-label*="cancel" i]',
+  '[role="button"][title*="cancel" i]',
+  '[data-testid*="stop" i]',
+  '[data-testid*="cancel" i]',
+  '[class*="stop" i]',
+  '[class*="cancel" i]',
 ]
 
 const DEFAULT_RESPONSE_SELECTORS = [
@@ -46,12 +75,14 @@ interface DoubaoSelectors {
   [key: string]: string[]
   inputBox: string[]
   sendButton: string[]
+  stopButton: string[]
   response: string[]
 }
 
 const DEFAULT_SELECTORS: DoubaoSelectors = {
   inputBox: DEFAULT_INPUT_SELECTORS,
   sendButton: DEFAULT_SEND_BUTTON_SELECTORS,
+  stopButton: DEFAULT_STOP_BUTTON_SELECTORS,
   response: DEFAULT_RESPONSE_SELECTORS,
 }
 
@@ -177,6 +208,21 @@ function findSendControl(selectors: DoubaoSelectors): HTMLElement | null {
   return null
 }
 
+function hasStopGeneratingButton(selectors: DoubaoSelectors): boolean {
+  if (queryFirst<HTMLElement>(selectors.stopButton)) return true
+  return [...document.querySelectorAll<HTMLElement>('button, [role="button"]')]
+    .some((button) => {
+      const marker = [
+        button.getAttribute('aria-label') ?? '',
+        button.getAttribute('title') ?? '',
+        button.getAttribute('data-testid') ?? '',
+        button.className?.toString() ?? '',
+        button.textContent ?? '',
+      ].join(' ')
+      return /停止|中止|取消|stop|cancel/i.test(marker)
+    })
+}
+
 function activateControl(button: HTMLElement): void {
   const mouseInit: MouseEventInit = { bubbles: true, cancelable: true, composed: true }
   button.dispatchEvent(new MouseEvent('mousedown', mouseInit))
@@ -236,7 +282,7 @@ export function probeDoubaoAttachmentControls(selectorOverrides?: SelectorOverri
 }
 
 function elementText(el: HTMLElement): string {
-  return removeTrailingSuggestionLines(normalizeText(el.innerText ?? el.textContent ?? ''))
+  return removeTrailingSuggestionLines(elementToMarkdownText(el))
 }
 
 function isHidden(el: HTMLElement): boolean {
@@ -259,12 +305,41 @@ function elementMarker(el: HTMLElement): string {
   ].join(' ')
 }
 
+function isResponseActionBar(el: HTMLElement): boolean {
+  const marker = elementMarker(el)
+  if (/\b(action|toolbar|operate|feedback|copy|regenerate)\b/i.test(marker)) return true
+  const buttonText = normalizeText(el.textContent ?? '')
+  return /复制|重新生成|点赞|点踩|分享|copy|regenerate/i.test(buttonText)
+}
+
+function hasDirectResponseActions(el: HTMLElement): boolean {
+  return [...el.children].some((child) => child instanceof HTMLElement && isResponseActionBar(child))
+}
+
 function isLikelySuggestionLine(line: string): boolean {
   const text = line.trim()
   if (!text) return false
   if (/^[\d一二三四五六七八九十]+[.)、]/.test(text)) return false
   if (/^[•\-*]/.test(text)) return false
   return text.length <= 36 && (/[?？]$/.test(text) || /[→↗>]$/.test(text))
+}
+
+function isConversationListContainer(el: HTMLElement): boolean {
+  return /\b(message-list|v_list)\b/i.test(elementMarker(el))
+}
+
+function collectResponseCandidateElements(selectors: DoubaoSelectors): HTMLElement[] {
+  const ordered = new Map<HTMLElement, HTMLElement>()
+  for (const el of document.querySelectorAll<HTMLElement>(selectors.response.join(','))) {
+    if (isConversationListContainer(el)) {
+      for (const child of el.children) {
+        if (child instanceof HTMLElement) ordered.set(child, child)
+      }
+      continue
+    }
+    ordered.set(el, el)
+  }
+  return [...ordered.values()]
 }
 
 function removeTrailingSuggestionLines(text: string): string {
@@ -282,22 +357,44 @@ function removeTrailingSuggestionLines(text: string): string {
   return lines.slice(0, keepCount).join('\n')
 }
 
+function isSearchLoadingText(text: string): boolean {
+  return /^正在搜索$|^搜索中/.test(text.trim())
+}
+
+function isSearchResultWithAnswer(text: string): boolean {
+  const stripped = text
+    .replace(/^搜索\s*\d+\s*个?关键词[，,]?\s*/u, '')
+    .replace(/参考\s*\d+\s*(篇|个|条)?资料/g, '')
+    .trim()
+  return /^搜索\s*\d+/u.test(text) && stripped.length > 0
+}
+
 function responseCandidateScore(el: HTMLElement): number {
   const marker = elementMarker(el)
+  const text = elementText(el)
   let score = 0
+  if (isConversationListContainer(el)) score -= 300
   if (/\b(assistant|answer|markdown)\b/i.test(marker) || el.matches('article, [role="article"]')) score += 100
-  if (/\b(recommend|suggest|guide|prompt|chip|card)\b/i.test(marker)) score -= 100
+  if (/\b(recommend|suggest|guide|prompt|chip|card|reference|references|source|sources|citation|search)\b/i.test(marker)) score -= 100
+  if (/^(参考|引用|来源|已阅读)\s*\d+\s*(篇|个|条)?/.test(text)) score -= 200
+  if (/^搜索\s*\d+\s*(篇|个|条)?/.test(text) && !isSearchResultWithAnswer(text)) score -= 200
+  if (isSearchLoadingText(text)) score -= 200
+  if (isSearchResultWithAnswer(text)) score += 80
+  if (isLikelySuggestionLine(text)) score -= 100
+  if (hasDirectResponseActions(el)) score += 120
+  if (text.length <= 80 && !hasDirectResponseActions(el) && !isSearchResultWithAnswer(text)) score -= 20
   if (el.closest('main')) score += 10
   return score
 }
 
 function getLatestResponseText(selectors: DoubaoSelectors): string {
   const seen = new Set<string>()
-  const candidates = [...document.querySelectorAll<HTMLElement>(selectors.response.join(','))]
+  const candidates = collectResponseCandidateElements(selectors)
     .filter((el) => !isHidden(el))
     .filter((el) => !el.closest(RESPONSE_EXCLUDE_ANCESTORS))
+    .filter((el) => !isConversationListContainer(el))
     .filter((el) => !isUserMessage(el))
-    .map((el, index) => ({ text: elementText(el), score: responseCandidateScore(el), index }))
+    .map((el, index) => ({ el, text: elementText(el), score: responseCandidateScore(el), index }))
     .filter((candidate) => candidate.text.length > 0)
     .filter((candidate) => {
       if (seen.has(candidate.text)) return false
@@ -308,6 +405,25 @@ function getLatestResponseText(selectors: DoubaoSelectors): string {
       if (a.score !== b.score) return a.score - b.score
       return a.index - b.index
     })
+
+  logCaptureDebug({
+    platform: 'doubao',
+    event: 'candidates',
+    candidates: candidates.map((candidate) => ({
+      ...describeCaptureElement(candidate.el, candidate.text),
+      index: candidate.index,
+      score: candidate.score,
+      isUserMessage: false,
+    })),
+    selected: candidates.length > 0
+      ? {
+          ...describeCaptureElement(candidates[candidates.length - 1].el, candidates[candidates.length - 1].text),
+          index: candidates[candidates.length - 1].index,
+          score: candidates[candidates.length - 1].score,
+          isUserMessage: false,
+        }
+      : undefined,
+  })
 
   return candidates[candidates.length - 1]?.text ?? ''
 }
@@ -365,6 +481,7 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
     async getConversationState(): Promise<ConversationState> {
       if (!queryFirst(selectors.inputBox)) return { status: 'error', errorMessage: '豆包输入框未识别' }
       const lastResponse = getLatestResponseText(selectors)
+      if (hasStopGeneratingButton(selectors)) return { status: 'streaming', lastResponse }
       if (lastResponse) return { status: 'finished', lastResponse }
       return { status: 'idle' }
     },
