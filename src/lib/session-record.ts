@@ -12,6 +12,7 @@ export interface CreateSessionRecordInput {
 export interface SendResult {
   p: AIPlatform
   ok: boolean
+  error?: string
 }
 
 export interface CreateSummarySessionRecordInput {
@@ -86,7 +87,7 @@ export function applySendResults(session: Session, results: SendResult[], now = 
   for (const result of results) {
     responses[result.p] = result.ok
       ? (responses[result.p] ?? { text: '', status: 'pending' })
-      : { text: '', status: 'failed', error: 'send failed' }
+      : { text: '', status: 'failed', error: result.error || 'send failed' }
   }
   return {
     ...session,

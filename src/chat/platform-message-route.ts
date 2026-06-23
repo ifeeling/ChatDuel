@@ -14,3 +14,9 @@ export function choosePlatformMessageRoute(input: PlatformMessageRouteInput): Pl
   if (input.iframeUrl.startsWith('chrome-error://')) return 'official-tab'
   return 'iframe'
 }
+
+export function iframeWriteResultTimeoutMs(payload: Record<string, unknown>): number {
+  return typeof payload.imageDataUrl === 'string' && payload.imageDataUrl.length > 0
+    ? 30000
+    : 8000
+}

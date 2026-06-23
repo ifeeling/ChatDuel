@@ -86,7 +86,7 @@ describe('supportsAutoUpload', () => {
 })
 
 describe('buildAttachmentDeliveryPlan', () => {
-  it('sends image uploads to all image-capable platforms', () => {
+  it('sends text to DeepSeek while skipping unsupported image upload', () => {
     const image = classifyFile(new File(['x'], 'photo.png', { type: 'image/png' }))
     const plan = buildAttachmentDeliveryPlan(['chatgpt', 'gemini', 'doubao', 'deepseek'], image, true)
 

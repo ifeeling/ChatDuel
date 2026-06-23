@@ -29,7 +29,7 @@ const SUMMARY_MODE_INSTRUCTIONS: Partial<Record<SummaryMode, string>> = {
 function capturedText(session: Session, platform: AIPlatform): string {
   const response = session.responses[platform]
   if (response?.status === 'captured' && response.text.trim()) return response.text.trim()
-  if (response?.status === 'failed') return '发送失败，未获取到回答。'
+  if (response?.status === 'failed') return response.error || '发送失败，未获取到回答。'
   return '未获取到回答。'
 }
 

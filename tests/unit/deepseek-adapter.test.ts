@@ -405,7 +405,7 @@ describe('deepseek adapter', () => {
     const file = new File(['image'], 'cursor.png', { type: 'image/png' })
     try {
       const upload = createDeepSeekAdapter().attachImage(file)
-      await vi.advanceTimersByTimeAsync(3100)
+      await vi.advanceTimersByTimeAsync(4100)
       await upload
 
       expect(input.files?.[0]?.name).toBe('cursor.png')
@@ -413,6 +413,20 @@ describe('deepseek adapter', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('rejects image sending when DeepSeek is in quick mode', async () => {
+    document.body.innerHTML = `
+      <header>简短回答准备 快速模式</header>
+      <div class="composer">
+        <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt">
+        <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+      </div>
+    `
+
+    await expect(
+      createDeepSeekAdapter().sendMessage('这是什么图?', new File(['image'], 'cursor.png', { type: 'image/png' })),
+    ).rejects.toThrow('DeepSeek 仅识图模式支持图片')
   })
 
   it('prefers paste into the DeepSeek composer when paste creates attachment evidence', async () => {
@@ -441,6 +455,32 @@ describe('deepseek adapter', () => {
     expect(changeSpy).not.toHaveBeenCalled()
   })
 
+  it('rejects a DeepSeek pasted image when the preview is marked as abnormal', async () => {
+    vi.useFakeTimers()
+    document.body.innerHTML = `
+      <div class="composer">
+        <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt">
+        <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+      </div>
+    `
+    const textarea = document.querySelector<HTMLTextAreaElement>('textarea')!
+    textarea.addEventListener('paste', () => {
+      const preview = document.createElement('button')
+      preview.className = 'upload-file'
+      preview.textContent = 'cursor.png 未提取到文字 删除异常文件'
+      document.querySelector('.composer')?.appendChild(preview)
+    })
+
+    try {
+      const upload = createDeepSeekAdapter().attachImage(new File(['image'], 'cursor.png', { type: 'image/png' }))
+      const expectedFailure = expect(upload).rejects.toThrow('deepseek image upload rejected as abnormal file')
+      await vi.advanceTimersByTimeAsync(2500)
+      await expectedFailure
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('uses paste/drop when the DeepSeek composer creates attachment evidence', async () => {
     document.body.innerHTML = `
       <div class="composer">
@@ -462,6 +502,83 @@ describe('deepseek adapter', () => {
 
     expect(pasteSpy).toHaveBeenCalledTimes(1)
     expect(document.querySelector('.upload-file')?.textContent).toBe('cursor.png')
+  })
+
+  it('does not dispatch drop after paste creates a DeepSeek attachment preview in the wider composer', async () => {
+    vi.useFakeTimers()
+    document.body.innerHTML = `
+      <div class="composer">
+        <div class="inner-composer">
+          <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt">
+          <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+        </div>
+      </div>
+    `
+    const textarea = document.querySelector<HTMLTextAreaElement>('textarea')!
+    const pasteSpy = vi.fn(() => {
+      const preview = document.createElement('span')
+      preview.className = 'upload-file'
+      preview.textContent = 'cursor.png'
+      document.querySelector('.composer')?.appendChild(preview)
+    })
+    const dropSpy = vi.fn(() => {
+      const preview = document.createElement('span')
+      preview.className = 'upload-file'
+      preview.textContent = 'cursor.png'
+      document.querySelector('.composer')?.appendChild(preview)
+    })
+    textarea.addEventListener('paste', pasteSpy)
+    textarea.addEventListener('drop', dropSpy)
+
+    try {
+      const upload = createDeepSeekAdapter().attachImage(new File(['image'], 'cursor.png', { type: 'image/png' }))
+      await vi.advanceTimersByTimeAsync(6200)
+      await expect(upload).resolves.toBeUndefined()
+
+      expect(pasteSpy).toHaveBeenCalledTimes(1)
+      expect(dropSpy).not.toHaveBeenCalled()
+      expect(document.querySelectorAll('.upload-file')).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('prints DeepSeek upload diagnostics only when capture debug is enabled', async () => {
+    document.body.innerHTML = `
+      <div class="composer">
+        <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt">
+        <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+      </div>
+    `
+    const textarea = document.querySelector<HTMLTextAreaElement>('textarea')!
+    textarea.addEventListener('paste', () => {
+      const preview = document.createElement('span')
+      preview.className = 'upload-file'
+      preview.textContent = 'cursor.png'
+      document.querySelector('.composer')?.appendChild(preview)
+    })
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+
+    await createDeepSeekAdapter().attachImage(new File(['image'], 'cursor.png', { type: 'image/png' }))
+    expect(logSpy).not.toHaveBeenCalled()
+
+    localStorage.setItem('CHATDUEL_DEBUG_CAPTURE', '1')
+    await createDeepSeekAdapter().attachImage(new File(['image'], 'cursor.png', { type: 'image/png' }))
+
+    await vi.waitFor(() => {
+      expect(logSpy).toHaveBeenCalledWith(
+        '[ChatDuel capture debug]',
+        expect.stringContaining('"event":"upload-attempt"'),
+      )
+      expect(logSpy).toHaveBeenCalledWith(
+        '[ChatDuel capture debug]',
+        expect.stringContaining('"route":"paste-drop"'),
+      )
+      expect(logSpy).toHaveBeenCalledWith(
+        '[ChatDuel capture debug]',
+        expect.stringContaining('"ok":true'),
+      )
+    })
   })
 
   it('ignores unrelated page media when checking DeepSeek attachment evidence', async () => {

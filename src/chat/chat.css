@@ -347,7 +347,7 @@ body { overflow: hidden; }
   border-radius: 4px;
   font-size: 11px;
   color: var(--muted);
-  max-width: 220px;
+  max-width: min(620px, 100%);
 }
 .image-preview[hidden] { display: none; }
 .image-preview img {
@@ -361,6 +361,10 @@ body { overflow: hidden; }
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 150px;
+}
+.attachment-warning {
+  color: var(--warn);
+  white-space: nowrap;
 }
 #btn-image-remove {
   background: transparent;

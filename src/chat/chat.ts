@@ -90,7 +90,7 @@ import { bindComposerFocusRestorer } from '../lib/focus-restore'
 import { filterSessionsByTitle } from '../lib/history-search'
 import { deleteConversation, isSpecificConversationUrl, loadConversations, renameConversation, upsertConversation } from '../lib/conversation-store'
 import { logCaptureDebug, textPreview } from '../lib/capture-debug'
-import { choosePlatformMessageRoute } from './platform-message-route'
+import { choosePlatformMessageRoute, iframeWriteResultTimeoutMs } from './platform-message-route'
 
 // ---------- DOM 引用 ----------
 const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => document.querySelector<T>(sel)!
@@ -118,6 +118,7 @@ const fileInput = $<HTMLInputElement>('#file-input')
 const imagePreview = $<HTMLDivElement>('#image-preview')
 const previewImg = $<HTMLImageElement>('#preview-img')
 const imageMeta = $<HTMLSpanElement>('#image-meta')
+const attachmentWarning = $<HTMLSpanElement>('#attachment-warning')
 const btnImageRemove = $<HTMLButtonElement>('#btn-image-remove')
 const btnRefresh = $<HTMLButtonElement>('#btn-refresh')
 const toastContainer = $<HTMLDivElement>('#toast-container')
@@ -325,6 +326,7 @@ function applyStaticUiLanguage(language: UserLanguage) {
   document.querySelectorAll<HTMLButtonElement>('.panel-close').forEach((btn) => {
     btn.title = t(language, 'panel.closeTitle')
   })
+  updateAttachmentWarning()
   renderHelpContent(language)
 }
 
@@ -368,6 +370,12 @@ const atPopupEl = $<HTMLDivElement>('#at-popup')
 
 function updateComposerToolbarVisibility() {
   composerToolbar.classList.toggle('has-content', !imagePreview.hidden)
+}
+
+function updateAttachmentWarning() {
+  const shouldWarn = pendingAttachment?.classification.kind === 'image' && activePlatforms().includes('deepseek')
+  attachmentWarning.hidden = !shouldWarn
+  attachmentWarning.textContent = shouldWarn ? t(userSettings.language, 'attachment.deepseekImageNotice') : ''
 }
 
 function setStatus(p: AIPlatform, state: 'ok' | 'err' | 'warn', text: string) {
@@ -601,6 +609,7 @@ function applyUserSettings(settings: UserSettings) {
   }
 
   syncSplitters()
+  updateAttachmentWarning()
   btnAddPanel.hidden = false
   const canTransfer = platformsWithCapability('supportsLastResponse').length >= 1 && platformsWithCapability('supportsText').length >= 2
   document.querySelectorAll<HTMLButtonElement>('.panel-transfer').forEach((btn) => {
@@ -791,6 +800,7 @@ async function acceptFile(file: File) {
 
   imageMeta.textContent = `${file.name || 'file'} · ${(file.size / 1024).toFixed(0)}KB`
   imagePreview.hidden = false
+  updateAttachmentWarning()
   updateComposerToolbarVisibility()
   updateSendButtonState()
   btnImage.classList.add('has-image')
@@ -813,6 +823,8 @@ function clearAttachment() {
   previewImg.src = ''
   previewImg.hidden = false
   imageMeta.textContent = ''
+  attachmentWarning.textContent = ''
+  attachmentWarning.hidden = true
   imagePreview.hidden = true
   updateComposerToolbarVisibility()
   updateSendButtonState()
@@ -913,16 +925,16 @@ async function sendOfficialTabCommand<T = unknown>(
   }
 }
 
-function waitForIframeWriteResult(p: AIPlatform, payload: Record<string, unknown>): Promise<{ p: AIPlatform; ok: boolean }> {
+function waitForIframeWriteResult(p: AIPlatform, payload: Record<string, unknown>): Promise<{ p: AIPlatform; ok: boolean; error?: string }> {
   const win = panelIframe(p).contentWindow
   if (!win) return Promise.resolve({ p, ok: false })
   return new Promise((resolve) => {
     const onMsg = (e: MessageEvent) => {
-      const d = e.data as { source?: string; event?: string; action?: string; platform?: AIPlatform; ok?: boolean } | undefined
+      const d = e.data as { source?: string; event?: string; action?: string; platform?: AIPlatform; ok?: boolean; error?: string } | undefined
       if (!d || d.source !== 'aichatroom-content') return
       if (d.event === 'result' && d.action === 'write-and-send' && d.platform === p) {
         window.removeEventListener('message', onMsg)
-        resolve({ p, ok: !!d.ok })
+        resolve({ p, ok: !!d.ok, error: d.error })
       }
     }
     window.addEventListener('message', onMsg)
@@ -930,14 +942,14 @@ function waitForIframeWriteResult(p: AIPlatform, payload: Record<string, unknown
     setTimeout(() => {
       window.removeEventListener('message', onMsg)
       resolve({ p, ok: false })
-    }, 8000)
+    }, iframeWriteResultTimeoutMs(payload))
   })
 }
 
-async function writeAndSendToPlatform(p: AIPlatform, payload: Record<string, unknown>): Promise<{ p: AIPlatform; ok: boolean }> {
+async function writeAndSendToPlatform(p: AIPlatform, payload: Record<string, unknown>): Promise<{ p: AIPlatform; ok: boolean; error?: string }> {
   if (platformMessageRoute(p) === 'official-tab') {
     const response = await sendOfficialTabCommand<{ ok?: boolean; error?: string }>(p, 'write-and-send', payload)
-    return { p, ok: !!response?.ok }
+    return { p, ok: !!response?.ok, error: response?.error }
   }
   return waitForIframeWriteResult(p, payload)
 }
@@ -1297,7 +1309,7 @@ async function onSend() {
   const responseBaselines = await captureResponseBaselines(targets)
 
   // 2. 发文字 + 附件到官方页面。iframe 被 CSP 拦住的平台会走官方标签页兜底。
-  const results: Array<{ p: AIPlatform; ok: boolean }> = []
+  const results: Array<{ p: AIPlatform; ok: boolean; error?: string }> = []
   await Promise.all(
     targets.map(async (p) => {
       const shouldUploadFile = deliveryPlan.autoUploadTargets.includes(p)
@@ -1339,6 +1351,7 @@ async function onSend() {
 
   // 3. 根据结果给一个合并的 toast
   const okCount = results.filter((r) => r.ok).length
+  const firstError = results.find((r) => !r.ok && r.error)?.error
   if (pendingAttachment?.classification.handling === 'file-upload') {
     if (okCount === results.length && results.length > 0) {
       showToast(t(userSettings.language, 'send.fileAllSent'), 'success', 2500)
@@ -1347,11 +1360,11 @@ async function onSend() {
       showToast(t(userSettings.language, 'send.filePartial'), 'warn', 6000)
     } else {
       // 全部失败:v0.5+ 不再走剪贴板兜底
-      showToast(t(userSettings.language, 'send.fileFailed'), 'err', 6000)
+      showToast(firstError ?? t(userSettings.language, 'send.fileFailed'), 'err', 6000)
     }
   } else {
     if (okCount === 0 && results.length > 0) {
-      showToast(t(userSettings.language, 'send.failed'), 'err', 3000)
+      showToast(firstError ?? t(userSettings.language, 'send.failed'), 'err', 3000)
     } else {
       showToast(t(userSettings.language, 'send.success'), 'success', 1200)
     }

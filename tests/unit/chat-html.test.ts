@@ -174,6 +174,16 @@ describe('chat.html', () => {
     expect(deepseekSiteRow?.textContent).toContain('深度求索')
   })
 
+  it('renders an attachment warning next to the image preview', () => {
+    document.body.innerHTML = html
+
+    const warning = document.querySelector<HTMLElement>('#attachment-warning')
+
+    expect(warning).toBeTruthy()
+    expect(warning?.closest('#image-preview')).toBeTruthy()
+    expect(css).toContain('.attachment-warning')
+  })
+
   it('does not render archived Copilot or Grok site rows and panels', () => {
     document.body.innerHTML = html
 

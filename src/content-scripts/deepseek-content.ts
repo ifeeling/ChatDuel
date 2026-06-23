@@ -92,7 +92,10 @@ async function boot() {
     }
     if (data.action === 'write-and-send') {
       const text = data.text ?? ''
-      adapter.sendMessage(text)
+      const file = data.imageDataUrl
+        ? dataUrlToFile(data.imageDataUrl, data.imageMime || 'image/png', data.imageName || 'image.png')
+        : undefined
+      adapter.sendMessage(text, file)
         .then(() => {
           e.source?.postMessage(
             { source: 'aichatroom-content', event: 'result', action: 'write-and-send', platform: PLATFORM, ok: true },
@@ -141,8 +144,11 @@ async function boot() {
       return true
     }
     if (msg.type === 'write-and-send') {
+      const file = msg.imageDataUrl
+        ? dataUrlToFile(msg.imageDataUrl, msg.imageMime || 'image/png', msg.imageName || 'image.png')
+        : undefined
       adapter
-        .sendMessage(msg.text)
+        .sendMessage(msg.text, file)
         .then(() => sendResponse({ ok: true }))
         .catch((e: unknown) => sendResponse({ ok: false, error: String(e) }))
       return true
@@ -152,3 +158,13 @@ async function boot() {
 }
 
 void boot()
+
+function dataUrlToFile(dataUrl: string, mime: string, name: string): File {
+  const commaIdx = dataUrl.indexOf(',')
+  const b64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl
+  const bin = atob(b64)
+  const len = bin.length
+  const bytes = new Uint8Array(len)
+  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i)
+  return new File([bytes], name, { type: mime })
+}

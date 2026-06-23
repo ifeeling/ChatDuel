@@ -90,6 +90,12 @@ const DEFAULT_SELECTORS: DeepSeekSelectors = {
   response: DEFAULT_RESPONSE_SELECTORS,
 }
 
+const PASTE_ATTACHMENT_EVIDENCE_TIMEOUT_MS = 700
+const DROP_ATTACHMENT_EVIDENCE_TIMEOUT_MS = 2300
+const ATTACHMENT_FAILURE_SETTLE_MS = 900
+const ATTACHMENT_FAILURE_PATTERN = /异常文件|删除异常文件|未提取到文字|failed|error/i
+const IMAGE_MODE_REQUIRED_ERROR = 'DeepSeek 仅识图模式支持图片，请新建或切换到识图模式后重试'
+
 function queryFirst<T extends Element = Element>(selectors: string[]): T | null {
   for (const selector of selectors) {
     const el = document.querySelector<T>(selector)
@@ -113,9 +119,75 @@ function findFileInput(): HTMLInputElement | null {
   return null
 }
 
+function attachmentDebugScope(scope: ParentNode): string {
+  if (scope instanceof HTMLElement) {
+    return [
+      scope.tagName.toLowerCase(),
+      scope.className ? `.${scope.className.toString().trim().replace(/\s+/g, '.')}` : '',
+      scope.getAttribute('role') ? `[role="${scope.getAttribute('role')}"]` : '',
+    ].join('')
+  }
+  return 'document'
+}
+
+function logUploadAttempt(route: string, file: File, details: Record<string, unknown>): void {
+  logCaptureDebug({
+    platform: 'deepseek',
+    event: 'upload-attempt',
+    route,
+    fileName: file.name,
+    fileType: file.type,
+    fileSize: file.size,
+    ...details,
+  })
+}
+
+function bodyTextPreview(): string {
+  return normalizeText(document.body.innerText || document.body.textContent || '').slice(0, 300)
+}
+
+function hasActiveVisionModeControl(): boolean {
+  return [...document.querySelectorAll<HTMLElement>('button, [role="button"], [aria-selected], [aria-pressed], [aria-current]')]
+    .some((el) => {
+      const marker = [
+        el.textContent ?? '',
+        el.getAttribute('aria-label') ?? '',
+        el.getAttribute('title') ?? '',
+      ].join(' ')
+      if (!/识图模式/.test(marker)) return false
+      return el.getAttribute('aria-selected') === 'true'
+        || el.getAttribute('aria-pressed') === 'true'
+        || el.getAttribute('aria-current') === 'page'
+        || /\b(active|selected|checked)\b/i.test(el.className?.toString() ?? '')
+    })
+}
+
+function isDeepSeekVisionMode(): boolean {
+  const text = bodyTextPreview()
+  if (/使用识图模式开始对话|识图模式开始对话|当前.*识图模式/.test(text)) return true
+  if (hasActiveVisionModeControl()) return true
+  if (/快速模式下|快速模式|专家模式|不支持上传文件/.test(text)) return false
+  return true
+}
+
+function assertCanSendImageInCurrentMode(): void {
+  if (isDeepSeekVisionMode()) return
+  logCaptureDebug({
+    platform: 'deepseek',
+    event: 'image-mode-check',
+    ok: false,
+    reason: 'vision-mode-required',
+    pageTextPreview: bodyTextPreview(),
+  })
+  throw new Error(IMAGE_MODE_REQUIRED_ERROR)
+}
+
 async function attachFileToInput(file: File): Promise<boolean> {
   const input = findFileInput()
-  if (!input) return false
+  if (!input) {
+    logUploadAttempt('file-input', file, { ok: false, reason: 'file input not found' })
+    return false
+  }
   const scope = findAttachmentScope(input)
   const baseline = attachmentEvidenceCount(file, scope)
   const dt = buildDataTransferFromFile(file)
@@ -126,12 +198,27 @@ async function attachFileToInput(file: File): Promise<boolean> {
   }
   input.dispatchEvent(new Event('input', { bubbles: true }))
   input.dispatchEvent(new Event('change', { bubbles: true }))
-  return waitForAttachmentEvidence(file, baseline, scope)
+  const ok = await waitForAttachmentEvidence(file, baseline, scope)
+  const failure = ok ? await waitForAttachmentFailure(scope) : null
+  logUploadAttempt('file-input', file, {
+    ok: ok && !failure,
+    scope: attachmentDebugScope(scope),
+    baseline,
+    evidence: attachmentEvidenceCount(file, scope),
+    accept: input.accept,
+    failureText: failure?.text,
+    reason: failure ? 'abnormal-file' : undefined,
+  })
+  if (failure) throw new Error(`deepseek image upload rejected as abnormal file: ${failure.text}`)
+  return ok
 }
 
 async function pasteFileIntoComposer(file: File, selectors: DeepSeekSelectors): Promise<boolean> {
   const box = queryFirst<HTMLElement>(selectors.inputBox)
-  if (!box) return false
+  if (!box) {
+    logUploadAttempt('paste-drop', file, { ok: false, reason: 'composer not found' })
+    return false
+  }
   const scope = findAttachmentScope(box)
   const baseline = attachmentEvidenceCount(file, scope)
   try {
@@ -141,19 +228,54 @@ async function pasteFileIntoComposer(file: File, selectors: DeepSeekSelectors): 
   }
   const dt = buildDataTransferFromFile(file)
   dispatchPaste(box, dt)
+  const pasteOk = await waitForAttachmentEvidence(file, baseline, scope, PASTE_ATTACHMENT_EVIDENCE_TIMEOUT_MS)
+  if (pasteOk) {
+    const failure = await waitForAttachmentFailure(scope)
+    logUploadAttempt('paste-drop', file, {
+      ok: !failure,
+      method: 'paste',
+      scope: attachmentDebugScope(scope),
+      baseline,
+      evidence: attachmentEvidenceCount(file, scope),
+      inputTag: box.tagName.toLowerCase(),
+      inputPlaceholder: box.getAttribute('placeholder') ?? '',
+      failureText: failure?.text,
+      reason: failure ? 'abnormal-file' : undefined,
+    })
+    if (failure) throw new Error(`deepseek image upload rejected as abnormal file: ${failure.text}`)
+    return true
+  }
+
+  const dropBaseline = attachmentEvidenceCount(file, scope)
   dispatchPaste(box, dt, 'drop')
-  return waitForAttachmentEvidence(file, baseline, scope)
+  const ok = await waitForAttachmentEvidence(file, dropBaseline, scope, DROP_ATTACHMENT_EVIDENCE_TIMEOUT_MS)
+  const failure = ok ? await waitForAttachmentFailure(scope) : null
+  logUploadAttempt('paste-drop', file, {
+    ok: ok && !failure,
+    method: 'drop',
+    scope: attachmentDebugScope(scope),
+    baseline: dropBaseline,
+    evidence: attachmentEvidenceCount(file, scope),
+    inputTag: box.tagName.toLowerCase(),
+    inputPlaceholder: box.getAttribute('placeholder') ?? '',
+    failureText: failure?.text,
+    reason: failure ? 'abnormal-file' : undefined,
+  })
+  if (failure) throw new Error(`deepseek image upload rejected as abnormal file: ${failure.text}`)
+  return ok
 }
 
 function findAttachmentScope(anchor: HTMLElement): ParentNode {
+  let best: HTMLElement | null = null
   let scope: HTMLElement | null = anchor
-  for (let depth = 0; scope.parentElement && depth < 6; depth += 1) {
+  for (let depth = 0; scope.parentElement && depth < 8; depth += 1) {
     scope = scope.parentElement
-    if (scope.querySelector('textarea, [contenteditable="true"], [role="textbox"]') && scope.querySelector('input[type="file"]')) {
-      return scope
+    if (scope === document.body || scope === document.documentElement) break
+    if (scope.querySelector('textarea, [contenteditable="true"], [role="textbox"]') || scope.querySelector('input[type="file"]')) {
+      best = scope
     }
   }
-  return anchor.parentElement ?? document.body
+  return best ?? anchor.parentElement ?? document.body
 }
 
 function attachmentEvidenceCount(file: File, scope: ParentNode = document.body): number {
@@ -189,6 +311,25 @@ async function waitForAttachmentEvidence(file: File, baseline: number, scope: Pa
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
   return false
+}
+
+function attachmentFailureDetails(scope: ParentNode): { text: string } | null {
+  const text = normalizeText(scope instanceof HTMLElement ? scope.innerText || scope.textContent || '' : document.body.innerText || document.body.textContent || '')
+  const match = text.match(ATTACHMENT_FAILURE_PATTERN)
+  if (!match) return null
+  const start = Math.max(0, match.index ? match.index - 40 : 0)
+  const end = Math.min(text.length, (match.index ?? 0) + match[0].length + 60)
+  return { text: text.slice(start, end) }
+}
+
+async function waitForAttachmentFailure(scope: ParentNode, maxMs = ATTACHMENT_FAILURE_SETTLE_MS): Promise<{ text: string } | null> {
+  const start = Date.now()
+  while (Date.now() - start < maxMs) {
+    const failure = attachmentFailureDetails(scope)
+    if (failure) return failure
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  return null
 }
 
 function writeNativeTextareaValue(el: HTMLTextAreaElement, text: string): void {
@@ -449,6 +590,7 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
     },
 
     async sendMessage(text: string, image?: File) {
+      if (image) assertCanSendImageInCurrentMode()
       await this.writeText(text)
       await new Promise((resolve) => setTimeout(resolve, 80))
       if (image) await this.attachImage(image)

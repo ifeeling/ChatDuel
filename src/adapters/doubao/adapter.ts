@@ -121,22 +121,34 @@ function findFileInput(): HTMLInputElement | null {
 }
 
 function composerScope(input: HTMLElement): HTMLElement {
+  let best: HTMLElement | null = null
   let scope: HTMLElement = input
-  for (let depth = 0; scope.parentElement && depth < 5; depth += 1) {
+  for (let depth = 0; scope.parentElement && depth < 8; depth += 1) {
     scope = scope.parentElement
-    if (scope.querySelector('textarea, [contenteditable="true"], [role="textbox"]')) return scope
+    if (scope === document.body || scope === document.documentElement) break
+    if (scope.querySelector('textarea, [contenteditable="true"], [role="textbox"]')) best = scope
   }
-  return input
+  return best ?? input
 }
 
 function attachmentEvidenceCount(scope: HTMLElement, file: File): number {
   const mediaCount = scope.querySelectorAll('img, video, canvas').length
-  const fileNameHit = normalizeText(scope.textContent ?? '').includes(file.name) ? 1 : 0
+  const fileName = file.name.toLowerCase()
+  const fileNameHit = [...scope.querySelectorAll<HTMLElement>('*')]
+    .some((el) => {
+      const marker = [
+        el.textContent ?? '',
+        el.getAttribute('alt') ?? '',
+        el.getAttribute('title') ?? '',
+        el.getAttribute('aria-label') ?? '',
+      ].join(' ').toLowerCase()
+      return marker.includes(fileName)
+    }) ? 1 : 0
   const uploadMarks = scope.querySelectorAll('[class*="upload" i], [class*="attachment" i], [class*="file" i], [data-testid*="upload" i]').length
   return mediaCount + fileNameHit + uploadMarks
 }
 
-async function waitForAttachmentEvidence(scope: HTMLElement, file: File, baseline: number, maxMs = 1500): Promise<boolean> {
+async function waitForAttachmentEvidence(scope: HTMLElement, file: File, baseline: number, maxMs = 3000): Promise<boolean> {
   const start = Date.now()
   while (Date.now() - start < maxMs) {
     if (attachmentEvidenceCount(scope, file) > baseline) return true

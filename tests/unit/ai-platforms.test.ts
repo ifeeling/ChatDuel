@@ -19,7 +19,7 @@ describe('ai-platforms', () => {
     })
   })
 
-  it('registers deepseek as an embeddable text target without automatic image upload', () => {
+  it('registers deepseek as an embeddable text target without general image upload', () => {
     expect(AI_PLATFORMS.deepseek.url).toBe('https://chat.deepseek.com/')
     expect(AI_PLATFORMS.deepseek.capabilities).toMatchObject({
       supportsEmbed: true,

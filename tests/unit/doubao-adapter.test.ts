@@ -472,6 +472,31 @@ describe('doubao adapter', () => {
     expect(composer.querySelector('img')).toBeTruthy()
   })
 
+  it('detects a pasted image preview in the wider Doubao composer', async () => {
+    document.body.innerHTML = `
+      <div class="composer">
+        <div class="toolbar"></div>
+        <div class="input-wrap">
+          <div class="inner">
+            <textarea placeholder="发消息或按住空格说话..."></textarea>
+          </div>
+        </div>
+      </div>
+    `
+    const composer = document.querySelector('.composer')!
+    const textarea = document.querySelector('textarea')!
+    textarea.addEventListener('paste', () => {
+      const preview = document.createElement('img')
+      preview.alt = 'kitty.png'
+      composer.prepend(preview)
+    })
+
+    const file = new File(['image'], 'kitty.png', { type: 'image/png' })
+    await createDoubaoAdapter().attachImage(file)
+
+    expect(composer.querySelector('img')?.getAttribute('alt')).toBe('kitty.png')
+  })
+
   it('attaches an image before sending a message when image is provided', async () => {
     document.body.innerHTML = `
       <div class="composer">

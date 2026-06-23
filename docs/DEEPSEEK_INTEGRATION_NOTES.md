@@ -4,11 +4,11 @@
 
 2026-06-20，DeepSeek 已作为第 4 个可选平台接入 ChatDuel 扩展，默认关闭。
 
-当前接入范围：支持文本发送、读取最后回答、转发和总结目标选择。图片和 PDF/XLSX 等附件不再标记为自动上传；DeepSeek 需要用户在官方输入框里手动上传或粘贴。
+当前接入范围：支持文本发送、图片自动上传、读取最后回答、转发和总结目标选择。PDF/XLSX 等文档附件暂不标记为自动上传，仍按平台能力分流或提示手动处理。
 
-原因：DeepSeek 官方页入口是 `https://chat.deepseek.com/`。第一次接入时没有完成登录后的真实 DOM 验证，所以先只开放文本能力。后续多轮实测确认文字能发出去，但图片自动上传不稳定：手动 `Cmd+V` 可以把图粘进 DeepSeek 输入框，扩展脚本模拟 paste/drop 或写剪贴板则会被浏览器安全限制或 DeepSeek 页面忽略。为避免误报成功，当前关闭 DeepSeek 图片自动上传能力。
+原因：DeepSeek 官方页入口是 `https://chat.deepseek.com/`。第一次接入时没有完成登录后的真实 DOM 验证，所以先只开放文本能力。后续多轮实测确认文字能发出去，但图片自动上传不稳定：手动 `Cmd+V` 可以把图粘进 DeepSeek 输入框，扩展脚本模拟 paste/drop 或写剪贴板则会被浏览器安全限制或 DeepSeek 页面忽略。为避免误报成功，曾经关闭 DeepSeek 图片自动上传能力。
 
-注意：这不是永久放弃 DeepSeek 图片上传。下一轮只继续优化 DeepSeek，重点重新验证真实上传入口、选择器、粘贴路径和附件预览条件；确认能稳定收到图片后，再打开对应 capability。
+2026-06-23 重新打开 DeepSeek 图片自动上传。新的实现不只看发送结果，也不只看是否找到 `input[type=file]`；它会优先向输入区派发带文件的 paste/drop，失败后再走隐藏 file input，并且只有在输入区附近看到附件证据后才继续发送。
 
 ## 当时实现了什么
 
@@ -258,6 +258,42 @@ div._77cefa5._3d616d3 > div._020ab5b > div.ec4f5d61 > div.bf38813a > input
 - `applyCapturedResponses()` 允许更完整的新回答覆盖旧的已记录文本：新文本包含旧文本，或明显更长时才覆盖，避免短片段反向覆盖完整回答。
 - 后台回填会在一段时间内继续复查已记录回答，不再只追 pending。
 - 不要在打开历史或点击某条历史时用当前官方页面内容修复旧记录；旧历史必须保持只读，否则当前 iframe 已切到别的问题时会污染旧记录。
+
+## 2026-06-23 图片自动上传重新打开
+
+这次改动的目标只承诺图片。PDF/XLSX 等文档格式仍保持 `supportsFileUpload: false`，避免在没有真实页面验证前误报成功。
+
+改动点：
+
+- `src/lib/ai-platforms.ts` 将 DeepSeek 的 `supportsImageUpload` 改为 `true`。
+- `src/content-scripts/deepseek-content.ts` 会把父页传入的 `imageDataUrl`、`imageMime`、`imageName` 还原成 `File`，再传给 `adapter.sendMessage(text, file)`。
+- `src/background/service-worker.ts` 的官方标签页兜底路径同步转发 `imageMime` 和 `imageName`，避免丢失文件名。
+- `src/adapters/deepseek/adapter.ts` 保持“paste/drop 优先，隐藏 file input 兜底”的顺序。
+- 上传成功条件仍是输入区附近出现附件证据，例如文件名、图片预览或上传块；如果没有证据，adapter 会抛出 `deepseek image upload failed`，不把它包装成成功。
+
+调试方式：
+
+- 在设置里打开“回答抓取调试日志”。
+- 复现 DeepSeek 图片发送问题。
+- 控制台过滤 `[ChatDuel capture debug]`。
+- 上传链路会输出 `event: "upload-attempt"`，重点看：
+  - `route`: `paste-drop` 或 `file-input`
+  - `ok`: 本路径是否看到附件证据
+  - `baseline` / `evidence`: 发送前后输入区附近附件证据数量
+  - `scope`: 本次检查的 DOM 范围
+  - `fileName` / `fileType` / `fileSize`: 本次上传文件信息
+
+如果 `paste-drop` 和 `file-input` 都是 `ok: false`，说明脚本没有让 DeepSeek 输入区生成附件预览，下一步要重新检查真实页面上传入口。
+如果某一路径是 `ok: true`，但 DeepSeek 发送后仍说没看到图片，问题就从“上传入口”转移到“发送前等待 DeepSeek 文件处理完成”，需要延长等待或识别上传完成状态。
+
+用户真实验证发现 DeepSeek 输入区会出现两张相同图片。日志显示 `paste-drop` 和 `file-input` 的检查范围是 `div._020ab5b`，`evidence: 0`，但页面可见预览已经出现在更外层 composer。根因是两个问题叠加：
+
+- `pasteFileIntoComposer()` 同一轮无条件连续派发 paste 和 drop，DeepSeek 可能两个事件都接收，于是生成两份附件。
+- 附件证据范围取到了较窄的输入框内层，没看到外层 composer 里的预览，所以误判 paste/drop 失败并继续兜底。
+
+修正：附件证据范围改为输入框附近更外层的 composer；paste 后先等待短窗口，看到预览就直接返回成功，不再派发 drop。只有 paste 没有证据时才尝试 drop，drop 也失败后才走隐藏 file input。
+
+后续实测发现 Gemini 和 DeepSeek 在带图片发送时，官方页面实际已经收到并开始处理，但历史记录仍可能显示“发送失败”。原因是父页面等待 iframe `write-and-send` 结果只等 8 秒；图片场景需要先上传、预览、等待官方页面处理，再提交，content script 的 `ok=true` 可能晚于 8 秒才回来。修正：纯文字仍用 8 秒等待，带 `imageDataUrl` 的附件发送改用 30 秒等待，避免把晚到的成功结果提前记成失败。以后如果看到页面已回答但历史是“发送失败”，先查父页等待窗口和 content script 返回时间差。
 
 ## 附件上传功能记录规则
 

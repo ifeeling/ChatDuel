@@ -50,6 +50,23 @@ describe('session-record', () => {
     expect(updated.responses.gemini?.error).toBe('send failed')
   })
 
+  it('keeps the platform send error when a target rejects sending', () => {
+    const session = createSessionRecord({
+      prompt: 'hello',
+      sentPrompt: 'hello',
+      targetPlatforms: ['deepseek'],
+      now: 1000,
+      id: 's1',
+    })
+
+    const updated = applySendResults(session, [
+      { p: 'deepseek', ok: false, error: 'DeepSeek 仅识图模式支持图片' },
+    ], 2000)
+
+    expect(updated.responses.deepseek?.status).toBe('failed')
+    expect(updated.responses.deepseek?.error).toBe('DeepSeek 仅识图模式支持图片')
+  })
+
   it('captures non-empty latest responses for matching targets', () => {
     const session = createSessionRecord({
       prompt: 'hello',

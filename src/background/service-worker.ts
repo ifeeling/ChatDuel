@@ -193,9 +193,11 @@ chrome.runtime.onMessage.addListener((msg: { type: string; [k: string]: unknown 
     const command = msg.command as string
     const text = typeof msg.text === 'string' ? msg.text : ''
     const imageDataUrl = typeof msg.imageDataUrl === 'string' ? msg.imageDataUrl : undefined
+    const imageMime = typeof msg.imageMime === 'string' ? msg.imageMime : undefined
+    const imageName = typeof msg.imageName === 'string' ? msg.imageName : undefined
     const contentMessage =
       command === 'write-and-send'
-        ? { type: 'write-and-send', text, imageDataUrl }
+        ? { type: 'write-and-send', text, imageDataUrl, imageMime, imageName }
         : command === 'get-state'
           ? { type: 'get-state' }
           : command === 'get-last-response'

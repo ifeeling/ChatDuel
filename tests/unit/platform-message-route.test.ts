@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { choosePlatformMessageRoute } from '../../src/chat/platform-message-route'
+import { choosePlatformMessageRoute, iframeWriteResultTimeoutMs } from '../../src/chat/platform-message-route'
 
 describe('platform message route', () => {
   it('uses official tab routing when an embedded panel is blocked by chrome error page', () => {
@@ -27,5 +27,10 @@ describe('platform message route', () => {
       iframeUrl: 'https://chat.deepseek.com/',
       supportsEmbed: true,
     })).toBe('iframe')
+  })
+
+  it('keeps text sends on the short iframe timeout but gives attachment sends more time', () => {
+    expect(iframeWriteResultTimeoutMs({ text: 'hello' })).toBe(8000)
+    expect(iframeWriteResultTimeoutMs({ text: 'hello', imageDataUrl: 'data:image/png;base64,abc' })).toBe(30000)
   })
 })
