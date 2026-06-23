@@ -319,7 +319,50 @@ describe('doubao adapter', () => {
       <textarea placeholder="发消息或按住空格说话..."></textarea>
     `
 
-    await expect(createDoubaoAdapter({ response: ['main div'] }).getLastResponse()).resolves.toBe('搜索 2 个关键词，参考 11 篇资料 奥亚萨瓦尔 参考 11 篇资料')
+    await expect(createDoubaoAdapter({ response: ['main div'] }).getLastResponse()).resolves.toBe('奥亚萨瓦尔')
+  })
+
+  it('removes Doubao search metadata from a schedule list answer', async () => {
+    document.body.innerHTML = `
+      <main>
+        <div class="v_list-D34x3M">
+          <div class="my-0 w-full mx-auto max-w-(--content-max-width)">今天世界杯赛程?</div>
+          <div class="my-0 w-full mx-auto max-w-(--content-max-width)">
+            <p>搜索 2 个关键词，参考 11 篇资料</p>
+            <p>今天的比赛有：</p>
+            <ul>
+              <li>00:00 西班牙 vs 沙特阿拉伯</li>
+              <li>03:00 比利时 vs 伊朗</li>
+            </ul>
+            <p>参考 11 篇资料</p>
+          </div>
+        </div>
+      </main>
+      <textarea placeholder="发消息或按住空格说话..."></textarea>
+    `
+
+    const text = await createDoubaoAdapter({ response: ['main div'] }).getLastResponse()
+
+    expect(text).toContain('今天的比赛有')
+    expect(text).toContain('00:00 西班牙 vs 沙特阿拉伯')
+    expect(text).toContain('03:00 比利时 vs 伊朗')
+    expect(text).not.toContain('搜索 2 个关键词')
+    expect(text).not.toContain('参考 11 篇资料')
+  })
+
+  it('ignores Doubao suggestion nodes inside the selected response block', async () => {
+    document.body.innerHTML = `
+      <main>
+        <div class="message assistant">
+          <p>奥亚萨瓦尔</p>
+          <div class="suggest-list-item">奥亚萨瓦尔是哪个球队的？</div>
+          <div class="suggest-message">奥亚萨瓦尔进了几个球？</div>
+        </div>
+      </main>
+      <textarea placeholder="发消息或按住空格说话..."></textarea>
+    `
+
+    await expect(createDoubaoAdapter().getLastResponse()).resolves.toBe('奥亚萨瓦尔')
   })
 
   it('prints Doubao capture candidates only when capture debug is enabled', async () => {

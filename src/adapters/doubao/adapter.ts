@@ -281,10 +281,6 @@ export function probeDoubaoAttachmentControls(selectorOverrides?: SelectorOverri
   }
 }
 
-function elementText(el: HTMLElement): string {
-  return removeTrailingSuggestionLines(elementToMarkdownText(el))
-}
-
 function isHidden(el: HTMLElement): boolean {
   if (el.hidden || el.getAttribute('aria-hidden') === 'true') return true
   const style = window.getComputedStyle?.(el)
@@ -303,6 +299,38 @@ function elementMarker(el: HTMLElement): string {
     el.className?.toString() ?? '',
     el.getAttribute('aria-label') ?? '',
   ].join(' ')
+}
+
+function isSuggestionNode(el: HTMLElement): boolean {
+  const marker = elementMarker(el)
+  return /\b(suggest-list-item|suggest-message|suggestion|recommend-item)\b/i.test(marker)
+}
+
+function cloneWithoutSuggestionNodes(el: HTMLElement): HTMLElement {
+  const clone = el.cloneNode(true) as HTMLElement
+  if (isSuggestionNode(clone)) return document.createElement('div')
+  for (const suggestion of clone.querySelectorAll<HTMLElement>('*')) {
+    if (isSuggestionNode(suggestion)) suggestion.remove()
+  }
+  return clone
+}
+
+function cleanDoubaoResponseText(text: string): string {
+  const cleanedLines = normalizeText(text)
+    .split('\n')
+    .map((line) => line.trim())
+    .map((line) => line
+      .replace(/^搜索\s*\d+\s*个?关键词[，,]?\s*参考\s*\d+\s*篇资料\s*/u, '')
+      .replace(/^搜索\s*\d+\s*个?关键词[，,]?\s*/u, '')
+      .replace(/^参考\s*\d+\s*篇资料\s*/u, '')
+      .replace(/\s*参考\s*\d+\s*篇资料$/u, '')
+      .trim())
+    .filter(Boolean)
+  return removeTrailingSuggestionLines(cleanedLines.join('\n'))
+}
+
+function elementText(el: HTMLElement): string {
+  return cleanDoubaoResponseText(elementToMarkdownText(cloneWithoutSuggestionNodes(el)))
 }
 
 function isResponseActionBar(el: HTMLElement): boolean {
@@ -352,7 +380,7 @@ function removeTrailingSuggestionLines(text: string): string {
     trailingSuggestionCount += 1
   }
 
-  if (trailingSuggestionCount < 2) return text
+  if (trailingSuggestionCount < 1) return text
   const keepCount = Math.max(1, lines.length - trailingSuggestionCount)
   return lines.slice(0, keepCount).join('\n')
 }

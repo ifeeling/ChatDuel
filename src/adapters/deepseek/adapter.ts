@@ -267,6 +267,22 @@ function normalizeText(text: string): string {
     .trim()
 }
 
+function cleanDeepSeekResponseText(text: string): string {
+  const withoutReferenceLines = normalizeText(text)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => !/^已阅读\s*\d+\s*个网页$/.test(line))
+    .filter((line) => !/^\d+\s*个网页$/.test(line))
+    .join('\n')
+
+  return normalizeText(withoutReferenceLines)
+    .replace(/^已阅读\s*\d+\s*个网页\s*/u, '')
+    .replace(/\s*\d+\s*个网页$/u, '')
+    .replace(/(?<=[\p{L}])-\d+\b/gu, '')
+    .replace(/(^|\s)-\d+(?=\s|$)/g, ' ')
+    .trim()
+}
+
 function isHidden(el: HTMLElement): boolean {
   if (el.hidden || el.getAttribute('aria-hidden') === 'true') return true
   const style = window.getComputedStyle?.(el)
@@ -310,6 +326,7 @@ function responseCandidateScore(el: HTMLElement, text: string): number {
   const isFragment = el.matches('p, li')
   if ((/\b(assistant|answer|markdown)\b/i.test(marker) || el.matches('article, [role="article"]')) && !isFragment) score += 100
   if (/\b(user|human|question|query|recommend|suggest|guide|prompt|chip|card)\b/i.test(marker)) score -= 100
+  if (/^(已阅读\s*\d+\s*个网页|\d+\s*个网页)$/.test(text)) score -= 200
   if (hasDirectResponseActions(el)) score += 120
   if (/^[^\n]{1,80}[?？]$/.test(text)) score -= 80
   if (text.length <= 80 && !hasDirectResponseActions(el)) score -= 20
@@ -360,7 +377,12 @@ function getLatestResponseText(selectors: DeepSeekSelectors): string {
     .map((el, index) => {
       const text = elementToMarkdownText(el)
       const expanded = expandResponseCandidate(el, text, responseSelector)
-      return { el: expanded.el, text: expanded.text, score: responseCandidateScore(expanded.el, expanded.text), index }
+      return {
+        el: expanded.el,
+        text: cleanDeepSeekResponseText(expanded.text),
+        score: responseCandidateScore(expanded.el, expanded.text),
+        index,
+      }
     })
     .filter((candidate) => candidate.text.length > 0)
     .filter((candidate) => {

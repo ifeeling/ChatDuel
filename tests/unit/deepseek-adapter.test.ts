@@ -304,7 +304,23 @@ describe('deepseek adapter', () => {
       <textarea placeholder="给 DeepSeek 发送消息"></textarea>
     `
 
-    await expect(createDeepSeekAdapter({ response: ['main div'] }).getLastResponse()).resolves.toBe('已阅读 10 个网页 奥亚萨瓦尔-1 10 个网页')
+    await expect(createDeepSeekAdapter({ response: ['main div'] }).getLastResponse()).resolves.toBe('奥亚萨瓦尔')
+  })
+
+  it('removes DeepSeek search reference markers without changing answer content', async () => {
+    document.body.innerHTML = `
+      <main>
+        <div class="message user">今天比赛情况?</div>
+        <div class="message assistant">
+          <p>已阅读 10 个网页</p>
+          <p>德国队目前进球最多-1，奥亚萨瓦尔也有进球-2。</p>
+          <p>10 个网页</p>
+        </div>
+      </main>
+      <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+    `
+
+    await expect(createDeepSeekAdapter().getLastResponse()).resolves.toBe('德国队目前进球最多，奥亚萨瓦尔也有进球。')
   })
 
   it('expands a searched DeepSeek answer to the toolbar-bounded response block', async () => {
