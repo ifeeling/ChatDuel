@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "ChatDuel",
+    "description": "Utvidelsesnavn som vises i nettleseren og butikkene."
+  },
+  "extDescription": {
+    "message": "Delt arbeidsflate for sammenligning av flere AI-tjenester. Ingen API-nøkler, ingen datainnsamling.",
+    "description": "Kort beskrivelse av utvidelsen som vises i nettleseren og butikkene."
+  },
+  "actionTitle": {
+    "message": "ChatDuel",
+    "description": "Tittel for verktøylinjeknappen."
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "ChatDuel",
+    "description": "브라우저와 스토어에 표시되는 확장 프로그램 이름입니다."
+  },
+  "extDescription": {
+    "message": "여러 AI를 분할 화면에서 비교하는 작업 공간입니다. API 키가 필요 없고 데이터를 수집하지 않습니다.",
+    "description": "브라우저와 스토어에 표시되는 짧은 확장 프로그램 설명입니다."
+  },
+  "actionTitle": {
+    "message": "ChatDuel",
+    "description": "툴바 버튼 제목입니다."
+  }
+}

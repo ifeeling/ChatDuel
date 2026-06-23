@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "ChatDuel",
+    "description": "ブラウザとストアに表示される拡張機能名。"
+  },
+  "extDescription": {
+    "message": "複数のAIを分割画面で比較できるワークスペース。APIキー不要、データ収集なし。",
+    "description": "ブラウザとストアに表示される拡張機能の短い説明。"
+  },
+  "actionTitle": {
+    "message": "ChatDuel",
+    "description": "ツールバーボタンのタイトル。"
+  }
+}

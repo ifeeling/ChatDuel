@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "ChatDuel",
+    "description": "Erweiterungsname, der im Browser und in Stores angezeigt wird."
+  },
+  "extDescription": {
+    "message": "Geteilter Multi-KI-Vergleichsarbeitsbereich. Keine API-Schluessel, keine Datenerfassung.",
+    "description": "Kurze Erweiterungsbeschreibung, die im Browser und in Stores angezeigt wird."
+  },
+  "actionTitle": {
+    "message": "ChatDuel",
+    "description": "Titel der Symbolleisten-Schaltflaeche."
+  }
+}

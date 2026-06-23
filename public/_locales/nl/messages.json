@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "ChatDuel",
+    "description": "Extensienaam die in de browser en stores wordt weergegeven."
+  },
+  "extDescription": {
+    "message": "Gesplitste werkruimte om meerdere AI-diensten te vergelijken. Geen API-sleutels, geen dataverzameling.",
+    "description": "Korte extensiebeschrijving die in de browser en stores wordt weergegeven."
+  },
+  "actionTitle": {
+    "message": "ChatDuel",
+    "description": "Titel van de werkbalkknop."
+  }
+}

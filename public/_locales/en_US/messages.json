@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "ChatDuel",
+    "description": "Extension name shown in browser and stores."
+  },
+  "extDescription": {
+    "message": "Split-screen multi-AI comparison workspace. No API keys, no data collection.",
+    "description": "Short extension description shown in browser and stores."
+  },
+  "actionTitle": {
+    "message": "ChatDuel",
+    "description": "Toolbar button title."
+  }
+}

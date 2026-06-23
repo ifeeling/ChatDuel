@@ -98,8 +98,10 @@ describe('chat.html', () => {
     document.body.innerHTML = html
 
     const language = document.querySelector<HTMLSelectElement>('#setting-language')
+    const optionValues = Array.from(language?.options ?? []).map((option) => option.value)
 
     expect(language).toBeTruthy()
+    expect(optionValues).toEqual(['en-US', 'fr-FR', 'de-DE', 'sv-SE', 'nb-NO', 'nl-NL', 'zh-CN', 'ja-JP', 'ko-KR'])
     expect(language?.querySelector('option[value="zh-CN"]')?.textContent).toContain('中文')
     expect(language?.querySelector('option[value="en-US"]')?.textContent).toContain('English')
     expect(language?.querySelector('option[value="fr-FR"]')?.textContent).toContain('Français')
@@ -107,6 +109,8 @@ describe('chat.html', () => {
     expect(language?.querySelector('option[value="sv-SE"]')?.textContent).toContain('Svenska')
     expect(language?.querySelector('option[value="nb-NO"]')?.textContent).toContain('Norsk')
     expect(language?.querySelector('option[value="nl-NL"]')?.textContent).toContain('Nederlands')
+    expect(language?.querySelector('option[value="ja-JP"]')?.textContent).toContain('日本語')
+    expect(language?.querySelector('option[value="ko-KR"]')?.textContent).toContain('한국어')
   })
 
   it('keeps selected AI mention chips inside the input box', () => {

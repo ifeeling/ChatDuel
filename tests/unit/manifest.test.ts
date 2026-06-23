@@ -1,21 +1,38 @@
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const manifest = JSON.parse(readFileSync(resolve(__dirname, '../../manifest.json'), 'utf8')) as {
   name: string
   description: string
+  default_locale?: string
   icons: Record<string, string>
   action: { default_title: string; default_icon?: Record<string, string> }
   host_permissions: string[]
   content_scripts: Array<{ matches: string[]; js: string[]; all_frames?: boolean }>
 }
 
+const localeCodes = ['zh_CN', 'en_US', 'fr', 'de', 'sv', 'no', 'nl', 'ja', 'ko']
+
 describe('manifest', () => {
-  it('uses the ChatDuel marketplace-facing name', () => {
-    expect(manifest.name).toBe('ChatDuel')
-    expect(manifest.action.default_title).toBe('ChatDuel')
-    expect(manifest.description).toContain('Split-screen multi-AI comparison workspace')
+  it('uses Chrome extension i18n messages for marketplace-facing text', () => {
+    expect(manifest.default_locale).toBe('en_US')
+    expect(manifest.name).toBe('__MSG_extName__')
+    expect(manifest.action.default_title).toBe('__MSG_actionTitle__')
+    expect(manifest.description).toBe('__MSG_extDescription__')
+  })
+
+  it('provides Chrome locale messages for every marketplace language', () => {
+    for (const locale of localeCodes) {
+      const messagesPath = resolve(__dirname, `../../public/_locales/${locale}/messages.json`)
+      expect(existsSync(messagesPath), `${locale} messages.json`).toBe(true)
+
+      const messages = JSON.parse(readFileSync(messagesPath, 'utf8')) as Record<string, { message?: string; description?: string }>
+      expect(messages.extName?.message, `${locale} extName`).toBe('ChatDuel')
+      expect(messages.actionTitle?.message, `${locale} actionTitle`).toBe('ChatDuel')
+      expect(messages.extDescription?.message, `${locale} extDescription`).toBeTruthy()
+      expect(messages.extDescription?.description, `${locale} extDescription description`).toBeTruthy()
+    }
   })
 
   it('declares doubao host permissions and content script probe', () => {

@@ -161,6 +161,8 @@ const BROWSER_LANGUAGE_FALLBACKS: Record<string, UserLanguage> = {
   nb: 'nb-NO',
   no: 'nb-NO',
   nl: 'nl-NL',
+  ja: 'ja-JP',
+  ko: 'ko-KR',
 }
 
 function normalizeBrowserLanguage(language: string | undefined): UserLanguage {

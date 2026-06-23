@@ -1,4 +1,4 @@
-export type UserLanguage = 'zh-CN' | 'en-US' | 'fr-FR' | 'de-DE' | 'sv-SE' | 'nb-NO' | 'nl-NL'
+export type UserLanguage = 'zh-CN' | 'en-US' | 'fr-FR' | 'de-DE' | 'sv-SE' | 'nb-NO' | 'nl-NL' | 'ja-JP' | 'ko-KR'
 
 export interface SupportedLanguage {
   code: UserLanguage
@@ -15,6 +15,8 @@ export const SUPPORTED_LANGUAGES: SupportedLanguage[] = [
   { code: 'sv-SE', label: 'Svenska' },
   { code: 'nb-NO', label: 'Norsk' },
   { code: 'nl-NL', label: 'Nederlands' },
+  { code: 'ja-JP', label: '日本語' },
+  { code: 'ko-KR', label: '한국어' },
 ]
 
 export const SUPPORTED_LANGUAGE_CODES = SUPPORTED_LANGUAGES.map((language) => language.code)
@@ -519,6 +521,28 @@ const dict: Record<UserLanguage, Dict> = {
     'settings.prompt.transfer': 'Doorstuurprompt',
     'help.send.body': 'Typ in het gedeelde invoerveld en stuur naar de ingeschakelde AI’s.',
   },
+  'ja-JP': {
+    'app.settings': '設定',
+    'common.close': '閉じる',
+    'common.save': '保存',
+    'panel.transfer': '転送 ->',
+    'panel.switch': '切り替え',
+    'input.placeholder': 'ここに質問を入力するか、@ で特定の AI を選択...',
+    'settings.language': '言語',
+    'settings.prompt.transfer': '転送プロンプト',
+    'help.send.body': '下部の共通入力欄に質問を入力して送信すると、有効な AI にまとめて送れます。@ を使うと送信先の AI を指定できます。',
+  },
+  'ko-KR': {
+    'app.settings': '설정',
+    'common.close': '닫기',
+    'common.save': '저장',
+    'panel.transfer': '전달 ->',
+    'panel.switch': '전환',
+    'input.placeholder': '여기에 질문을 입력하거나 @로 특정 AI를 선택하세요...',
+    'settings.language': '언어',
+    'settings.prompt.transfer': '전달 프롬프트',
+    'help.send.body': '하단의 공용 입력창에 질문을 입력하고 보내면 활성화된 AI에 한 번에 전송됩니다. @를 사용하면 특정 AI만 선택할 수 있습니다.',
+  },
 }
 
 export function t(language: UserLanguage, key: string): string {
@@ -586,5 +610,19 @@ export const DEFAULT_PROMPTS_BY_LANGUAGE: Record<UserLanguage, LocalizedDefaultP
     rebut: 'Neem de sterkste kritische positie tegenover dit AI-antwoord. Zoek logische gaten, feitelijke fouten en ontbrekende punten:\n\n{{response}}',
     simplify: 'Herschrijf dit AI-antwoord eenvoudiger en natuurlijker:\n\n{{response}}',
     transfer: 'Hier is een antwoord van {{fromLabel}} ter referentie.\n\nAntwoord zelfstandig op hetzelfde onderwerp.\n\n==== Citaat begint ({{fromLabel}}) ====\n{{content}}\n==== Citaat eindigt ====\n\nGeef nu direct je antwoord:',
+  },
+  'ja-JP': {
+    review: '別の AI からの回答です。次の観点で確認してください。\n\n1. 誤っている可能性がある点\n2. 曖昧すぎる点\n3. 不足している点\n4. より正確だと思う回答\n\n回答:\n\n{{response}}',
+    summary: '同じ質問に対する複数の AI の回答記録です。\n\n内容を統合して、明確な最終回答を作成してください。\n\n[記録]\n{{historyBlock}}',
+    rebut: '以下の AI 回答に対して、最も強い反論の立場から、論理の穴、事実誤認、抜け漏れを指摘してください。\n\n{{response}}',
+    simplify: '以下の AI 回答を、専門外の人にも分かるように、より簡単で自然な言葉に書き直してください。\n\n{{response}}',
+    transfer: '{{fromLabel}} の回答を参考として示します。\n\nこのテーマについて、あなた自身の立場で独立して回答してください。\n\n==== 引用開始 ({{fromLabel}}) ====\n{{content}}\n==== 引用終了 ====\n\nそれでは、直接回答してください:',
+  },
+  'ko-KR': {
+    review: '다른 AI의 답변입니다. 다음 관점에서 검토해 주세요.\n\n1. 틀렸을 수 있는 부분\n2. 너무 모호한 부분\n3. 빠진 내용\n4. 더 정확하다고 생각하는 답변\n\n답변:\n\n{{response}}',
+    summary: '같은 질문에 대한 여러 AI의 답변 기록입니다.\n\n이 내용을 종합해 명확한 최종 답변을 작성해 주세요.\n\n[기록]\n{{historyBlock}}',
+    rebut: '아래 AI 답변에 대해 가장 강한 반론의 입장에서 논리적 허점, 사실 오류, 누락된 내용을 찾아 주세요.\n\n{{response}}',
+    simplify: '아래 AI 답변을 비전문가도 이해할 수 있도록 더 쉽고 자연스럽게 다시 써 주세요.\n\n{{response}}',
+    transfer: '{{fromLabel}}의 답변을 참고로 제공합니다.\n\n이 주제에 대해 독립적으로 답변해 주세요.\n\n==== 인용 시작 ({{fromLabel}}) ====\n{{content}}\n==== 인용 끝 ====\n\n이제 바로 답변해 주세요:',
   },
 }

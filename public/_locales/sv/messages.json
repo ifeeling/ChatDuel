@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "ChatDuel",
+    "description": "Tilläggsnamn som visas i webbläsaren och butiker."
+  },
+  "extDescription": {
+    "message": "Delad arbetsyta för jämförelse av flera AI-tjänster. Inga API-nycklar, ingen datainsamling.",
+    "description": "Kort beskrivning av tillägget som visas i webbläsaren och butiker."
+  },
+  "actionTitle": {
+    "message": "ChatDuel",
+    "description": "Titel för verktygsfältsknappen."
+  }
+}

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { SUPPORTED_LANGUAGES, t } from '../../src/lib/i18n'
 
 describe('i18n', () => {
-  it('includes Chinese, English, and the requested European languages', () => {
+  it('includes Chinese, English, the requested European languages, Japanese, and Korean', () => {
     expect(SUPPORTED_LANGUAGES.map((language) => language.code)).toEqual([
       'zh-CN',
       'en-US',
@@ -11,7 +11,18 @@ describe('i18n', () => {
       'sv-SE',
       'nb-NO',
       'nl-NL',
+      'ja-JP',
+      'ko-KR',
     ])
+  })
+
+  it('provides Japanese and Korean labels with English fallback for untranslated keys', () => {
+    expect(t('ja-JP', 'settings.language')).toBe('言語')
+    expect(t('ja-JP', 'app.settings')).toBe('設定')
+    expect(t('ja-JP', 'toolbar.send')).toBe('Send')
+    expect(t('ko-KR', 'settings.language')).toBe('언어')
+    expect(t('ko-KR', 'app.settings')).toBe('설정')
+    expect(t('ko-KR', 'toolbar.send')).toBe('Send')
   })
 
   it('provides English help and toolbar text without Chinese fallback', () => {

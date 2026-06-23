@@ -76,9 +76,26 @@ describe('user-settings', () => {
     await expect(loadUserSettings()).resolves.toMatchObject({ captureDebug: true })
   })
 
-  it('accepts the requested European languages', async () => {
+  it('accepts the requested European languages, Japanese, and Korean', async () => {
     const saved = await saveUserSettings({ language: 'fr-FR' })
     expect(saved.language).toBe('fr-FR')
+
+    await expect(saveUserSettings({ language: 'ja-JP' })).resolves.toMatchObject({ language: 'ja-JP' })
+    await expect(saveUserSettings({ language: 'ko-KR' })).resolves.toMatchObject({ language: 'ko-KR' })
+  })
+
+  it('uses Japanese and Korean browser language prefixes when no language has been saved', async () => {
+    vi.mocked(chrome.i18n.getUILanguage).mockReturnValue('ja')
+    await expect(loadUserSettings()).resolves.toMatchObject({
+      language: 'ja-JP',
+      promptTemplates: getDefaultUserPromptTemplates('ja-JP'),
+    })
+
+    vi.mocked(chrome.i18n.getUILanguage).mockReturnValue('ko-KR')
+    await expect(loadUserSettings()).resolves.toMatchObject({
+      language: 'ko-KR',
+      promptTemplates: getDefaultUserPromptTemplates('ko-KR'),
+    })
   })
 
   it('tracks whether prompt templates are customized by the user', async () => {

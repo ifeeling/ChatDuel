@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "ChatDuel",
+    "description": "浏览器和商店中显示的扩展名称。"
+  },
+  "extDescription": {
+    "message": "分屏多 AI 对比工作台。无需 API Key，不收集数据。",
+    "description": "浏览器和商店中显示的扩展简短描述。"
+  },
+  "actionTitle": {
+    "message": "ChatDuel",
+    "description": "工具栏按钮标题。"
+  }
+}

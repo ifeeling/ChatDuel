@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "ChatDuel",
+    "description": "Nom de l'extension affiche dans le navigateur et les boutiques."
+  },
+  "extDescription": {
+    "message": "Espace de comparaison multi-IA en ecran partage. Aucune cle API, aucune collecte de donnees.",
+    "description": "Courte description de l'extension affichee dans le navigateur et les boutiques."
+  },
+  "actionTitle": {
+    "message": "ChatDuel",
+    "description": "Titre du bouton de la barre d'outils."
+  }
+}
