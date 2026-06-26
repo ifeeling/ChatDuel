@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "__MSG_extName__",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "default_locale": "en_US",
   "description": "__MSG_extDescription__",
   "icons": {
@@ -23,13 +23,12 @@
     "service_worker": "src/background/service-worker.ts",
     "type": "module"
   },
+  "_comment": "2026-06 Chrome商店审核拒绝(#FZSL): scripting和downloads已声明但代码未调用对应API,已移除。content scripts通过静态声明注入,导出通过Blob+<a download>实现。",
   "permissions": [
     "storage",
     "unlimitedStorage",
     "tabs",
-    "scripting",
     "declarativeNetRequest",
-    "downloads",
     "alarms"
   ],
   "host_permissions": [
