@@ -415,6 +415,7 @@ function normalizeText(text: string): string {
 }
 
 const VISION_MODE_BUTTON_SELECTORS = 'button, [role="button"], [role="tab"], [role="radio"]'
+const VISION_MODE_TEXT_RE = /^(识图模式)+$/
 
 function findVisionModeButton(): HTMLElement | null {
   const candidates = document.querySelectorAll<HTMLElement>(VISION_MODE_BUTTON_SELECTORS)
@@ -428,7 +429,11 @@ function findVisionModeButton(): HTMLElement | null {
     const label = normalizeText(el.getAttribute('aria-label') ?? '')
     const title = normalizeText(el.getAttribute('title') ?? '')
 
-    if (text !== '识图模式' && label !== '识图模式' && title !== '识图模式') continue
+    // DeepSeek 的 radio 按钮内部有一个可见 label 和一个 aria-hidden 副本，
+    // 导致 textContent 可能是 "识图模式\n识图模式"（含换行）。
+    // 去掉所有空白后用正则匹配重复的文字。
+    const stripped = text.replace(/\s+/g, '')
+    if (!VISION_MODE_TEXT_RE.test(stripped) && label !== '识图模式' && title !== '识图模式') continue
 
     try {
       const style = window.getComputedStyle?.(el)

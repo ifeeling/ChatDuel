@@ -759,4 +759,28 @@ describe('ensureDeepSeekVisionMode', () => {
 
     expect(result).toBe(false)
   })
+
+  it('matches a DeepSeek radio button with doubled vision mode text', async () => {
+    // DeepSeek 的 radio 按钮内有一个可见 label 和一个 aria-hidden 副本，
+    // 导致 textContent 为 "识图模式识图模式"。
+    document.body.innerHTML = `
+      <div role="radio">
+        <div>识图模式</div>
+        <div aria-hidden="true">识图模式</div>
+      </div>
+    `
+    const radio = document.querySelector('[role="radio"]')!
+    const clickSpy = vi.fn()
+    radio.addEventListener('click', () => {
+      radio.setAttribute('aria-selected', 'true')
+    })
+    radio.addEventListener('click', clickSpy)
+
+    const promise = ensureDeepSeekVisionMode()
+    await vi.advanceTimersByTimeAsync(500)
+    const result = await promise
+
+    expect(result).toBe(true)
+    expect(clickSpy).toHaveBeenCalledTimes(1)
+  })
 })
