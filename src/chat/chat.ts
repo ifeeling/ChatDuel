@@ -326,7 +326,6 @@ function applyStaticUiLanguage(language: UserLanguage) {
   document.querySelectorAll<HTMLButtonElement>('.panel-close').forEach((btn) => {
     btn.title = t(language, 'panel.closeTitle')
   })
-  updateAttachmentWarning()
   renderHelpContent(language)
 }
 
@@ -370,12 +369,6 @@ const atPopupEl = $<HTMLDivElement>('#at-popup')
 
 function updateComposerToolbarVisibility() {
   composerToolbar.classList.toggle('has-content', !imagePreview.hidden)
-}
-
-function updateAttachmentWarning() {
-  const shouldWarn = pendingAttachment?.classification.kind === 'image' && activePlatforms().includes('deepseek')
-  attachmentWarning.hidden = !shouldWarn
-  attachmentWarning.textContent = shouldWarn ? t(userSettings.language, 'attachment.deepseekImageNotice') : ''
 }
 
 function setStatus(p: AIPlatform, state: 'ok' | 'err' | 'warn', text: string) {
@@ -609,7 +602,6 @@ function applyUserSettings(settings: UserSettings) {
   }
 
   syncSplitters()
-  updateAttachmentWarning()
   btnAddPanel.hidden = false
   const canTransfer = platformsWithCapability('supportsLastResponse').length >= 1 && platformsWithCapability('supportsText').length >= 2
   document.querySelectorAll<HTMLButtonElement>('.panel-transfer').forEach((btn) => {
@@ -800,7 +792,6 @@ async function acceptFile(file: File) {
 
   imageMeta.textContent = `${file.name || 'file'} · ${(file.size / 1024).toFixed(0)}KB`
   imagePreview.hidden = false
-  updateAttachmentWarning()
   updateComposerToolbarVisibility()
   updateSendButtonState()
   btnImage.classList.add('has-image')

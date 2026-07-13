@@ -74,7 +74,7 @@ describe('supportsAutoUpload', () => {
     expect(supportsAutoUpload('chatgpt', image)).toBe(true)
     expect(supportsAutoUpload('gemini', image)).toBe(true)
     expect(supportsAutoUpload('doubao', image)).toBe(true)
-    expect(supportsAutoUpload('deepseek', image)).toBe(false)
+    expect(supportsAutoUpload('deepseek', image)).toBe(true)
   })
 
   it('does not auto-upload document files to ChatGPT in v1', () => {
@@ -86,13 +86,13 @@ describe('supportsAutoUpload', () => {
 })
 
 describe('buildAttachmentDeliveryPlan', () => {
-  it('sends text to DeepSeek while skipping unsupported image upload', () => {
+  it('sends text and auto-uploads image to DeepSeek in vision mode', () => {
     const image = classifyFile(new File(['x'], 'photo.png', { type: 'image/png' }))
     const plan = buildAttachmentDeliveryPlan(['chatgpt', 'gemini', 'doubao', 'deepseek'], image, true)
 
     expect(plan.sendTargets).toEqual(['chatgpt', 'gemini', 'doubao', 'deepseek'])
-    expect(plan.autoUploadTargets).toEqual(['chatgpt', 'gemini', 'doubao'])
-    expect(plan.manualUploadTargets).toEqual(['deepseek'])
+    expect(plan.autoUploadTargets).toEqual(['chatgpt', 'gemini', 'doubao', 'deepseek'])
+    expect(plan.manualUploadTargets).toEqual([])
   })
 
   it('does not send an empty text-only message to unsupported platforms', () => {
