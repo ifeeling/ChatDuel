@@ -1,6 +1,6 @@
 import type { ContentToSw, SwToContent } from '../shared/messages'
 import type { AIPlatform, ConversationState } from '../types'
-import { createDeepSeekAdapter } from '../adapters/deepseek/adapter'
+import { createDeepSeekAdapter, ensureDeepSeekVisionMode } from '../adapters/deepseek/adapter'
 import { loadSelectorOverrides } from './selector-overrides'
 
 const PLATFORM: AIPlatform = 'deepseek'
@@ -155,6 +155,8 @@ async function boot() {
     }
     return false
   })
+
+  void ensureDeepSeekVisionMode()
 }
 
 void boot()
