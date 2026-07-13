@@ -329,3 +329,71 @@ div._77cefa5._3d616d3 > div._020ab5b > div.ec4f5d61 > div.bf38813a > input
 - `tests/unit/ai-platforms.test.ts`
 
 如果只是 DOM 选择器变化，优先通过 `chatduel.ifeeling.app/api/extension/config` 下发 DeepSeek 的 `inputBox`、`sendButton`、`response` 覆盖。
+
+## 2026-07-13 自动切换到识图模式
+
+### 背景
+
+DeepSeek 有三种模式：快速、识图、专家。默认模式不支持附件和图片上传。用户每次打开 DeepSeek 面板时需要手动点击"识图模式"才能发图片，体验不好。
+
+### 实现
+
+新增 `ensureDeepSeekVisionMode()` 函数（导出自 `src/adapters/deepseek/adapter.ts`），在 `deepseek-content.ts` 的 `boot()` 中，`postReadyToParent()` 和消息监听注册完成后以 fire-and-forget 方式调用：
+
+```ts
+void ensureDeepSeekVisionMode()
+```
+
+**不阻塞面板 ready**——按钮最多等 8 秒，但这不影响面板初始化。
+
+### 模式按钮识别
+
+不依赖混淆 class，使用语义文字匹配：
+
+- 按钮候选限定为 `button`、`[role="button"]`、`[role="tab"]`、`[role="radio"]`
+- 规范化后的 `textContent`、`aria-label` 或 `title` 精确等于"识图模式"
+- 排除 `hidden`、`aria-hidden="true"`、`disabled`、`aria-disabled="true"` 和 `getComputedStyle` 返回 `display:none` 或 `visibility:hidden` 的元素
+
+### 三态检测
+
+```ts
+type DeepSeekModeState = 'vision' | 'non-vision' | 'unknown'
+```
+
+- `vision`：页面明确显示"使用识图模式开始对话"，或有带选中态（`aria-selected="true"`、`aria-pressed="true"`、`aria-current="page"` 或 active/selected/checked class）的"识图模式"控件
+- `non-vision`：页面明确显示"快速模式"或"专家模式"
+- `unknown`：DOM 信息不足
+
+自动切换只有明确 `vision` 才算成功；`unknown` 不能被当作切换成功。图片发送校验 `assertCanSendImageInCurrentMode()` 只有明确 `non-vision` 时阻止上传。
+
+### 切换流程
+
+1. 如果已经是 `vision`，直接返回 `true`，不点击
+2. 在 8 秒内轮询等待一个可见、可用的"识图模式"按钮
+3. 找到后用 `activateControl()` 点击一次
+4. 在 3 秒内轮询等待明确的 `vision` 证据（独立 deadline，不回到查找循环再点击）
+5. 按钮未出现、不可用、验证超时或异常时返回 `false`
+
+### 切换失败表现
+
+| 原因 | 日志 reason | 行为 |
+|------|------------|------|
+| 已在识图模式 | `already-vision` | 返回 `true`，不点击 |
+| 按钮未出现 | `button-not-found` | 返回 `false`，静默跳过 |
+| 按钮不可用 | `button-disabled` | 返回 `false`，静默跳过 |
+| 点击后未生效 | `verification-timeout` | 返回 `false`，只点击一次 |
+| 异常 | `exception` | 返回 `false`，吞掉异常 |
+
+### 图片分发链路接通
+
+同时将 `src/lib/ai-platforms.ts` 中 DeepSeek 的 `supportsImageUpload` 改为 `true`（此前已在 2026-06-23 改为 `true`，此次确认保持），删除 `src/chat/chat.ts` 中过时的"DeepSeek 当前不支持上传图片"预警函数 `updateAttachmentWarning()` 及其所有调用点。
+
+图片上传成功仍以 composer 附近出现附件预览、文件名或上传块为证据，不依赖模式切换返回值。
+
+### 旧对话
+
+旧对话可能没有可用的模式切换按钮，自动切换返回 `false`，但不影响文本发送和面板使用。如果用户在旧对话中发送图片，`assertCanSendImageInCurrentMode()` 会在明确 `non-vision` 时抛出"DeepSeek 仅识图模式支持图片，请新建或切换到识图模式后重试"。
+
+### 如果 DeepSeek 网页变了
+
+模式按钮的文字可能变化。当前方案依赖"识图模式"文字匹配，不依赖混淆 class。如果文字变了，在源码中搜索"识图模式"找到按钮匹配逻辑并更新。
