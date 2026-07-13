@@ -1042,6 +1042,41 @@ function requestPlatformLocation(p: AIPlatform, timeoutMs = 1500): Promise<strin
   })
 }
 
+/**
+ * 从 DeepSeek iframe 的侧边栏 DOM 中提取当前会话 ID
+ * DeepSeek 的 location.href 始终是 /，但侧边栏中存在 /a/chat/s/<uuid> 链接
+ * 第一个链接对应当前活跃会话
+ */
+function requestDeepSeekConversationUrl(timeoutMs = 1500): Promise<string> {
+  const win = panelIframe('deepseek').contentWindow
+  if (!win) return Promise.resolve('')
+  return new Promise<string>((resolve) => {
+    const onMsg = (e: MessageEvent) => {
+      const d = e.data as {
+        source?: string
+        type?: string
+        platform?: AIPlatform
+        url?: string
+      } | undefined
+      if (
+        e.source === win &&
+        d?.source === 'aichatroom-content' &&
+        d?.type === 'conversation-id' &&
+        d?.platform === 'deepseek'
+      ) {
+        window.removeEventListener('message', onMsg)
+        resolve(d.url ?? '')
+      }
+    }
+    window.addEventListener('message', onMsg)
+    postToIframe('deepseek', 'get-conversation-id')
+    setTimeout(() => {
+      window.removeEventListener('message', onMsg)
+      resolve('')
+    }, timeoutMs)
+  })
+}
+
 async function captureResponseBaselines(targets: AIPlatform[]): Promise<Partial<Record<AIPlatform, string>>> {
   const entries = await Promise.all(
     targets.map(async (platform) => [platform, await requestLastResponse(platform, 1500)] as const),
@@ -2190,14 +2225,19 @@ function conversationId(): string {
 
 function conversationPlatformLabels(entry: ConversationEntry): string {
   return entry.enabledPlatforms
-    .filter((platform) => entry.platformUrls[platform])
     .map((platform) => getPlatformMeta(platform)?.label ?? platform)
     .join(' / ')
 }
 
 async function saveConversationSnapshot(title: string, platforms: AIPlatform[]) {
   const entries = await Promise.all(
-    platforms.map(async (platform) => [platform, await requestPlatformLocation(platform)] as const),
+    platforms.map(async (platform) => {
+      if (platform === 'deepseek') {
+        const url = await requestDeepSeekConversationUrl(2000)
+        return [platform, url] as const
+      }
+      return [platform, await requestPlatformLocation(platform)] as const
+    }),
   )
   const platformUrls = Object.fromEntries(
     entries.filter(([platform, url]) => isSpecificConversationUrl(platform, url)),
@@ -2325,13 +2365,6 @@ async function restoreConversation(entry: ConversationEntry) {
     if (!url) continue
     const panel = platformPanel(platform)
     if (!panel) continue
-
-    // DeepSeek 的 URL 无法标识特定会话（pathname 始终是 /），重新加载只会显示新对话页面
-    // 跳过重新加载，保留当前 iframe 状态
-    if (platform === 'deepseek') {
-      const parsed = new URL(url)
-      if (parsed.pathname === '/' || parsed.pathname === '') continue
-    }
 
     readyMap[platform] = false
     setStatus(platform, 'warn', t(userSettings.language, 'common.loading'))

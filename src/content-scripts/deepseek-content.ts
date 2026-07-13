@@ -90,6 +90,18 @@ async function boot() {
       )
       return
     }
+    if (data.action === 'get-conversation-id') {
+      // DeepSeek 的侧边栏中所有对话链接格式为 /a/chat/s/<uuid>
+      // 第一个链接对应当前活跃会话
+      const link = document.querySelector<HTMLAnchorElement>('a[href*="/a/chat/s/"]')
+      const id = link?.getAttribute('href') ?? ''
+      const url = id ? new URL(id, location.origin).href : ''
+      e.source?.postMessage(
+        { source: 'aichatroom-content', type: 'conversation-id', platform: PLATFORM, url },
+        { targetOrigin: '*' },
+      )
+      return
+    }
     if (data.action === 'write-and-send') {
       const text = data.text ?? ''
       const file = data.imageDataUrl
