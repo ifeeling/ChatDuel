@@ -25,6 +25,9 @@ const DEFAULT_SEND_BUTTON_SELECTORS = [
   '[role="button"][title*="Send" i]',
   '[role="button"][aria-label*="发送"]',
   '[role="button"][title*="发送"]',
+  // DeepSeek 发送按钮使用 design-system 类（ds-button--primary ds-button--filled），无 aria-label/title
+  '[role="button"].ds-button--primary.ds-button--filled',
+  'button.ds-button--primary.ds-button--filled',
 ]
 
 const DEFAULT_STOP_BUTTON_SELECTORS = [
@@ -354,7 +357,26 @@ function findSendControl(selectors: DeepSeekSelectors): HTMLElement | null {
   const direct = queryFirst<HTMLElement>(selectors.sendButton)
   if (direct) return direct
 
+  // 使用全局选择器兜底（覆盖 DeepSeek 的 ds-button 类）
+  for (const sel of DEFAULT_SEND_BUTTON_SELECTORS) {
+    const el = document.querySelector<HTMLElement>(sel)
+    if (el) return el
+  }
+
   const controls = [...document.querySelectorAll<HTMLElement>('button, [role="button"]')]
+    .filter((button) => {
+      const isDisabled = (button instanceof HTMLButtonElement && button.disabled)
+        || button.getAttribute('aria-disabled') === 'true'
+      return !isDisabled
+    })
+    .filter((button) => {
+      const marker = [
+        button.getAttribute('aria-label') ?? '',
+        button.getAttribute('title') ?? '',
+        button.className?.toString() ?? '',
+      ].join(' ')
+      return !/删除|remove|delete|close|clear|上传|upload|附件|attach/i.test(marker)
+    })
   const textButton = controls.find((button) => /发送|send/i.test(button.textContent ?? ''))
   if (textButton) return textButton
 
@@ -363,8 +385,26 @@ function findSendControl(selectors: DeepSeekSelectors): HTMLElement | null {
   let scope: HTMLElement | null = input.parentElement
   for (let depth = 0; scope && depth < 5; depth += 1, scope = scope.parentElement) {
     const scopedControls = [...scope.querySelectorAll<HTMLElement>('button, [role="button"]')]
-      .filter((button) => !(button instanceof HTMLButtonElement && button.disabled))
-    if (scopedControls.length > 0) return scopedControls[scopedControls.length - 1]
+      .filter((button) => {
+        const isDisabled = (button instanceof HTMLButtonElement && button.disabled)
+          || button.getAttribute('aria-disabled') === 'true'
+        return !isDisabled
+      })
+      .filter((button) => {
+        const marker = [
+          button.getAttribute('aria-label') ?? '',
+          button.getAttribute('title') ?? '',
+          button.className?.toString() ?? '',
+        ].join(' ')
+        return !/删除|remove|delete|close|clear|上传|upload|附件|attach/i.test(marker)
+      })
+    if (scopedControls.length > 0) {
+      const primaryBtn = scopedControls.find((btn) =>
+        btn.classList.contains('ds-button--primary') && btn.classList.contains('ds-button--filled')
+      )
+      if (primaryBtn) return primaryBtn
+      return scopedControls[scopedControls.length - 1]
+    }
   }
   return null
 }
@@ -384,6 +424,22 @@ function hasStopGeneratingButton(selectors: DeepSeekSelectors): boolean {
     })
 }
 
+function hasPendingContent(selectors: DeepSeekSelectors): boolean {
+  const box = queryFirst<HTMLElement>(selectors.inputBox)
+  if (!box) return false
+  const text = (box as HTMLTextAreaElement).value?.trim() ?? ''
+  return text.length > 0
+}
+
+async function waitForSendAccepted(selectors: DeepSeekSelectors, maxMs = 700): Promise<boolean> {
+  const start = Date.now()
+  while (Date.now() - start < maxMs) {
+    if (hasStopGeneratingButton(selectors) || !hasPendingContent(selectors)) return true
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  return hasStopGeneratingButton(selectors) || !hasPendingContent(selectors)
+}
+
 function activateControl(button: HTMLElement): void {
   const mouseInit: MouseEventInit = { bubbles: true, cancelable: true, composed: true }
   button.dispatchEvent(new MouseEvent('mousedown', mouseInit))
@@ -401,7 +457,10 @@ function dispatchEnter(el: HTMLElement): void {
     cancelable: true,
     composed: true,
   }
+  // 触发完整的键盘事件序列，确保 React 等框架能正确响应
   el.dispatchEvent(new KeyboardEvent('keydown', init))
+  el.dispatchEvent(new KeyboardEvent('keypress', init))
+  el.dispatchEvent(new KeyboardEvent('keyup', init))
 }
 
 function normalizeText(text: string): string {
@@ -690,15 +749,25 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
     },
 
     async triggerSend() {
+      const box = queryFirst<HTMLElement>(selectors.inputBox)
+      if (box) {
+        box.focus()
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        // 尝试 Enter 键发送（参考 Gemini 的 waitForSendAccepted 检测）
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          dispatchEnter(box)
+          if (await waitForSendAccepted(selectors)) return
+          await new Promise((resolve) => setTimeout(resolve, 250))
+        }
+        // Enter 方案失败，回退到按钮点击
+      }
+
       const btn = findSendControl(selectors)
       if (btn) {
-        if (btn instanceof HTMLButtonElement && btn.disabled) btn.disabled = false
         activateControl(btn)
         return
       }
-      const box = queryFirst<HTMLElement>(selectors.inputBox)
-      if (!box) throw new Error('deepseek send button not found')
-      dispatchEnter(box)
+      throw new Error('deepseek send button not found')
     },
 
     async sendMessage(text: string, image?: File) {
@@ -706,7 +775,9 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
       await this.writeText(text)
       await new Promise((resolve) => setTimeout(resolve, 80))
       if (image) await this.attachImage(image)
-      await new Promise((resolve) => setTimeout(resolve, 200))
+      // DeepSeek 的 paste 上传是异步的：先创建预览，再实际上传文件。
+      // 需要足够等待让文件上传完成，否则发送时只发文字不发图片。
+      await new Promise((resolve) => setTimeout(resolve, image ? 3000 : 200))
       await this.triggerSend()
     },
 
