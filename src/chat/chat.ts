@@ -2325,6 +2325,14 @@ async function restoreConversation(entry: ConversationEntry) {
     if (!url) continue
     const panel = platformPanel(platform)
     if (!panel) continue
+
+    // DeepSeek 的 URL 无法标识特定会话（pathname 始终是 /），重新加载只会显示新对话页面
+    // 跳过重新加载，保留当前 iframe 状态
+    if (platform === 'deepseek') {
+      const parsed = new URL(url)
+      if (parsed.pathname === '/' || parsed.pathname === '') continue
+    }
+
     readyMap[platform] = false
     setStatus(platform, 'warn', t(userSettings.language, 'common.loading'))
     panelIframe(platform).src = url

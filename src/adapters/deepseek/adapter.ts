@@ -5,6 +5,15 @@ import { elementToMarkdownText } from '../../lib/dom-response-text'
 import { describeCaptureElement, logCaptureDebug } from '../../lib/capture-debug'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 
+// ---------------------------------------------------------------------------
+// 诊断归档参考
+// 以下 sendMessage / triggerSend / findSendControl 的实现经历过多次调试。
+// 如果 DeepSeek 网页改版导致这些逻辑失效，可以参考归档的诊断脚本重新分析 DOM：
+//   docs/research/diagnose-deepseek-send-button.js  — 定位发送按钮并分析 DOM 层级
+//   docs/research/diagnose-deepseek-upload.js        — 诊断图片上传流程和输入框结构
+// 诊断脚本需在浏览器 DevTools 中选中 DeepSeek iframe 上下文后运行。
+// ---------------------------------------------------------------------------
+
 const DEFAULT_INPUT_SELECTORS = [
   'textarea[placeholder*="Message" i]',
   'textarea[placeholder*="Send" i]',

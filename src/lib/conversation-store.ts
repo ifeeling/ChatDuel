@@ -19,6 +19,7 @@ export function isSpecificConversationUrl(platform: AIPlatform, url: string | un
     if (platform === 'chatgpt') return parsed.hostname.endsWith('chatgpt.com') && /^\/c\/[^/]+/.test(parsed.pathname)
     if (platform === 'gemini') return parsed.hostname.endsWith('gemini.google.com') && /^\/app\/[^/]+/.test(parsed.pathname)
     if (platform === 'doubao') return parsed.hostname.endsWith('doubao.com') && /^\/chat\/\d+/.test(parsed.pathname)
+    if (platform === 'deepseek') return false // DeepSeek URL has no per-conversation identifier (pathname always /)
   } catch {
     return false
   }

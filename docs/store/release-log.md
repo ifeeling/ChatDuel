@@ -31,6 +31,112 @@
 - 截图、隐私政策、审核备注是否需要更新。
 - 下次发布需要特别注意的事项。
 
+## 2026-07-13 - v0.4.7
+
+### 发布范围
+
+- GitHub source version: `v0.4.7`
+- GitHub source commit: `a118abe`
+- GitHub source tag: `https://github.com/ifeeling/ChatDuel/tree/v0.4.7`
+- GitHub compare source: `https://github.com/ifeeling/ChatDuel/compare/v0.4.6...v0.4.7`
+- GitHub Release version: `v0.4.7`
+- GitHub Release URL: `https://github.com/ifeeling/ChatDuel/releases/tag/v0.4.7`
+- Chrome / Edge package version: `0.4.7`
+- Release zip: `ChatDuel-v0.4.7-chrome-edge.zip`
+- Manifest version: `0.4.7`
+- Package.json version: `0.4.7`
+
+### 本次代码变化
+
+- 修复 DeepSeek "官网会话"功能：DeepSeek 的 URL（`https://chat.deepseek.com/`）pathname 始终是 `/`，没有 per-conversation 标识，无法通过 URL 恢复特定会话。
+  - `isSpecificConversationUrl` 对 `deepseek` 返回 `false`，新保存的会话不再记录 DeepSeek URL。
+  - `restoreConversation` 中跳过 pathname 为 `/` 的 DeepSeek URL，避免重新加载 iframe 后显示新对话页面。
+
+### 验证结果
+
+- 274 tests passed / 32 test files passed
+- `npm run build` 成功
+
+## 2026-07-13 - v0.4.6
+
+### 发布范围
+
+- GitHub source version: `v0.4.6`
+- GitHub source commit: `5eadcc9`
+- GitHub source tag: `https://github.com/ifeeling/ChatDuel/tree/v0.4.6`
+- GitHub compare source: `https://github.com/ifeeling/ChatDuel/compare/v0.4.5...v0.4.6`
+- GitHub Release version: `v0.4.6`
+- GitHub Release URL: `https://github.com/ifeeling/ChatDuel/releases/tag/v0.4.6`
+- Chrome / Edge package version: `0.4.6`
+- Release zip: `ChatDuel-v0.4.6-chrome-edge.zip`
+- Manifest version: `0.4.6`
+- Package.json version: `0.4.6`
+
+### 本次代码变化
+
+- DeepSeek 面板加载时自动切换到识图模式，支持图片上传。
+- 修复 DeepSeek 图片上传后无法自动发送的问题：`triggerSend` 采用 Enter 键优先、按钮回退的策略，参考 Gemini 的 `waitForSendAccepted` 检测机制，确保发送失败不会静默成功。
+- 修复 DeepSeek 识图模式按钮文字重复匹配问题：radio 按钮内因 `aria-hidden` 副本导致 `textContent` 加倍，改用正则 `/^(识图模式)+$/` 匹配。
+- 增强 `findSendControl`：新增 `DEFAULT_SEND_BUTTON_SELECTORS` 循环、`aria-disabled` 检查、排除非发送按钮（删除/上传/关闭等）。
+- 增加 `_locales` 支持中英等多语言。
+
+### Chrome Web Store 英文说明
+
+保持 `v0.4.4` 的英文说明不变，仅更新 `DeepSeek vision mode` 相关功能点：
+
+```text
+Key features:
+- Ask once and send to multiple AI services
+- Compare ChatGPT, Gemini, Doubao, and DeepSeek responses in one workspace
+- DeepSeek automatically switches to vision mode for image and file attachments
+- Forward one AI answer to another AI for review
+- Summarize shared opinions, disagreements, and final recommendations
+- Attach supported files and images where the target AI website allows it
+- Keep local records for review, copying, Markdown export, summary, and transfer
+- Restore official chat links and continue on the original AI websites
+- Interface language support for Chinese, English, French, German, Swedish, Norwegian, Dutch, Japanese, and Korean
+```
+
+### Chrome Web Store 简短摘要
+
+```text
+Split-screen multi-AI comparison workspace. No API keys, no data collection.
+```
+
+### Chrome Web Store 标题
+
+```text
+ChatDuel
+```
+
+### 本次后台需要核对
+
+- 产品详情语言至少保留 `English (United States) - en-US`。
+- 商店说明中已新增 DeepSeek 识图模式自动切换的描述。
+- 权限、host 权限、远程代码说明无变化。
+
+### 验证记录
+
+```text
+npm run typecheck
+npm test
+npm run build
+```
+
+验证结果：
+
+- TypeScript 检查通过。
+- 单元测试通过：32 个测试文件，274 个测试。
+- 构建通过。
+- Release zip 根目录包含 `manifest.json` 和 `_locales`。
+
+### 备注
+
+- 诊断脚本归档于 `docs/research/`，如果 DeepSeek 网页改版导致发送逻辑失效可参考。
+- 如果后续把日语、韩语做成完整 UI 翻译，需要更新本发布日记和商店说明。
+
+---
+
 ## 2026-06-23 - v0.4.4
 
 ### 发布范围
