@@ -162,16 +162,22 @@ function hasActiveVisionModeControl(): boolean {
     })
 }
 
-function isDeepSeekVisionMode(): boolean {
+type DeepSeekModeState = 'vision' | 'non-vision' | 'unknown'
+
+function detectVisionModeState(): DeepSeekModeState {
   const text = bodyTextPreview()
-  if (/使用识图模式开始对话|识图模式开始对话|当前.*识图模式/.test(text)) return true
-  if (hasActiveVisionModeControl()) return true
-  if (/快速模式下|快速模式|专家模式|不支持上传文件/.test(text)) return false
-  return true
+  if (/使用识图模式开始对话|识图模式开始对话|当前.*识图模式/.test(text)) return 'vision'
+  if (hasActiveVisionModeControl()) return 'vision'
+  if (/快速模式下|快速模式|专家模式|不支持上传文件/.test(text)) return 'non-vision'
+  return 'unknown'
+}
+
+function isDeepSeekVisionMode(): boolean {
+  return detectVisionModeState() !== 'non-vision'
 }
 
 function assertCanSendImageInCurrentMode(): void {
-  if (isDeepSeekVisionMode()) return
+  if (detectVisionModeState() !== 'non-vision') return
   logCaptureDebug({
     platform: 'deepseek',
     event: 'image-mode-check',
@@ -408,6 +414,107 @@ function normalizeText(text: string): string {
     .trim()
 }
 
+const VISION_MODE_BUTTON_SELECTORS = 'button, [role="button"], [role="tab"], [role="radio"]'
+
+function findVisionModeButton(): HTMLElement | null {
+  const candidates = document.querySelectorAll<HTMLElement>(VISION_MODE_BUTTON_SELECTORS)
+  for (const el of candidates) {
+    if (el.hidden) continue
+    if (el.getAttribute('aria-hidden') === 'true') continue
+    if (el instanceof HTMLButtonElement && el.disabled) continue
+    if (el.getAttribute('aria-disabled') === 'true') continue
+
+    const text = normalizeText(el.textContent ?? '')
+    const label = normalizeText(el.getAttribute('aria-label') ?? '')
+    const title = normalizeText(el.getAttribute('title') ?? '')
+
+    if (text !== '识图模式' && label !== '识图模式' && title !== '识图模式') continue
+
+    try {
+      const style = window.getComputedStyle?.(el)
+      if (style && (style.display === 'none' || style.visibility === 'hidden')) continue
+    } catch {
+      /* getComputedStyle may fail in some environments; assume visible */
+    }
+
+    return el
+  }
+  return null
+}
+
+async function waitForVisionModeButton(maxMs: number): Promise<HTMLElement | null> {
+  const deadline = Date.now() + maxMs
+  while (Date.now() < deadline) {
+    const button = findVisionModeButton()
+    if (button) return button
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  }
+  return null
+}
+
+async function waitForVisionEvidence(maxMs: number): Promise<boolean> {
+  const deadline = Date.now() + maxMs
+  while (Date.now() < deadline) {
+    if (detectVisionModeState() === 'vision') return true
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  }
+  return false
+}
+
+export async function ensureDeepSeekVisionMode(): Promise<boolean> {
+  try {
+    const initialState = detectVisionModeState()
+    if (initialState === 'vision') {
+      logCaptureDebug({
+        platform: 'deepseek',
+        event: 'vision-switch',
+        reason: 'already-vision',
+      })
+      return true
+    }
+
+    const button = await waitForVisionModeButton(8000)
+    if (!button) {
+      logCaptureDebug({
+        platform: 'deepseek',
+        event: 'vision-switch',
+        reason: initialState === 'non-vision' ? 'button-not-found' : 'button-not-found',
+        initialState,
+      })
+      return false
+    }
+
+    const isDisabled = (button instanceof HTMLButtonElement && button.disabled)
+      || button.getAttribute('aria-disabled') === 'true'
+    if (isDisabled) {
+      logCaptureDebug({
+        platform: 'deepseek',
+        event: 'vision-switch',
+        reason: 'button-disabled',
+      })
+      return false
+    }
+
+    activateControl(button)
+
+    const switched = await waitForVisionEvidence(3000)
+    logCaptureDebug({
+      platform: 'deepseek',
+      event: 'vision-switch',
+      reason: switched ? 'switched' : 'verification-timeout',
+    })
+    return switched
+  } catch (err) {
+    logCaptureDebug({
+      platform: 'deepseek',
+      event: 'vision-switch',
+      reason: 'exception',
+      error: String(err),
+    })
+    return false
+  }
+}
+
 function cleanDeepSeekResponseText(text: string): string {
   const withoutReferenceLines = normalizeText(text)
     .split('\n')
@@ -556,10 +663,6 @@ function getLatestResponseText(selectors: DeepSeekSelectors): string {
   })
 
   return candidates[candidates.length - 1]?.text ?? ''
-}
-
-export async function ensureDeepSeekVisionMode(): Promise<boolean> {
-  throw new Error('not implemented')
 }
 
 export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter {
