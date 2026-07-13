@@ -558,6 +558,10 @@ function getLatestResponseText(selectors: DeepSeekSelectors): string {
   return candidates[candidates.length - 1]?.text ?? ''
 }
 
+export async function ensureDeepSeekVisionMode(): Promise<boolean> {
+  throw new Error('not implemented')
+}
+
 export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter {
   const selectors = mergeSelectorOverrides(DEFAULT_SELECTORS, selectorOverrides) as DeepSeekSelectors
   let lastEventHandler: ((e: StreamEvent) => void) | null = null

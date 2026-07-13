@@ -1,5 +1,5 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createDeepSeekAdapter } from '../../src/adapters/deepseek/adapter'
+import { beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createDeepSeekAdapter, ensureDeepSeekVisionMode } from '../../src/adapters/deepseek/adapter'
 
 beforeAll(() => {
   if (typeof globalThis.DataTransfer === 'undefined') {
@@ -637,5 +637,126 @@ describe('deepseek adapter', () => {
     expect(inputSpy).toHaveBeenCalledTimes(1)
     expect(changeSpy).toHaveBeenCalledTimes(1)
     expect(document.querySelector('.upload-file')?.textContent).toBe('cursor.png')
+  })
+})
+
+describe('ensureDeepSeekVisionMode', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('does not click when vision mode is explicitly active', async () => {
+    document.body.innerHTML = `
+      <button aria-selected="true">识图模式</button>
+    `
+    const btn = document.querySelector('button')!
+    const clickSpy = vi.fn()
+    btn.addEventListener('click', clickSpy)
+
+    const promise = ensureDeepSeekVisionMode()
+    await vi.advanceTimersByTimeAsync(500)
+    const result = await promise
+
+    expect(result).toBe(true)
+    expect(clickSpy).toHaveBeenCalledTimes(0)
+  })
+
+  it('clicks once and waits for explicit vision evidence', async () => {
+    document.body.innerHTML = `
+      <button>识图模式</button>
+    `
+    const btn = document.querySelector('button')!
+    btn.addEventListener('click', () => {
+      btn.setAttribute('aria-selected', 'true')
+    })
+
+    const promise = ensureDeepSeekVisionMode()
+    await vi.advanceTimersByTimeAsync(500)
+    const result = await promise
+
+    expect(result).toBe(true)
+  })
+
+  it('waits for a delayed vision mode button', async () => {
+    setTimeout(() => {
+      const btn = document.createElement('button')
+      btn.textContent = '识图模式'
+      btn.addEventListener('click', () => {
+        btn.setAttribute('aria-selected', 'true')
+      })
+      document.body.appendChild(btn)
+    }, 2000)
+
+    const promise = ensureDeepSeekVisionMode()
+    await vi.advanceTimersByTimeAsync(8500)
+    const result = await promise
+
+    expect(result).toBe(true)
+  })
+
+  it('returns false when the button never appears', async () => {
+    document.body.innerHTML = ''
+
+    const promise = ensureDeepSeekVisionMode()
+    await vi.advanceTimersByTimeAsync(8500)
+    const result = await promise
+
+    expect(result).toBe(false)
+  })
+
+  it('does not repeatedly click when verification times out', async () => {
+    document.body.innerHTML = `
+      <button>识图模式</button>
+    `
+    const btn = document.querySelector('button')!
+    const clickSpy = vi.fn()
+    btn.addEventListener('click', clickSpy)
+
+    const promise = ensureDeepSeekVisionMode()
+    await vi.advanceTimersByTimeAsync(8500)
+    const result = await promise
+
+    expect(result).toBe(false)
+    expect(clickSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores hidden and disabled matching controls', async () => {
+    document.body.innerHTML = `
+      <button hidden>识图模式</button>
+      <button disabled>识图模式</button>
+      <button aria-hidden="true">识图模式</button>
+      <button aria-disabled="true">识图模式</button>
+      <div role="button" style="display:none">识图模式</div>
+    `
+    const controls = document.querySelectorAll<HTMLElement>('button, [role="button"]')
+    const clickSpies = [...controls].map((el) => {
+      const spy = vi.fn()
+      el.addEventListener('click', spy)
+      return spy
+    })
+
+    const promise = ensureDeepSeekVisionMode()
+    await vi.advanceTimersByTimeAsync(8500)
+    const result = await promise
+
+    expect(result).toBe(false)
+    clickSpies.forEach((spy) => expect(spy).toHaveBeenCalledTimes(0))
+  })
+
+  it('does not treat an unknown page state as success', async () => {
+    document.body.innerHTML = `
+      <div>Some unrelated content</div>
+    `
+
+    const promise = ensureDeepSeekVisionMode()
+    await vi.advanceTimersByTimeAsync(8500)
+    const result = await promise
+
+    expect(result).toBe(false)
   })
 })
