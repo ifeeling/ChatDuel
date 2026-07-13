@@ -36,7 +36,7 @@
 ### 发布范围
 
 - GitHub source version: `v0.4.7`
-- GitHub source commit: `a118abe`
+- GitHub source commit: `a945499`
 - GitHub source tag: `https://github.com/ifeeling/ChatDuel/tree/v0.4.7`
 - GitHub compare source: `https://github.com/ifeeling/ChatDuel/compare/v0.4.6...v0.4.7`
 - GitHub Release version: `v0.4.7`
