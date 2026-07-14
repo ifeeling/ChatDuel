@@ -221,9 +221,9 @@ describe('chat.html', () => {
 
     expect(document.querySelector('#conversation-note')).toBeTruthy()
     expect(document.querySelector('#summary-lead')).toBeTruthy()
-    expect(document.querySelector('#summary-target-label')).toBeTruthy()
-    expect(document.querySelector('#summary-mode-label')).toBeTruthy()
-    expect(document.querySelector('#summary-source-label')).toBeTruthy()
+    expect(document.querySelector('#summary-sentence-prefix')).toBeTruthy()
+    expect(document.querySelector('#summary-sentence-mid')).toBeTruthy()
+    expect(document.querySelector('#summary-sentence-suffix')).toBeTruthy()
     expect(document.querySelector('#summary-preview-title')).toBeTruthy()
     expect(document.querySelector('#transfer-target-label')).toBeTruthy()
     expect(document.querySelector('#transfer-preview-title')).toBeTruthy()

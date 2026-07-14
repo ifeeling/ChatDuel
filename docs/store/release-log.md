@@ -31,6 +31,120 @@
 - 截图、隐私政策、审核备注是否需要更新。
 - 下次发布需要特别注意的事项。
 
+## 2026-07-14 - v0.4.12
+
+### 发布范围
+
+- GitHub source version: `v0.4.12`
+- GitHub compare source: `https://github.com/ifeeling/ChatDuel/compare/v0.4.11...v0.4.12`
+- Chrome / Edge package version: `0.4.12`
+- Manifest version: `0.4.12`
+- Package.json version: `0.4.12`
+
+### 本次代码变化
+
+- **英文翻译修复**：对比总结弹层一句话构式在英文语境下语法修正，多 AI 选择时不再出现 `豆包's content, let DeepSeek` 的错误结构，改为 `Choose content from ..., and have ... generate a ...`（中文不受影响，仅修改 `i18n.ts` 英文片段）。
+- **DeepSeek 适配器修复**：`canUseExpandedResponseRoot` 增加 `ds-markdown` class 保护，避免回答容器向上扩展时丢失标记导致评分骤降。
+
+---
+
+## 2026-07-14 - v0.4.11
+
+### 发布范围
+
+- GitHub source version: `v0.4.11`
+- GitHub compare source: `https://github.com/ifeeling/ChatDuel/compare/v0.4.10...v0.4.11`
+- Chrome / Edge package version: `0.4.11`
+- Manifest version: `0.4.11`
+- Package.json version: `0.4.11`
+
+### 本次代码变化
+
+- 重构"对比总结"弹层配置区域为内联一句话 + 底部操作栏：
+  1. **配置字段串成一句话**：`选择 [AI复选框] 的内容，由 [总结目标] 来生成 [总结方式]`，字段按操作顺序从左到右排列，更紧凑自然。
+  2. **底部操作栏**：`已选择N条记录` 和 `取消/生成总结` 按钮放在同一行，左对齐信息 + 右对齐按钮，视觉对齐清晰。
+  3. 翻译键从 `summary.targetLabel/modeLabel/sourceLabel` 拆分为 `summary.sentencePrefix/sentenceMid/sentenceSuffix` + `summary.sourceAriaLabel`。
+  4. 转发弹层的 `.transfer-target-field` 样式保留，不受对比总结布局影响。
+
+### 验证结果
+
+- 274 tests passed / 32 test files passed
+- `npm run build` 成功
+
+---
+
+## 2026-07-14 - v0.4.10
+
+### 发布范围
+
+- GitHub source version: `v0.4.10`
+- GitHub compare source: `https://github.com/ifeeling/ChatDuel/compare/v0.4.9...v0.4.10`
+- Chrome / Edge package version: `0.4.10`
+- Manifest version: `0.4.10`
+- Package.json version: `0.4.10`
+
+### 本次代码变化
+
+- 优化"对比总结"弹层布局和交互体验：
+  1. **弹层尺寸增大**：`.summary-dialog` 宽度从 `min(1180px, 100vw-32px)` 提升到 `min(1400px, 100vw-48px)`，高度从 `min(760px, 100vh-32px)` 提升到 `min(85vh, 900px)`，内容显示更宽松。
+  2. **配置区域左右分栏**：`.summary-config` 改为 flex 布局，左侧放配置字段（总结目标、总结方式、参与 AI、已选数量），右侧放操作按钮（取消、生成总结/转发）。释放了预览区域的垂直空间。
+  3. **默认选中左most AI**：`pickSummaryTarget()` 不再硬编码 `chatgpt > gemini` 的优先级，而是按当前面板 DOM 顺序取第一个支持文本的 AI。用户调整好面板顺序后，总结目标会自动跟随最左边的 AI。
+
+### 验证结果
+
+- 274 tests passed / 32 test files passed
+- `npm run build` 成功
+
+---
+
+## 2026-07-14 - v0.4.9
+
+### 发布范围
+
+- GitHub source version: `v0.4.9`
+- GitHub compare source: `https://github.com/ifeeling/ChatDuel/compare/v0.4.8...v0.4.9`
+- Chrome / Edge package version: `0.4.9`
+- Manifest version: `0.4.9`
+- Package.json version: `0.4.9`
+
+### 本次代码变化
+
+- 优化"记录"页面长回答的显示体验：
+  - 给 `.history-block` 添加 `max-height: 160px` 和 `overflow-y: auto`，与"对比总结"的内容预览保持一致。
+  - 长回答会在各自的内容块内滚动，不再撑开整个页面，方便快速浏览所有 AI 的回答标题。
+
+### 验证结果
+
+- 274 tests passed / 32 test files passed
+- `npm run build` 成功
+
+---
+
+## 2026-07-14 - v0.4.8
+
+### 发布范围
+
+- GitHub source version: `v0.4.8`
+- GitHub source commit: `TBD`
+- GitHub compare source: `https://github.com/ifeeling/ChatDuel/compare/v0.4.7...v0.4.8`
+- GitHub Release version: `v0.4.8`
+- Chrome / Edge package version: `0.4.8`
+- Release zip: `ChatDuel-v0.4.8-chrome-edge.zip`
+- Manifest version: `0.4.8`
+- Package.json version: `0.4.8`
+
+### 本次代码变化
+
+- 修复 DeepSeek 多轮对话（尤其是含图片的对话）中回复捕获间歇性失败的问题。
+  - **根因**：`expandResponseCandidate()` 将 `div.ds-markdown` 向上扩展到父容器时，评分骤降（~100 → ~-20），导致多轮对话中历史回复的 `ds-markdown` 元素评分高于最新回复，系统持续选中历史回复文本。
+  - **修复1**：`canUseExpandedResponseRoot()` 新增检查：如果当前元素已有 `ds-markdown` class（DeepSeek 完整回答容器），且父元素没有同类 class 也没有操作按钮，则阻止向上扩展。测试中的 `markdown`/`answer`/`ds-markdown-paragraph` 等 class 不受影响。
+  - **修复2**：`getLatestResponseText()` 优化候选选择策略：优先从高分候选（score >= 50）中按 DOM 顺序取最后一个，确保多轮对话时始终返回最新回复。
+
+### 验证结果
+
+- 274 tests passed / 32 test files passed
+- `npm run build` 成功
+
 ## 2026-07-13 - v0.4.7
 
 ### 发布范围

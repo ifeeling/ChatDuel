@@ -314,28 +314,28 @@
         <aside class="summary-list" id="summary-list" aria-label="选择要总结的历史记录"></aside>
         <main class="summary-options">
           <div class="summary-config">
-            <p class="summary-lead" id="summary-lead">默认选中最新一条历史。你可以勾选其它相关记录一起总结。</p>
-            <label class="summary-field">
-              <span id="summary-target-label">总结目标</span>
-              <select id="summary-target"></select>
-            </label>
-            <label class="summary-field">
-              <span id="summary-mode-label">总结方式</span>
-              <select id="summary-mode">
-                <option value="final-answer">最终结论</option>
-                <option value="differences">只看分歧</option>
-                <option value="short-summary">简短摘要</option>
-                <option value="opinion-digest">汇总意见</option>
-              </select>
-            </label>
-            <label class="summary-field transfer-target-field">
-              <span id="summary-source-label">参与总结的 AI</span>
-              <div class="transfer-target-list" id="summary-source-list" role="group" aria-label="参与总结的 AI"></div>
-            </label>
-            <div class="summary-selected" id="summary-selected">已选择 0 条历史</div>
-            <div class="summary-actions">
-              <button id="btn-summary-cancel" class="summary-secondary" type="button">取消</button>
-              <button id="btn-summary-generate" class="summary-primary" type="button">生成总结</button>
+            <div class="summary-config-main">
+              <p class="summary-lead" id="summary-lead">默认选中最新一条历史。你可以勾选其它相关记录一起总结。</p>
+              <p class="summary-sentence">
+                <span class="summary-sentence-part" id="summary-sentence-prefix">选择</span>
+                <span class="summary-source-inline" id="summary-source-list" role="group" aria-label="参与总结的 AI"></span>
+                <span class="summary-sentence-part" id="summary-sentence-mid">的内容，由</span>
+                <select id="summary-target" aria-label="总结目标"></select>
+                <span class="summary-sentence-part" id="summary-sentence-suffix">来生成</span>
+                <select id="summary-mode" aria-label="总结方式">
+                  <option value="final-answer">最终结论</option>
+                  <option value="differences">只看分歧</option>
+                  <option value="short-summary">简短摘要</option>
+                  <option value="opinion-digest">汇总意见</option>
+                </select>
+              </p>
+            </div>
+            <div class="summary-footer">
+              <span class="summary-selected" id="summary-selected">已选择 0 条历史</span>
+              <div class="summary-actions">
+                <button id="btn-summary-cancel" class="summary-secondary" type="button">取消</button>
+                <button id="btn-summary-generate" class="summary-primary" type="button">生成总结</button>
+              </div>
             </div>
           </div>
           <section class="summary-preview" aria-label="已选择历史内容预览">
@@ -357,12 +357,14 @@
         <aside class="summary-list" id="transfer-list" aria-label="选择要转发的回答"></aside>
         <main class="summary-options">
           <div class="summary-config">
-            <p class="summary-lead" id="transfer-lead">默认选中最新一条回答。你可以多选，把多条回答一起转给目标 AI。</p>
-            <label class="summary-field transfer-target-field">
-              <span id="transfer-target-label">转发目标</span>
-              <div class="transfer-target-list" id="transfer-target-list" role="group" aria-label="转发目标"></div>
-            </label>
-            <div class="summary-selected" id="transfer-selected">已选择 0 条回答</div>
+            <div class="summary-config-main">
+              <p class="summary-lead" id="transfer-lead">默认选中最新一条回答。你可以多选，把多条回答一起转给目标 AI。</p>
+              <label class="summary-field transfer-target-field">
+                <span id="transfer-target-label">转发目标</span>
+                <div class="transfer-target-list" id="transfer-target-list" role="group" aria-label="转发目标"></div>
+              </label>
+              <div class="summary-selected" id="transfer-selected">已选择 0 条回答</div>
+            </div>
             <div class="summary-actions">
               <button id="btn-transfer-cancel" class="summary-secondary" type="button">取消</button>
               <button id="btn-transfer-send" class="summary-primary" type="button">转发</button>

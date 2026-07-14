@@ -676,7 +676,16 @@ function canUseExpandedResponseRoot(el: HTMLElement, text: string, current: HTML
   if (hasOtherResponseCandidate(el, current, responseSelector) && !hasDirectResponseActions(el)) return false
   const expandedText = elementToMarkdownText(el)
   if (expandedText.length < text.length) return false
-  return expandedText.includes(text)
+  if (!expandedText.includes(text)) return false
+  // ds-markdown 是 DeepSeek 实际使用的完整回答渲染容器 class。
+  // 如果当前元素有 ds-markdown 标记，说明它本身就是完整的回答容器，
+  // 向上扩展会导致丢失标记、评分骤降。
+  // 仅在父元素也有 ds-markdown 标记或有操作按钮时才允许扩展；
+  // 测试中的 "markdown" / "answer" / "ds-markdown-paragraph" 等不受影响。
+  if (current.classList.contains('ds-markdown')) {
+    if (!el.classList.contains('ds-markdown') && !hasDirectResponseActions(el)) return false
+  }
+  return true
 }
 
 function expandResponseCandidate(el: HTMLElement, text: string, responseSelector: string): { el: HTMLElement; text: string } {
@@ -735,10 +744,23 @@ function getLatestResponseText(selectors: DeepSeekSelectors): string {
       seen.add(candidate.text)
       return true
     })
-    .sort((a, b) => {
+
+  // 优先在高分候选（保留了响应标记，score >= 50）中按 DOM 顺序取最后一个，
+  // 确保多轮对话时始终返回最新的回复，而不是历史最长的旧回复。
+  const HIGH_QUALITY_MIN_SCORE = 50
+  const highQuality = candidates.filter((c) => c.score >= HIGH_QUALITY_MIN_SCORE)
+  let selected = highQuality.length > 0
+    ? highQuality.sort((a, b) => a.index - b.index)[highQuality.length - 1]
+    : undefined
+
+  if (!selected) {
+    // 无高分候选时回退到原逻辑：按 score 排序取最高
+    candidates.sort((a, b) => {
       if (a.score !== b.score) return a.score - b.score
       return a.index - b.index
     })
+    selected = candidates[candidates.length - 1]
+  }
 
   logCaptureDebug({
     platform: 'deepseek',
@@ -749,17 +771,17 @@ function getLatestResponseText(selectors: DeepSeekSelectors): string {
       score: candidate.score,
       isUserMessage: false,
     })),
-    selected: candidates.length > 0
+    selected: selected
       ? {
-          ...describeCaptureElement(candidates[candidates.length - 1].el, candidates[candidates.length - 1].text),
-          index: candidates[candidates.length - 1].index,
-          score: candidates[candidates.length - 1].score,
+          ...describeCaptureElement(selected.el, selected.text),
+          index: selected.index,
+          score: selected.score,
           isUserMessage: false,
         }
       : undefined,
   })
 
-  return candidates[candidates.length - 1]?.text ?? ''
+  return selected?.text ?? ''
 }
 
 // 获取响应文本，包含 main 兜底逻辑

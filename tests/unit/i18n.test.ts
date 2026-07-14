@@ -43,7 +43,7 @@ describe('i18n', () => {
       'conversation.note',
       'conversation.deleteShort',
       'summary.lead',
-      'summary.targetLabel',
+      'summary.sentencePrefix',
       'summary.mode.final-answer',
       'summary.selectedCount',
       'summary.previewTitle',

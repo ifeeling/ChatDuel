@@ -148,11 +148,11 @@ const btnSummaryCancel = $<HTMLButtonElement>('#btn-summary-cancel')
 const btnSummaryGenerate = $<HTMLButtonElement>('#btn-summary-generate')
 const summaryList = $<HTMLDivElement>('#summary-list')
 const summaryLead = $<HTMLParagraphElement>('#summary-lead')
-const summaryTargetLabel = $<HTMLSpanElement>('#summary-target-label')
-const summaryModeLabel = $<HTMLSpanElement>('#summary-mode-label')
+const summaryTargetLabel = $<HTMLSpanElement>('#summary-sentence-prefix')
+const summaryModeLabel = $<HTMLSpanElement>('#summary-sentence-mid')
 const summaryTargetSelect = $<HTMLSelectElement>('#summary-target')
 const summaryModeSelect = $<HTMLSelectElement>('#summary-mode')
-const summarySourceLabel = $<HTMLSpanElement>('#summary-source-label')
+const summarySourceLabel = $<HTMLSpanElement>('#summary-sentence-suffix')
 const summarySourceList = $<HTMLDivElement>('#summary-source-list')
 const summarySelected = $<HTMLDivElement>('#summary-selected')
 const summaryPreviewTitle = $<HTMLHeadingElement>('#summary-preview-title')
@@ -288,10 +288,10 @@ function applyStaticUiLanguage(language: UserLanguage) {
   conversationNote.textContent = t(language, 'conversation.note')
   setElementText('#summary-title', t(language, 'toolbar.summaryTitle'))
   summaryLead.textContent = t(language, 'summary.lead')
-  summaryTargetLabel.textContent = t(language, 'summary.targetLabel')
-  summaryModeLabel.textContent = t(language, 'summary.modeLabel')
-  summarySourceLabel.textContent = t(language, 'summary.sourceLabel')
-  summarySourceList.setAttribute('aria-label', t(language, 'summary.sourceLabel'))
+  summaryTargetLabel.textContent = t(language, 'summary.sentencePrefix')
+  summaryModeLabel.textContent = t(language, 'summary.sentenceMid')
+  summarySourceLabel.textContent = t(language, 'summary.sentenceSuffix')
+  summarySourceList.setAttribute('aria-label', t(language, 'summary.sourceAriaLabel'))
   summarySelected.textContent = formatUiText(language, 'summary.selectedCount', { count: selectedSummaryIds.size })
   btnSummaryCancel.textContent = t(language, 'common.cancel')
   btnSummaryGenerate.textContent = t(language, 'summary.generate')
@@ -2419,10 +2419,8 @@ const SUMMARY_MODE_TEMPLATE_KEYS: Record<SummaryMode, UserPromptTemplateKey> = {
 }
 
 function pickSummaryTarget(): AIPlatform | null {
-  const active = platformsWithCapability('supportsText')
-  if (active.includes('chatgpt')) return 'chatgpt'
-  if (active.includes('gemini')) return 'gemini'
-  return null
+  const textCapable = new Set(platformsWithCapability('supportsText'))
+  return activePlatforms().find((p) => textCapable.has(p)) ?? null
 }
 
 function renderSummaryTargets() {
