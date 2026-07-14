@@ -2,7 +2,7 @@ import type { AIAdapter } from '../base'
 import type { ConversationState, StreamEvent } from '../../types'
 import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
 import { elementToMarkdownText } from '../../lib/dom-response-text'
-import { describeCaptureElement, logCaptureDebug } from '../../lib/capture-debug'
+import { describeCaptureElement, logCaptureDebug, textPreview } from '../../lib/capture-debug'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 
 // ---------------------------------------------------------------------------
@@ -63,6 +63,10 @@ const DEFAULT_STOP_BUTTON_SELECTORS = [
 ]
 
 const DEFAULT_RESPONSE_SELECTORS = [
+  // DeepSeek 专属：更精确匹配 assistant 消息容器
+  'div.ds-markdown',
+  '[class*="ds-markdown" i]',
+  // 通用选择器
   '[data-testid*="assistant" i]',
   '[data-testid*="answer" i]',
   '[data-testid*="message" i]',
@@ -687,6 +691,26 @@ function expandResponseCandidate(el: HTMLElement, text: string, responseSelector
   return { el: bestEl, text: bestText }
 }
 
+// 兜底提取：当常规选择器全部未命中时，从 <main> 中扫描响应文本。
+// DeepSeek 的页面结构可能因版本更新而变化，此兜底确保即使在选择器失效时也能提取到内容。
+function getMainFallbackText(): string {
+  const main = document.querySelector('main')
+  if (!main) return ''
+
+  // 在 main 中找最后一个非用户消息、非隐藏、有实质内容的可见元素
+  const candidates = [...main.querySelectorAll<HTMLElement>('div, p')]
+    .filter((el) => !isHidden(el))
+    .filter((el) => !isUserMessage(el))
+    .filter((el) => !el.closest(RESPONSE_EXCLUDE_ANCESTORS))
+
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    const text = cleanDeepSeekResponseText(elementToMarkdownText(candidates[i]))
+    if (text.length > 50) return text
+  }
+
+  return ''
+}
+
 function getLatestResponseText(selectors: DeepSeekSelectors): string {
   // DeepSeek 的混淆 class 会变化；改候选选择前先看 docs/RESPONSE_CAPTURE_MAINTENANCE.md。
   const seen = new Set<string>()
@@ -736,6 +760,37 @@ function getLatestResponseText(selectors: DeepSeekSelectors): string {
   })
 
   return candidates[candidates.length - 1]?.text ?? ''
+}
+
+// 获取响应文本，包含 main 兜底逻辑
+function getResponseTextWithFallback(selectors: DeepSeekSelectors): string {
+  const text = getLatestResponseText(selectors)
+  logCaptureDebug({
+    platform: 'deepseek',
+    event: 'response-text-attempt',
+    selectorHit: !!text,
+    textLength: text?.length ?? 0,
+    textPreview: textPreview(text ?? ''),
+  })
+  if (text) return text
+
+  // 常规选择器未命中，尝试从 main 元素兜底提取
+  const fallback = getMainFallbackText()
+  if (fallback) {
+    logCaptureDebug({
+      platform: 'deepseek',
+      event: 'response-fallback',
+      textLength: fallback.length,
+      textPreview: fallback.slice(0, 120),
+    })
+  } else {
+    logCaptureDebug({
+      platform: 'deepseek',
+      event: 'response-fallback-empty',
+      reason: 'no candidates in <main>',
+    })
+  }
+  return fallback
 }
 
 export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter {
@@ -797,15 +852,34 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
     },
 
     async getLastResponse() {
-      return getLatestResponseText(selectors)
+      return getResponseTextWithFallback(selectors)
     },
 
     async getConversationState(): Promise<ConversationState> {
-      if (!queryFirst(selectors.inputBox)) return { status: 'error', errorMessage: 'DeepSeek 输入框未识别' }
-      const lastResponse = getLatestResponseText(selectors)
-      if (hasStopGeneratingButton(selectors)) return { status: 'streaming', lastResponse }
-      if (lastResponse) return { status: 'finished', lastResponse }
-      return { status: 'idle' }
+      const hasInputBox = !!queryFirst(selectors.inputBox)
+      logCaptureDebug({
+        platform: 'deepseek',
+        event: 'conversation-state-check',
+        hasInputBox,
+      })
+      if (!hasInputBox) return { status: 'error', errorMessage: 'DeepSeek 输入框未识别' }
+      const lastResponse = getResponseTextWithFallback(selectors)
+      const hasStopButton = hasStopGeneratingButton(selectors)
+      const state: ConversationState = hasStopButton
+        ? { status: 'streaming', lastResponse }
+        : lastResponse
+          ? { status: 'finished', lastResponse }
+          : { status: 'idle' }
+      logCaptureDebug({
+        platform: 'deepseek',
+        event: 'conversation-state-result',
+        hasInputBox,
+        hasStopButton,
+        lastResponseLength: lastResponse?.length ?? 0,
+        lastResponsePreview: textPreview(lastResponse ?? ''),
+        status: state.status,
+      })
+      return state
     },
 
     onStreamEvent(handler) {

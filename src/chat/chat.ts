@@ -969,6 +969,11 @@ function requestLastResponse(p: AIPlatform, timeoutMs = 3000): Promise<string> {
     postToIframe(p, 'get-last-response')
     setTimeout(() => {
       window.removeEventListener('message', onMsg)
+      logCaptureDebug({
+        platform: p,
+        event: 'request-last-response-timeout',
+        timeoutMs,
+      })
       resolve('')
     }, timeoutMs)
   })
@@ -1007,6 +1012,11 @@ function requestConversationState(p: AIPlatform, timeoutMs = 3000): Promise<Conv
     postToIframe(p, 'get-state')
     setTimeout(() => {
       window.removeEventListener('message', onMsg)
+      logCaptureDebug({
+        platform: p,
+        event: 'request-conversation-state-timeout',
+        timeoutMs,
+      })
       resolve({ status: 'idle' })
     }, timeoutMs)
   })
@@ -1170,6 +1180,16 @@ async function backfillSessionResponses(
       nextProgress[platform] = decision.progress
       const completeForUnlock = isResponseCompleteForUnlock({ text, status: state.status }, baselines[platform])
       const willCapture = decision.shouldCapture && isNewCapturedResponse(decision.text, baselines[platform])
+      // 详细诊断：分析 completeForUnlock 为 false 的原因
+      const completeForUnlockReason = (() => {
+        if (completeForUnlock) return 'complete'
+        const trimmedText = text.trim()
+        const baselineText = (baselines[platform] ?? '').trim()
+        if (!trimmedText) return 'text-empty'
+        if (trimmedText === baselineText) return 'text-equals-baseline'
+        if (state.status === 'streaming' || state.status === 'queued' || state.status === 'sending') return `status-active-${state.status}`
+        return 'unknown'
+      })()
       logCaptureDebug({
         platform,
         event: 'backfill-poll',
@@ -1186,6 +1206,7 @@ async function backfillSessionResponses(
         shouldCapture: decision.shouldCapture,
         willCapture,
         completeForUnlock,
+        completeForUnlockReason,
       })
       if (completeForUnlock) {
         setStatus(platform, 'ok', t(userSettings.language, 'send.statusDone'))
