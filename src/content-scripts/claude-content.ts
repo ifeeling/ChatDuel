@@ -146,41 +146,88 @@ function detectStaleModelState(): boolean {
 }
 
 /**
- * 在 content script 注入早期执行缓存清理检查。
- * 返回 true 表示已触发强制刷新（调用方应不再继续初始化 adapter）。
+ * 安排延迟的缓存状态检查（不阻塞 boot 主流程）。
+ *
+ * 背景：content script 在 document_start 注入，此时 Claude 页面还是空白的，
+ * "Unsupported model" 等文本尚未渲染。同步检测会因 body 太短而直接跳过。
+ * 本函数用 MutationObserver + 延时重试双策略，等页面真正渲染后再检查。
  */
-function tryClearStaleCache(): boolean {
-  // 已经清理并刷新过了，不要再重复执行
-  if (sessionStorage.getItem(CLAUDE_CACHE_CLEAR_FLAG)) return false
+function scheduleStaleCacheCheck(): void {
+  // 已清理过就不再安排
+  if (sessionStorage.getItem(CLAUDE_CACHE_CLEAR_FLAG)) return
 
-  // 给 Claude 页面一点时间渲染（避免在空白页误判）
-  // 如果页面还在初始加载中（body 几乎为空），先不判断
-  if ((document.body?.textContent?.length ?? 0) < 50) return false
+  let settled = false
+  const MAX_ATTEMPTS = 10       // 最多尝试 ~10 秒
+  const BASE_DELAY_MS = 500     // 首次 0.5s，之后每次 +500ms
+  let attempts = 0
 
-  // ── 诊断：先 dump 当前存储状态（无论是否检测到过期都要 dump）──
-  dumpStorage('BEFORE')
+  /**
+   * 执行一次检测。返回 true 表示已触发清理+刷新（后续不再执行）。
+   */
+  function attempt(): boolean {
+    if (settled) return true
 
-  if (!detectStaleModelState()) {
-    console.log(`${LOG_PREFIX} Model state looks healthy (no "Unsupported model" detected). Keeping cache as-is.`)
-    return false
+    // body 还太短 → 页面还没渲染完，继续等
+    const len = document.body?.textContent?.length ?? 0
+    if (len < 50) {
+      console.log(`${LOG_PREFIX} [CACHE-CHECK #${attempts}] Body too short (${len} chars), waiting...`)
+      return false
+    }
+
+    // ── 页面有内容了，做诊断 dump ──
+    dumpStorage(`CHECK-${attempts}`)
+
+    if (!detectStaleModelState()) {
+      console.log(`${LOG_PREFIX} [CACHE-CHECK #${attempts}] Model state looks healthy.`)
+      return false
+    }
+
+    // ── 检测到过期！执行激进清理 ──
+    settled = true
+    const clearedCount = clearClaudeModelCache(/* aggressive */ true)
+    console.log(`${LOG_PREFIX} STALE DETECTED at attempt #${attempts}. Cleared ${clearedCount} keys (aggressive). Reloading...`)
+    dumpStorage('AFTER-CLEAR')
+    sessionStorage.setItem(CLAUDE_CACHE_CLEAR_FLAG, '1')
+    location.reload()
+    return true
   }
 
-  // 检测到过期状态：用激进模式清空整个 iframe 分区的所有存储
-  const clearedCount = clearClaudeModelCache(/* aggressive */ true)
-  console.log(`${LOG_PREFIX} Stale model state DETECTED. Cleared ${clearedCount} cache keys (aggressive mode). Reloading iframe...`)
+  // 策略 A：MutationObserver — 当 DOM 有实质变化时触发检测
+  const observer = new MutationObserver(() => {
+    if (settled) { observer.disconnect(); return }
+    if (attempt()) observer.disconnect()
+  })
+  observer.observe(document.body ?? document.documentElement, {
+    childList: true,
+    subtree: true,
+  })
 
-  // 清完后也 dump 一次确认干净了
-  dumpStorage('AFTER-CLEAR')
+  // 策略 B：定时重试 —— 即使 Observer 漏掉某些情况也有兜底
+  function scheduleNext() {
+    if (settled || attempts >= MAX_ATTEMPTS) {
+      if (!settled && attempts >= MAX_ATTEMPTS) {
+        // 超过最大尝试次数，dump 最终状态后放弃
+        dumpStorage('TIMEOUT')
+        console.log(`${LOG_PREFIX} Cache check timed out after ${MAX_ATTEMPTS} attempts. Keeping cache as-is.`)
+      }
+      observer.disconnect()
+      return
+    }
+    attempts++
+    const delay = BASE_DELAY_MS * attempts
+    setTimeout(() => {
+      if (attempt()) { observer.disconnect(); return }
+      scheduleNext()
+    }, delay)
+  }
 
-  sessionStorage.setItem(CLAUDE_CACHE_CLEAR_FLAG, '1')
-  location.reload()
-  return true // 告诉调用方不要继续 boot
+  // 第一次延时稍长一点（给初始加载留时间）
+  setTimeout(scheduleNext, 1000)
 }
 
 // Claude 在扩展 iframe 里点开模型菜单时，浮层可用高度可能被压扁(只剩几 px)，
 // 导致菜单外壳可见但选项内容出不来。这里只做一个最小 CSS 补丁：给已展开的
 // 菜单强制一个可用高度，并让内部滚动层继承，避免被 iframe 底部压住。
-// 具体高度/类名以实页验证为准(见 Claude 接入验证清单)。
 function installMenuHeightPatch(): void {
   const style = document.createElement('style')
   style.textContent = `
@@ -199,18 +246,17 @@ function installMenuHeightPatch(): void {
 }
 
 async function boot() {
-  // ── 阶段 0：检测并清理过期的模型缓存（iframe 存储分区隔离问题）──
-  // 如果检测到 "Unsupported model" / 空菜单等过期状态，会自动清缓存并 reload。
-  // reload 后 sessionStorage flag 会阻止再次清理，正常走后续初始化。
-  if (tryClearStaleCache()) {
-    return // 已触发强制刷新，本次 boot 终止
-  }
+  // ── 阶段 0：异步检测并清理过期模型缓存 ──
+  // 不再同步阻塞 boot；改为后台调度，等页面渲染完自动检查。
+  // 如果检测到过期状态，会清缓存并 reload（本次 boot 自然终止）。
+  scheduleStaleCacheCheck()
 
   // ── 阶段 1：正常初始化（缓存状态健康 或 已清理后重新加载）──
   // 打印一次 post-reload 的存储状态，方便确认清理效果
   if (sessionStorage.getItem(CLAUDE_CACHE_CLEAR_FLAG)) {
     console.log(`${LOG_PREFIX} Post-reload init (cache was cleared in previous load)`)
-    dumpStorage('POST-RELOAD')
+    // 延迟一点等 Claude 重新初始化完再 dump
+    setTimeout(() => dumpStorage('POST-RELOAD'), 2000)
   }
   installMenuHeightPatch()
   const adapter = createClaudeAdapter(await loadSelectorOverrides('claude'))
