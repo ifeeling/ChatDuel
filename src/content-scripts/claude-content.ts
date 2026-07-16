@@ -2,6 +2,10 @@ import { createClaudeAdapter } from '../adapters/claude/adapter'
 import type { SwToContent, ContentToSw } from '../shared/messages'
 import type { AIPlatform } from '../types'
 import { loadSelectorOverrides } from './selector-overrides'
+import selectorsJson from '../adapters/claude/selectors.json'
+
+// selectors.json 是「最佳猜测」，以下诊断用于在实页确认每个选择器是否命中。
+const CLAUDE_SELECTORS = selectorsJson.selectors as Record<string, string>
 
 // ─── Claude iframe "Unsupported model" 修复 ──────────────────────────
 //
@@ -281,6 +285,33 @@ function installMenuHeightPatch(): void {
   document.documentElement.appendChild(style)
 }
 
+// ── selectors.json 实页诊断 ──────────────────────────────────────────
+//
+// selectors.json 是「最佳猜测」，需要在真实 Claude 页面验证每个选择器是否命中。
+// 实页里打开 DevTools 控制台即可看到 [DIAG-SELECTORS] 日志，用于回填真实选择器。
+
+const SELECTOR_DIAG_FLAG = 'chatduel-claude-selector-diag-done'
+
+function dumpSelectorDiagnostics(): void {
+  if (sessionStorage.getItem(SELECTOR_DIAG_FLAG)) return
+  sessionStorage.setItem(SELECTOR_DIAG_FLAG, '1')
+
+  const rows: string[] = []
+  for (const [key, sel] of Object.entries(CLAUDE_SELECTORS)) {
+    const matches = document.querySelectorAll(sel)
+    const count = matches.length
+    let sample = ''
+    if (count > 0) {
+      const first = matches[0] as HTMLElement
+      sample = (first.textContent ?? '').slice(0, 40).replace(/\s+/g, ' ')
+    }
+    const status = count > 0 ? `OK(${count})` : 'MISSING'
+    rows.push(`  ${key.padEnd(14)} ${status.padEnd(9)} sel="${sel}"${sample ? ` sample="${sample}"` : ''}`)
+  }
+  console.log(`${LOG_PREFIX} [DIAG-SELECTORS] selectors.json hit check:\n` + rows.join('\n'))
+  console.log(`${LOG_PREFIX} [DIAG-SELECTORS] 说明：MISSING 的选择器需要按真实 Claude DOM 回填到 src/adapters/claude/selectors.json`)
+}
+
 // ── 主入口 ───────────────────────────────────────────────────────────
 
 async function boot() {
@@ -307,6 +338,9 @@ async function boot() {
   }
 
   const adapter = createClaudeAdapter(await loadSelectorOverrides('claude'))
+
+  // 延迟 ~3s 等 Claude 页面渲染完，再诊断 selectors.json 命中情况
+  setTimeout(dumpSelectorDiagnostics, 3000)
 
   adapter.onStreamEvent((event) => {
     const msg: ContentToSw = { type: 'stream-event', event }
