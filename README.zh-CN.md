@@ -8,7 +8,7 @@ Chrome 扩展，用来在一个页面里同时对比多个 AI 的回答。它不
 ## 支持的 AI
 
 - ChatGPT
-- Claude（通过官方网页嵌入）
+- Claude
 - Gemini
 - 豆包（Doubao）
 - DeepSeek

@@ -8,7 +8,7 @@ A Chrome extension that lets you compare answers from multiple AIs side by side 
 ## Supported AIs
 
 - ChatGPT
-- Claude (embedded via its official web UI)
+- Claude
 - Gemini
 - Doubao (豆包)
 - DeepSeek
