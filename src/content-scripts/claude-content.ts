@@ -24,7 +24,7 @@ const CLAUDE_CACHE_CLEAR_FLAG = 'aichatroom-claude-cache-cleared'
 const LOG_PREFIX = '[ChatDuel Claude]'
 
 /**
- * 全量 dump 当前 origin 的 localStorage / sessionStorage / IndexedDB 到控制台。
+ * 全量 dump 当前 origin 的 localStorage / sessionStorage / IndexedDB / Cookies 到控制台。
  * 用于诊断 iframe 存储分区隔离问题——用户可以在父页 DevTools 里看到这些日志。
  */
 function dumpStorage(label: string): void {
@@ -49,8 +49,66 @@ function dumpStorage(label: string): void {
     } catch { /* 某些 key 可能无法读取 */ }
   }
 
+  // Dump Cookies（只能看到 non-httpOnly 的；httpOnly 的需要 DevTools Application 面板确认）
+  try {
+    const cookies = document.cookie
+    if (cookies) {
+      const cookiePairs = cookies.split(';').map(c => c.trim())
+      console.log(`${LOG_PREFIX} [DIAG-${label}] Cookies (${cookiePairs.length}, non-httpOnly only):`, cookiePairs)
+    } else {
+      console.log(`${LOG_PREFIX} [DIAG-${label}] Cookies: (empty / none accessible via JS)`)
+    }
+  } catch {
+    console.log(`${LOG_PREFIX} [DIAG-${label}] Cookies: (cannot read)`)
+  }
+
   // 异步 dump IndexedDB（不阻塞主流程）
   dumpIndexedDB(label)
+}
+
+/**
+ * 安装 fetch/XHR 拦截器，记录 Claude 的模型相关 API 响应。
+ * 用于判断 "Unsupported model" 是客户端缓存还是服务端返回的。
+ */
+function installNetworkDiagnostic(): void {
+  // 拦截 fetch
+  const origFetch = window.fetch
+  window.fetch = function (...args: Parameters<typeof fetch>) {
+    const input = args[0]
+    const url = typeof input === 'string' ? input : (input instanceof Request ? input.url : '')
+    const result = origFetch.apply(this, args)
+    result.then((response) => {
+      // 只记录可能包含模型信息的 API
+      if (/model|config|organization|settings|session|chat/i.test(url)) {
+        const clone = response.clone()
+        clone.text().then((body) => {
+          const truncated = body.length > 500 ? body.slice(0, 500) + `...(${body.length} total)` : body
+          console.log(`${LOG_PREFIX} [NET] ${response.status} ${url}`, truncated)
+        }).catch(() => {})
+      }
+    }).catch(() => {})
+    return result
+  }
+
+  // 拦截 XHR
+  const origOpen = XMLHttpRequest.prototype.open
+  const origSend = XMLHttpRequest.prototype.send
+  ;(XMLHttpRequest.prototype as any).open = function (this: XMLHttpRequest, ...args: [string, string | URL, ...any[]]) {
+    ;(this as any)._diagUrl = String(args[1] ?? '')
+    return (origOpen as any).apply(this, args)
+  }
+  XMLHttpRequest.prototype.send = function (...args: Parameters<typeof origSend>) {
+    const xhr = this
+    const url = (xhr as any)._diagUrl ?? ''
+    xhr.addEventListener('load', () => {
+      if (/model|config|organization|settings|session|chat/i.test(url)) {
+        const body = xhr.responseText ?? ''
+        const truncated = body.length > 500 ? body.slice(0, 500) + `...(${body.length} total)` : body
+        console.log(`${LOG_PREFIX} [NET-XHR] ${xhr.status} ${url}`, truncated)
+      }
+    })
+    return origSend.apply(this, args)
+  }
 }
 
 /**
@@ -308,6 +366,9 @@ async function boot() {
   // 不再同步阻塞 boot；改为后台调度，等页面渲染完自动检查。
   // 如果检测到过期状态，会清缓存并 reload（本次 boot 自然终止）。
   scheduleStaleCacheCheck()
+
+  // ── 网络诊断：拦截 fetch/XHR，记录模型相关 API 响应 ──
+  installNetworkDiagnostic()
 
   // ── 阶段 1：正常初始化（缓存状态健康 或 已清理后重新加载）──
   // 打印一次 post-reload 的存储状态，方便确认清理效果
