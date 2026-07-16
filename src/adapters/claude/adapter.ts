@@ -145,18 +145,25 @@ async function pressEnterToSend(): Promise<void> {
   box.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true, cancelable: true }))
 }
 
-// 回答区降噪：去掉工具进度文案和纯图标行。
+// 回答区降噪：去掉工具进度文案、纯图标行以及行尾的图标字体残留。
 function cleanClaudeText(raw: string): string {
   const lines = raw.split('\n')
-  const cleaned = lines.filter((line) => {
-    const t = line.trim()
-    if (!t) return false
-    if (/^Fetching\s+[\w\s-]*\s+data$/i.test(t)) return false
-    if (/^Searched the web(, used a tool)?$/i.test(t)) return false
-    // 纯图标/符号行：没有任何字母数字
-    if (/^[\s\p{So}\p{P}\p{S}]+$/u.test(t)) return false
-    return true
-  })
+  const cleaned = lines
+    .filter((line) => {
+      const t = line.trim()
+      if (!t) return false
+      if (/^Fetching\s+[\w\s-]*\s+data$/i.test(t)) return false
+      if (/^Searched the web(, used a tool)?$/i.test(t)) return false
+      // 纯图标/符号行：没有任何字母数字
+      if (/^[\s\p{So}\p{P}\p{S}]+$/u.test(t)) return false
+      return true
+    })
+    .map((line) => {
+      // 去掉行尾由图标字体(PUA)或方括号等按钮图标组成的残留尾巴。
+      // 保留常见句末标点（。！？.!?…）不受影响；代码中的 arr[0] 也不会被误删，
+      // 因为正则只匹配从行尾开始连续都是特殊符号/空白的部分。
+      return line.replace(/[\s\[\]\uE000-\uF8FF\u{F0000}-\u{FFFFD}\u{100000}-\u{10FFFD}]+$/gu, '')
+    })
   return cleaned.join('\n').trim()
 }
 
