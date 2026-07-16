@@ -24,7 +24,7 @@ const CLAUDE_CACHE_CLEAR_FLAG = 'aichatroom-claude-cache-cleared'
 const LOG_PREFIX = '[ChatDuel Claude]'
 
 /**
- * 全量 dump 当前 origin 的 localStorage / sessionStorage 到控制台。
+ * 全量 dump 当前 origin 的 localStorage / sessionStorage / IndexedDB 到控制台。
  * 用于诊断 iframe 存储分区隔离问题——用户可以在父页 DevTools 里看到这些日志。
  */
 function dumpStorage(label: string): void {
@@ -48,29 +48,75 @@ function dumpStorage(label: string): void {
       console.log(`${LOG_PREFIX}   LS ${k} = ${v.length > 120 ? v.slice(0, 120) + '...(' + v.length + 'chars)' : v}`)
     } catch { /* 某些 key 可能无法读取 */ }
   }
+
+  // 异步 dump IndexedDB（不阻塞主流程）
+  dumpIndexedDB(label)
 }
 
 /**
- * 清除 Claude 相关的 localStorage / sessionStorage 缓存 key，
+ * 清除 Claude 相关的 localStorage / sessionStorage / IndexedDB 缓存，
  * 返回实际清除了多少条。
  *
- * 第二参数 aggressive=true 时，清除**全部** localStorage 和 sessionStorage
- * （iframe 分区是隔离的，Claude 会从服务端重新初始化，所以全清是安全的）。
+ * 第二参数 aggressive=true 时，清除**全部**存储（LS / SS / IDB），
+ * 并清除 Cache API 中 claude.ai origin 下的缓存。
+ * （iframe 分区是隔离的，Claude 会从服务端重新初始化，所以全清是安全的。）
  */
-function clearClaudeModelCache(aggressive = false): number {
+async function clearClaudeModelCache(aggressive = false): Promise<number> {
   let cleared = 0
 
   if (aggressive) {
-    // 激进模式：清空整个 iframe 分区的所有存储（最干净）
+    // ── 1. 清 localStorage / sessionStorage ──
     const lsCount = localStorage.length
     const ssCount = sessionStorage.length
     localStorage.clear()
     sessionStorage.clear()
+    cleared += lsCount + ssCount
     console.log(`${LOG_PREFIX} Aggressive clear: wiped ${lsCount} LS + ${ssCount} SS entries`)
-    return lsCount + ssCount
+
+    // ── 2. 清 IndexedDB（这是关键！Claude 很可能把模型状态存在这里）──
+    try {
+      const dbs = await indexedDB.databases()
+      const dbNames = dbs.map((d) => d.name).filter((n): n is string => !!n)
+      console.log(`${LOG_PREFIX} Found ${dbNames.length} IndexedDB databases to delete:`, dbNames)
+      await Promise.allSettled(
+        dbNames.map((name) =>
+          new Promise<void>((resolve) => {
+            const req = indexedDB.deleteDatabase(name)
+            req.onsuccess = () => { console.log(`${LOG_PREFIX} Deleted IDB: ${name}`); resolve() }
+            req.onerror = () => { console.warn(`${LOG_PREFIX} Failed to delete IDB: ${name}`); resolve() }
+            req.onblocked = () => { console.warn(`${LOG_PREFIX} IDB delete blocked: ${name}`); resolve() }
+          })
+        )
+      )
+      cleared += dbNames.length
+    } catch (e) {
+      console.warn(`${LOG_PREFIX} Error clearing IndexedDB:`, e)
+    }
+
+    // ── 3. 清 Cache API（同源缓存）──
+    try {
+      if ('caches' in window) {
+        const names = await caches.keys()
+        const claudeCacheNames = names.filter(n =>
+          n.includes('claude') || n.includes('anthropic') || n.includes('workbox')
+        )
+        for (const name of claudeCacheNames) {
+          await caches.delete(name)
+          cleared++
+          console.log(`${LOG_PREFIX} Deleted cache: ${name}`)
+        }
+        if (claudeCacheNames.length === 0 && names.length > 0) {
+          console.log(`${LOG_PREFIX} Cache names (none deleted):`, names)
+        }
+      }
+    } catch (e) {
+      console.warn(`${LOG_PREFIX} Error clearing caches:`, e)
+    }
+
+    return cleared
   }
 
-  // 保守模式：只清已知模式的 key
+  // 保守模式：只清已知模式的 key（仅 localStorage/sessionStorage）
   const patterns = [
     /^LSS-model-selector/i,
     /^LSS-model-picker/i,
@@ -107,6 +153,18 @@ function clearClaudeModelCache(aggressive = false): number {
   }
 
   return cleared
+}
+
+/**
+ * 异步版：dump IndexedDB 数据库名称列表（诊断用）
+ */
+async function dumpIndexedDB(label: string): Promise<void> {
+  try {
+    const dbs = await indexedDB.databases()
+    console.log(`${LOG_PREFIX} [DIAG-${label}] IndexedDB databases (${dbs.length}):`, dbs.map(d => d.name))
+  } catch (e) {
+    console.warn(`${LOG_PREFIX} [DIAG-${label}] Cannot list IndexedDB:`, e)
+  }
 }
 
 /**
@@ -162,9 +220,11 @@ function scheduleStaleCacheCheck(): void {
   let attempts = 0
 
   /**
-   * 执行一次检测。返回 true 表示已触发清理+刷新（后续不再执行）。
+   * 执行一次检测。返回 Promise<boolean>：
+   *   true  = 已触发清理+刷新（后续不再执行）
+   *   false = 未检测到过期（继续重试）
    */
-  function attempt(): boolean {
+  async function attempt(): Promise<boolean> {
     if (settled) return true
 
     // body 还太短 → 页面还没渲染完，继续等
@@ -182,11 +242,10 @@ function scheduleStaleCacheCheck(): void {
       return false
     }
 
-    // ── 检测到过期！执行激进清理 ──
+    // ── 检测到过期！执行激进清理（含 IndexedDB + Cache API）──
     settled = true
-    const clearedCount = clearClaudeModelCache(/* aggressive */ true)
-    console.log(`${LOG_PREFIX} STALE DETECTED at attempt #${attempts}. Cleared ${clearedCount} keys (aggressive). Reloading...`)
-    dumpStorage('AFTER-CLEAR')
+    const clearedCount = await clearClaudeModelCache(/* aggressive */ true)
+    console.log(`${LOG_PREFIX} STALE DETECTED at attempt #${attempts}. Cleared ${clearedCount} entries (aggressive, incl IDB). Reloading...`)
     sessionStorage.setItem(CLAUDE_CACHE_CLEAR_FLAG, '1')
     location.reload()
     return true
@@ -195,7 +254,7 @@ function scheduleStaleCacheCheck(): void {
   // 策略 A：MutationObserver — 当 DOM 有实质变化时触发检测
   const observer = new MutationObserver(() => {
     if (settled) { observer.disconnect(); return }
-    if (attempt()) observer.disconnect()
+    void attempt().then((done) => { if (done) observer.disconnect() })
   })
   observer.observe(document.body ?? document.documentElement, {
     childList: true,
@@ -216,8 +275,7 @@ function scheduleStaleCacheCheck(): void {
     attempts++
     const delay = BASE_DELAY_MS * attempts
     setTimeout(() => {
-      if (attempt()) { observer.disconnect(); return }
-      scheduleNext()
+      void attempt().then((done) => { if (done) { observer.disconnect(); return } scheduleNext() })
     }, delay)
   }
 
