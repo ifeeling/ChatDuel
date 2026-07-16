@@ -21,13 +21,56 @@ import { loadSelectorOverrides } from './selector-overrides'
 //   claude-*                      → Claude 会话/模型相关
 
 const CLAUDE_CACHE_CLEAR_FLAG = 'aichatroom-claude-cache-cleared'
+const LOG_PREFIX = '[ChatDuel Claude]'
+
+/**
+ * 全量 dump 当前 origin 的 localStorage / sessionStorage 到控制台。
+ * 用于诊断 iframe 存储分区隔离问题——用户可以在父页 DevTools 里看到这些日志。
+ */
+function dumpStorage(label: string): void {
+  const lsKeys: string[] = []
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i)
+    if (k) lsKeys.push(k)
+  }
+  const ssKeys: string[] = []
+  for (let i = 0; i < sessionStorage.length; i++) {
+    const k = sessionStorage.key(i)
+    if (k) ssKeys.push(k)
+  }
+  console.log(`${LOG_PREFIX} [DIAG-${label}] localStorage keys (${lsKeys.length}):`, lsKeys)
+  console.log(`${LOG_PREFIX} [DIAG-${label}] sessionStorage keys (${ssKeys.length}):`, ssKeys)
+
+  // 对每个 localStorage key 打印截断的值（方便判断是否是过期模型配置）
+  for (const k of lsKeys) {
+    try {
+      const v = localStorage.getItem(k) ?? ''
+      console.log(`${LOG_PREFIX}   LS ${k} = ${v.length > 120 ? v.slice(0, 120) + '...(' + v.length + 'chars)' : v}`)
+    } catch { /* 某些 key 可能无法读取 */ }
+  }
+}
 
 /**
  * 清除 Claude 相关的 localStorage / sessionStorage 缓存 key，
  * 返回实际清除了多少条。
+ *
+ * 第二参数 aggressive=true 时，清除**全部** localStorage 和 sessionStorage
+ * （iframe 分区是隔离的，Claude 会从服务端重新初始化，所以全清是安全的）。
  */
-function clearClaudeModelCache(): number {
+function clearClaudeModelCache(aggressive = false): number {
   let cleared = 0
+
+  if (aggressive) {
+    // 激进模式：清空整个 iframe 分区的所有存储（最干净）
+    const lsCount = localStorage.length
+    const ssCount = sessionStorage.length
+    localStorage.clear()
+    sessionStorage.clear()
+    console.log(`${LOG_PREFIX} Aggressive clear: wiped ${lsCount} LS + ${ssCount} SS entries`)
+    return lsCount + ssCount
+  }
+
+  // 保守模式：只清已知模式的 key
   const patterns = [
     /^LSS-model-selector/i,
     /^LSS-model-picker/i,
@@ -114,11 +157,20 @@ function tryClearStaleCache(): boolean {
   // 如果页面还在初始加载中（body 几乎为空），先不判断
   if ((document.body?.textContent?.length ?? 0) < 50) return false
 
-  if (!detectStaleModelState()) return false
+  // ── 诊断：先 dump 当前存储状态（无论是否检测到过期都要 dump）──
+  dumpStorage('BEFORE')
 
-  // 检测到过期状态：清缓存 → 标记 → 强制刷新
-  const clearedCount = clearClaudeModelCache()
-  console.log(`[ChatDuel Claude] Stale model state detected, cleared ${clearedCount} cache keys, reloading...`)
+  if (!detectStaleModelState()) {
+    console.log(`${LOG_PREFIX} Model state looks healthy (no "Unsupported model" detected). Keeping cache as-is.`)
+    return false
+  }
+
+  // 检测到过期状态：用激进模式清空整个 iframe 分区的所有存储
+  const clearedCount = clearClaudeModelCache(/* aggressive */ true)
+  console.log(`${LOG_PREFIX} Stale model state DETECTED. Cleared ${clearedCount} cache keys (aggressive mode). Reloading iframe...`)
+
+  // 清完后也 dump 一次确认干净了
+  dumpStorage('AFTER-CLEAR')
 
   sessionStorage.setItem(CLAUDE_CACHE_CLEAR_FLAG, '1')
   location.reload()
@@ -155,6 +207,11 @@ async function boot() {
   }
 
   // ── 阶段 1：正常初始化（缓存状态健康 或 已清理后重新加载）──
+  // 打印一次 post-reload 的存储状态，方便确认清理效果
+  if (sessionStorage.getItem(CLAUDE_CACHE_CLEAR_FLAG)) {
+    console.log(`${LOG_PREFIX} Post-reload init (cache was cleared in previous load)`)
+    dumpStorage('POST-RELOAD')
+  }
   installMenuHeightPatch()
   const adapter = createClaudeAdapter(await loadSelectorOverrides('claude'))
 
