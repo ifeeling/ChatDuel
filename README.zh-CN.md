@@ -41,13 +41,33 @@ Chrome 扩展，用来在一个页面里同时对比多个 AI 的回答。它不
 
 扩展页面左下角的设置按钮里有"使用帮助"页签，里面说明了发送、附件、面板管理、转发、总结、记录、官网会话等入口。"显示站点"页签里可以切换界面语言和重新检测状态；"提示词"页签用下拉框选择要编辑的模板，避免多个长文本框同时展开。以后新增功能时，也建议同步更新这里和本 README。
 
+## 免责声明与限制
+
+- **不是 API 聚合器**：ChatDuel 不需要也不使用任何 API Key，它驱动的是你已经登录的官方网页。
+- **无关联关系**：ChatDuel 是一个独立的开源项目，与 OpenAI、Google、Anthropic、字节跳动、DeepSeek 等任何 AI 厂商均无隶属、授权或背书关系。
+- **兼容性说明**：ChatDuel 依赖各 AI 厂商的官方网页界面，厂商未来的界面更新、DOM 改动、登录流程变更或内容安全策略（CSP）调整，都可能导致扩展暂时失效。我们会随反馈尽快修复，但无法保证不间断运行。
+
+## 权限说明
+
+ChatDuel 只申请必要的权限：
+
+| 权限 | 用途 |
+| --- | --- |
+| `storage` | 本地保存你的记录、官网会话和设置。 |
+| `unlimitedStorage` | 允许保存较长的对话历史和较大附件，避免触及浏览器默认存储上限。 |
+| `tabs` | 识别当前打开了哪个 AI 站点并驱动对应面板。 |
+| `declarativeNetRequest` | 用于让扩展在官方站点上正常工作（例如针对特定平台做 cookie / 请求头调整）。 |
+| `alarms` | 定期刷新远程选择器配置。 |
+
+主机权限仅限各 AI 官网，外加 `https://chatduel.ifeeling.app/*`（项目自己的官网，用于拉取选择器更新），不申请 `<all_urls>`。
+
 ## 开发
 
 ```bash
 npm install
 npm run dev      # 启动 vite dev server，载入 dist/ 到 chrome://extensions
-npm test         # 单元测试
-npm run test:e2e # E2E 测试
+npm test         # 单元测试（不在公开仓库内，详见 CONTRIBUTING.md）
+npm run test:e2e # E2E 测试（不在公开仓库内）
 npm run typecheck
 ```
 
@@ -61,3 +81,5 @@ npm run typecheck
 ## 许可证
 
 基于 [MIT License](LICENSE) 发布。
+
+相关文档：[隐私政策](PRIVACY.md) · [贡献指南](CONTRIBUTING.md) · [安全政策](SECURITY.md) · [更新日志](CHANGELOG.md)

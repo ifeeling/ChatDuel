@@ -40,13 +40,33 @@ In short: to look back at a past AI answer, use **Records**; to return to an old
 
 The settings button (bottom-left of the extension) has a "Usage help" tab explaining sending, attachments, panel management, forwarding, summarizing, records, and official-site sessions. The "Display" tab switches the UI language and re-detects status; the "Prompts" tab uses a dropdown to pick the template to edit. When adding features later, update both this help and this README.
 
+## Disclaimer & Limitations
+
+- **Not an API aggregator.** ChatDuel does not require or use any API keys. It drives the official web UIs you are already logged into.
+- **No affiliation.** ChatDuel is an independent open-source project and is not affiliated with, authorized, or endorsed by OpenAI, Google, Anthropic, ByteDance, DeepSeek, or any other AI provider.
+- **Compatibility notice.** Because ChatDuel relies on the official web interfaces of third-party AI providers, future updates, DOM changes, login-flow changes, or Content Security Policy (CSP) adjustments by those providers may temporarily affect or break compatibility. We fix breakages as they are reported, but cannot guarantee uninterrupted operation.
+
+## Permissions
+
+ChatDuel requests only the permissions it needs:
+
+| Permission | Why |
+| --- | --- |
+| `storage` | Save your records, official-site sessions, and settings locally. |
+| `unlimitedStorage` | Allow large conversation histories and attachments to be stored without hitting the browser's standard storage quota. |
+| `tabs` | Detect which AI site is open and drive the correct panel. |
+| `declarativeNetRequest` | Keep the extension working with the official sites (e.g. cookie/header adjustments for specific platforms). |
+| `alarms` | Periodically refresh the remote selector configuration. |
+
+Host permissions are limited to the official AI sites plus `https://chatduel.ifeeling.app/*` (the project's own website, used to fetch selector updates). No `<all_urls>` is requested.
+
 ## Development
 
 ```bash
 npm install
 npm run dev        # start the vite dev server; load dist/ in chrome://extensions
-npm test           # unit tests
-npm run test:e2e   # e2e tests
+npm test           # unit tests (not included in the public repo — see CONTRIBUTING.md)
+npm run test:e2e   # e2e tests (not included in the public repo)
 npm run typecheck
 ```
 
@@ -60,3 +80,5 @@ npm run typecheck
 ## License
 
 Released under the [MIT License](LICENSE).
+
+See also: [Privacy Policy](PRIVACY.md) · [Contributing](CONTRIBUTING.md) · [Security Policy](SECURITY.md) · [Changelog](CHANGELOG.md)
