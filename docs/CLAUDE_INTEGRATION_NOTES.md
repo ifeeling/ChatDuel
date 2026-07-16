@@ -43,8 +43,8 @@
 
 - 平台元数据：`AIPlatform` 联合类型、`SUPPORTED_PLATFORMS`、`AI_PLATFORMS` 均含 `claude`（icon ✺，url `https://claude.ai/`，能力全开）。
 - 配置链路：manifest host permission + content script 入口、vite content script build input、DNR iframe 嵌入规则（`RULE_IDS.claude = 3`）、SW 官方 tab URL 前缀、远程 selector 白名单、会话 URL 识别、i18n、user-settings（默认关闭）、chat.html 面板与设置行。
-- 实现：`src/adapters/claude/adapter.ts`、`src/adapters/claude/selectors.json`（Gemini 模板最佳猜测，待实页回填）、`src/content-scripts/claude-content.ts`（lastActiveOrg cookie 修复 + iframe 模型菜单高度补丁 + 缓存清理兜底）。
-- 测试：`tests/unit/claude-adapter.test.ts`（5 项）、以及随新平台修正的 ai-platforms / at-parser / dnr-rules / chat-html / user-settings 单测。
+- 实现：`src/adapters/claude/adapter.ts`、`src/adapters/claude/selectors.json`（已据实页 DOM 回填）、`src/content-scripts/claude-content.ts`（lastActiveOrg cookie 修复 + iframe 模型菜单高度补丁 + 缓存清理兜底）。
+- 测试：`tests/unit/claude-adapter.test.ts`（现 8 项，含本次新增 3 项）、以及随新平台修正的 ai-platforms / at-parser / dnr-rules / chat-html / user-settings 单测。
 
 ---
 
@@ -54,20 +54,47 @@
 |---|---|---|
 | iframe 模型菜单列出并切换可用模型 | ✅ 已解决 | 2026-07-16 实页确认 |
 | 基础链路（iframe 加载 / content script ready） | ✅ 代码保证 | 模型菜单通了即证明 |
-| 发送问题（写入 + 触发发送） | ⏳ 待实页 | adapter.sendMessage 有 Enter 兜底 + 残留检测 |
-| 抓取回答（getLastResponse + 降噪） | ⏳ 待实页 | selectors.json 为最佳猜测 |
-| 历史记录保存正常 | ⏳ 待验证 | 见下文"后续开发" |
-| 附件上传（图片） | ⏳ 待验证 | attachImageToFileInput 逻辑待实页确认 |
-| selectors.json 真实 Claude DOM 回填 | ⏳ 待回填 | Gemini 模板猜测，需实页替换 |
+| 发送问题（写入 + 触发发送） | ✅ 已验证 | adapter.sendMessage 有 Enter 兜底 + 残留检测 |
+| 抓取回答（getLastResponse + 降噪） | ✅ 已解决 | 见下方「2026-07-16 两次修复」 |
+| 历史记录保存正常 | ✅ 已解决 | 见下方「2026-07-16 两次修复」 |
+| 附件上传（图片） | ✅ 已验证 | attachImageToFileInput 逻辑实页确认可用 |
+| selectors.json 真实 Claude DOM 回填 | ✅ 已完成 | data-last-message / Claude responded 前缀方案 |
+
+---
+
+## 2026-07-16 两次修复（实页验证后完善）
+
+### 修复 1：历史记录不写入（commit b0643fd）
+
+**现象**：Claude 能对话、能上传附件，但「记录」里没有 Claude 的回复。
+
+**根因**：`getLatestResponseText()` 旧版用 `cleaned.length > best.length`「选最长文本」挑回答——多轮对话时误把更长的**旧回答**当当前回答抓取，抓取文本 == 发送前基线(baseline)，被判定「无新内容」而拒绝写记录；单轮也可能误抓更长的用户提问。
+
+**实页 DOM（用户在 DevTools 跑诊断脚本确认）**：
+- 聊天容器 `[role="article"][aria-label="chat messages"]`，每条消息 `[data-rs-index]`，最新消息 `[data-last-message="true"]`
+- 每条消息内含 `[role="article"][aria-label="Message X of N"]`
+- `justify-end` **不能**区分用户/AI（实测全是 false）；改用 textContent 前缀：`Claude responded:` = AI，`You said:` = 用户（Claude 为屏幕阅读器注入，稳定）
+
+**修复**：
+- `findLatestAiResponse()`：优先 `[data-last-message='true']` 取最新消息；若它是用户提问则倒序遍历所有消息取最新 AI 回复
+- `isAiResponseArticle()` / `stripMessagePrefix()`：用前缀区分 AI/用户并去掉 `Claude responded:` 前缀
+- `selectors.json.lastResponse` 优先命中 `main [data-last-message='true'] [role='article']`
+- 所有抓取路径统一收口 `cleanClaudeText` 降噪
+
+### 修复 2：回答末尾图标残留（commit fa62584）
+
+**现象**：记录里回答末尾偶发 `[[[[[[[]` 等多余字符。
+
+**根因**：消息内操作按钮/图标字体的文本被整个 `[role="article"]` 的 textContent 一并抓取。
+
+**修复**：`cleanClaudeText` 新增行尾清理，去掉连续的 `[`、`]`、空白、PUA 图标字体字符，保留常见句末标点；代码中的 `arr[0]` 等不会被误删。
 
 ---
 
 ## 后续开发待办（进行中）
 
-1. **历史记录保存**：确认 ChatDuel 的 session/conversation store 能正常保存 Claude 的问答（含转写摘要）。核查 `getConversationState()` / `getLastResponse()` 在真实 Claude 页面返回是否正确。
-2. **附件上传**：实页验证 `attachImageToFileInput` 在真实 Claude 页面能找到 `fileInput`、注入文件、等待上传就绪。
-3. **selectors.json 回填**：用真实 Claude DOM 选择器覆盖 `inputBox` / `sendButton` / `messageContainer` / `lastResponse` / `userMessage` / `fileInput` 等字段，并补 `tests/unit/selectors-schema.test.ts`。
-4. 以上全通过后，按収尾清单走版本号 bump + GitHub 打包。
+1. 若 Claude 网页改版导致抓取失效，可据 `[DIAG-DOM]` 日志重新核对 `[data-last-message='true']` 与 `Claude responded:` 前缀是否仍成立。
+2. 官方标签页兜底方案已不需要（cookie 方案已解决模型菜单问题），仅作历史参考保留在 `docs/research/`。
 
 ---
 

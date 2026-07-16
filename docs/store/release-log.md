@@ -31,6 +31,28 @@
 - 截图、隐私政策、审核备注是否需要更新。
 - 下次发布需要特别注意的事项。
 
+## 2026-07-16 - v0.4.13
+
+### 发布范围
+
+- GitHub source version: `v0.4.13`
+- GitHub compare source: `https://github.com/ifeeling/ChatDuel/compare/v0.4.12...v0.4.13`
+- Chrome / Edge package version: `0.4.13`
+- Manifest version: `0.4.13`
+- Package.json version: `0.4.13`
+
+### 本次代码变化
+
+- **Claude 历史记录修复（commit b0643fd）**：`getLatestResponseText()` 旧版用「选最长文本」挑回答，多轮对话时误把更长的旧回答当当前回答抓取，导致抓取文本 == 发送前基线被判「无新内容」而**不写入记录**。改为用 Claude 官方 `[data-last-message='true']` 标记精确取最新消息；若标在用户提问上（AI 尚未回答）则倒序遍历所有消息取最新 AI 回复；用 `Claude responded:` / `You said:` 文本前缀区分 AI 与用户消息（实页验证 `justify-end` 不可区分），并去掉前缀。`selectors.json` 的 `lastResponse` 改为优先命中 `main [data-last-message='true'] [role='article']`。新增 3 个单测覆盖：最新是 AI 回复 / 最新是用户提问 / 旧回复更长仍取最新。
+- **Claude 图标残留清理（commit fa62584）**：记录里回答末尾偶发 `[[[[[[[]` 等多余字符（消息内操作按钮/图标字体被 textContent 一并抓取）。`cleanClaudeText` 新增行尾清理：去掉连续的 `[`、`]`、空白、PUA 图标字体字符，保留常见句末标点；代码中的 `arr[0]` 等不会被误删。
+
+### 验证结果
+
+- 284 tests passed / 33 test files passed
+- `npm run build` 成功
+
+---
+
 ## 2026-07-14 - v0.4.12
 
 ### 发布范围
