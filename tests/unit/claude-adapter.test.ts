@@ -62,6 +62,33 @@ describe('Claude 适配器：回答抓取与降噪', () => {
   })
 })
 
+describe('Claude 适配器：会话状态机（选择器缺失兜底）', () => {
+  it('reports finished when a plain response block exists and no stop button is present', () => {
+    const main = document.createElement('main')
+    const block = document.createElement('div')
+    block.className = 'some-block'
+    block.textContent = 'Claude finished its answer here.'
+    main.appendChild(block)
+    document.body.appendChild(main)
+
+    const adapter = createClaudeAdapter()
+    return adapter.getConversationState().then((state) => {
+      expect(state.status).toBe('finished')
+      expect(state.lastResponse).toContain('Claude finished its answer here.')
+    })
+  })
+
+  it('reports idle (not finished) when there is no response text at all', () => {
+    const main = document.createElement('main')
+    document.body.appendChild(main)
+
+    const adapter = createClaudeAdapter()
+    return adapter.getConversationState().then((state) => {
+      expect(state.status).toBe('idle')
+    })
+  })
+})
+
 describe('Claude 适配器：发送兜底', () => {
   it('retries with Enter when clicking Claude send leaves the prompt in the composer', () => {
     const box = document.createElement('div')

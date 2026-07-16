@@ -172,6 +172,79 @@ function findClaudeRespondedBlock(): string | null {
   return null
 }
 
+// ── 选择器无关的 DOM 深度遍历兜底 ───────────────────────────────────
+//
+// 当 selectors.json 的选择器全部 MISS（当前 Claude 实页就是这种情况），
+// 需要走"暴力"路线：在 main / body 里找到最像"AI 回答"的文本块。
+//
+// 策略（按优先级）：
+//   1. 找包含 "Thought for" 或以 "Claude" 开头的消息容器（Claude 特有标记）
+//   2. 在 main 中找最后一个 textContent 足够长（>30 字符）的非输入区容器
+//   3. 找 role="article" 或含 assistant/ai 关键词的 aria-label 元素
+//   4. 兜底：取 main 内倒数第二个有实质内容的子元素
+
+function findResponseByDomWalk(): string | null {
+  const root = document.querySelector('main') || document.body
+  if (!root) return null
+
+  // 策略 1：找 Claude 特有标记（"Thought for Ns" 前缀、Claude 标签）
+  const allElements = Array.from(root.querySelectorAll<HTMLElement>('*'))
+  for (let i = allElements.length - 1; i >= 0; i--) {
+    const el = allElements[i]
+    const text = el.textContent?.trim() ?? ''
+    // 跳过太短或太大的（大的是 root 容器本身）
+    if (text.length < 30 || text.length > 10000) continue
+    // "Thought for Xs" 是 Claude 思考过程的前缀，说明这是回答区
+    if (/^Thought for \d+[sm]/.test(text)) {
+      const cleaned = cleanClaudeText(text)
+      if (cleaned.length > 10) return cleaned
+    }
+  }
+
+  // 策略 2：找 data-testid 含 assistant / message 的元素
+  for (const sel of [
+    "[data-testid*='assistant']",
+    "[data-testid*='message']",
+    "[data-testid*='response']",
+    "article[role='article']",
+    "[role='presentation'] [class*='message']",
+    "[class*='font-claude-message']",
+  ]) {
+    const nodes = Array.from(root.querySelectorAll<HTMLElement>(sel))
+    if (nodes.length > 0) {
+      const last = nodes[nodes.length - 1]
+      const cleaned = cleanClaudeText(last.textContent ?? '')
+      if (cleaned.length > 10) return cleaned
+    }
+  }
+
+  // 策略 3：找含 AI 回答特征 aria-label 的容器
+  for (const el of allElements) {
+    const label = el.getAttribute('aria-label') || ''
+    if (/response|answer|assistant|claude|ai/i.test(label)) {
+      const cleaned = cleanClaudeText(el.textContent ?? '')
+      if (cleaned.length > 10) return cleaned
+    }
+  }
+
+  // 策略 4：在 main 的直接/间接子元素中，找最后一个够长的文本块
+  // 排除输入框区域（contenteditable / textarea / input）
+  const children = Array.from(root.querySelectorAll<HTMLElement>(':scope > *, :scope > * > *'))
+  for (let i = children.length - 1; i >= 0; i--) {
+    const el = children[i]
+    // 跳过输入相关区域
+    if (el.querySelector('input, textarea, [contenteditable], [data-testid*="chat-input"], [data-testid*="composer"]')) continue
+    if (el.matches('input, textarea, [contenteditable], [role="textbox"]')) continue
+    const text = el.textContent?.trim() ?? ''
+    if (text.replace(/\s/g, '').length > 20) {
+      const cleaned = cleanClaudeText(text)
+      if (cleaned.length > 10) return cleaned
+    }
+  }
+
+  return null
+}
+
 // 从 main 里取最后一个看起来像回答的容器，作为最终兜底。
 function findLastResponseFromMain(): string | null {
   const main = document.querySelector<HTMLElement>('main')
@@ -190,12 +263,19 @@ function findLastResponseFromMain(): string | null {
 
 function getLatestResponseText(): string {
   const candidates: string[] = []
+  // 优先级 1：selectors.json 的显式选择器（如果未来修正后能命中）
   const explicit = document.querySelector<HTMLElement>(DEFAULT_SELECTORS.lastResponse)
   if (explicit?.textContent) candidates.push(explicit.textContent)
+  // 优先级 2："Claude responded:" 文本块兄弟节点
   const marked = findClaudeRespondedBlock()
   if (marked) candidates.push(marked)
+  // 优先级 3：main 内已知标记的最后一个
   const fromMain = findLastResponseFromMain()
   if (fromMain) candidates.push(fromMain)
+  // 优先级 4：选择器无关的 DOM 深度遍历（当前最可靠）
+  const domWalk = findResponseByDomWalk()
+  if (domWalk) candidates.push(domWalk)
+
   let best = ''
   for (const c of candidates) {
     const cleaned = cleanClaudeText(c)
@@ -208,6 +288,17 @@ function hasStopGeneratingButton(): boolean {
   return !!document.querySelector(DEFAULT_SELECTORS.stopButton)
 }
 
+// ── 基于 MutationObserver 的流式状态检测（选择器无关兜底） ─────────
+//
+// 当 stopButton/continueButton 选择器全部 MISS 时，
+// 用「DOM 最后变化时间」判断是否还在流式输出：
+//   - 最近 ~2s 内有 DOM 变化 → streaming
+//   - 超过 ~3s 无变化且有回答文本 → finished
+//   - 无文本 → idle
+
+let lastMutationTimestamp = 0
+let isStreaming = false
+
 export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter {
   const S = mergeSelectorOverrides(DEFAULT_SELECTORS, selectorOverrides)
   let lastEventHandler: ((e: StreamEvent) => void) | null = null
@@ -216,6 +307,8 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
   let pollTimer: ReturnType<typeof setInterval> | null = null
   let continuePollTimer: ReturnType<typeof setInterval> | null = null
   let lastContinueButtonState = false
+  // 追踪上一次轮询时的文本长度，用于检测"文本是否还在增长"
+  let lastPolledTextLength = 0
 
   function q<T extends Element = Element>(sel: string): T | null {
     return document.querySelector<T>(sel)
@@ -229,13 +322,34 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
   function startObserver() {
     observer = new MutationObserver(() => {
       dirty = true
+      lastMutationTimestamp = Date.now()
     })
     observer.observe(document.body, { childList: true, subtree: true, characterData: true })
     pollTimer = setInterval(() => {
-      if (!dirty || !lastEventHandler) return
-      dirty = false
+      if (!lastEventHandler) return
+      const now = Date.now()
       const text = getLatestResponseText()
-      lastEventHandler({ type: 'token', platform: 'claude', text, timestamp: Date.now() })
+      const len = text.length
+
+      // 基于文本增长和 DOM 变化判断流式状态（选择器无关）
+      if (len > lastPolledTextLength && (now - lastMutationTimestamp < 2000)) {
+        if (!isStreaming) {
+          isStreaming = true
+          lastEventHandler({ type: 'start', platform: 'claude', timestamp: now })
+        }
+        dirty = false
+        lastPolledTextLength = len
+        lastEventHandler({ type: 'token', platform: 'claude', text, timestamp: now })
+      } else if (dirty) {
+        // 有 DOM 变化但文本没长（可能在渲染工具调用等非正文内容）
+        dirty = false
+        lastEventHandler({ type: 'token', platform: 'claude', text, timestamp: now })
+      } else if (isStreaming && len > 0 && (now - lastMutationTimestamp > 3000)) {
+        // 超过 3 秒无新 DOM 变化 → 判定流式结束
+        isStreaming = false
+        lastEventHandler({ type: 'done', platform: 'claude', text, timestamp: now })
+        lastPolledTextLength = len
+      }
     }, 150)
   }
 
@@ -305,9 +419,16 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
 
     getConversationState(): Promise<ConversationState> {
       const lastText = getLatestResponseText()
+      // 优先用选择器检测（最准确）
       if (hasStopGeneratingButton()) return Promise.resolve({ status: 'streaming', lastResponse: lastText })
       if (q(S.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText })
+      // 选择器无关的兜底：基于 DOM 变化时间戳
+      const timeSinceMutation = Date.now() - lastMutationTimestamp
+      if (isStreaming || timeSinceMutation < 2000) {
+        return Promise.resolve({ status: 'streaming', lastResponse: lastText })
+      }
       if (!lastText) return Promise.resolve({ status: 'idle' })
+      // 有文本、无停止按钮、最近 3 秒无 DOM 变化 → 判定已完成
       return Promise.resolve({ status: 'finished', lastResponse: lastText })
     },
 

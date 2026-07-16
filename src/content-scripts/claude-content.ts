@@ -310,6 +310,70 @@ function dumpSelectorDiagnostics(): void {
   }
   console.log(`${LOG_PREFIX} [DIAG-SELECTORS] selectors.json hit check:\n` + rows.join('\n'))
   console.log(`${LOG_PREFIX} [DIAG-SELECTORS] 说明：MISSING 的选择器需要按真实 Claude DOM 回填到 src/adapters/claude/selectors.json`)
+
+  // ── 额外：dump 关键 DOM 结构（用于回填选择器）───────────────────
+  try {
+    const main = document.querySelector('main')
+    if (!main) {
+      console.warn(`${LOG_PREFIX} [DIAG-DOM] <main> element not found!`)
+      return
+    }
+
+    // 找所有可能的消息容器
+    const msgCandidates = Array.from(main.querySelectorAll<HTMLElement>('[data-testid], [role="article"], [class*="message"], article'))
+    if (msgCandidates.length > 0) {
+      const msgRows = msgCandidates.slice(-10).map(el => {
+        const tag = el.tagName.toLowerCase()
+        const testId = el.getAttribute('data-testid') || ''
+        const role = el.getAttribute('role') || ''
+        const className = (el.getAttribute('class') || '').slice(0, 60)
+        const textPreview = (el.textContent || '').slice(0, 50).replace(/\s+/g, ' ')
+        return `    <${tag}${testId ? ` data-testid="${testId}"` : ''}${role ? ` role="${role}"` : ''}${className ? ` class="${className}"` : ''}> "${textPreview}"`
+      })
+      console.log(`${LOG_PREFIX} [DIAG-DOM] Last ${msgRows.length} message-like elements in <main>:\n${msgRows.join('\n')}`)
+    }
+
+    // 找按钮（send/stop/continue）
+    const buttons = Array.from(main.querySelectorAll<HTMLElement>('button[data-testid], button[aria-label]')).filter(b => {
+      const label = (b.getAttribute('aria-label') || '').toLowerCase()
+      return /send|stop|continue|cancel|生成|停止|继续/i.test(label) ||
+             /send|stop|continue|cancel/i.test(b.getAttribute('data-testid') || '')
+    })
+    if (buttons.length > 0) {
+      const btnRows = buttons.map(b => {
+        const testId = b.getAttribute('data-testid') || ''
+        const ariaLabel = b.getAttribute('aria-label') || ''
+        const disabled = b.disabled ? ' [DISABLED]' : ''
+        return `    button${testId ? `[data-testid="${testId}"]` : ''}[aria-label="${ariaLabel}"]${disabled}`
+      })
+      console.log(`${LOG_PREFIX} [DIAG-DOM] Action buttons found:\n${btnRows.join('\n')}`)
+    } else {
+      // 列出所有 button 供参考
+      const allBtns = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).slice(0, 20)
+      const allBtnRows = allBtns.map(b => {
+        const testId = b.getAttribute('data-testid') || ''
+        const ariaLabel = b.getAttribute('aria-label') || ''
+        return `    [data-testid="${testId}"] [aria-label="${ariaLabel}"]`
+      })
+      console.log(`${LOG_PREFIX} [DIAG-DOM] No action buttons matched. All buttons on page (${allBtns.length}):\n${allBtnRows.join('\n')}`)
+    }
+
+    // 找输入框区域
+    const inputEl = document.querySelector<HTMLElement>('[contenteditable="true"], textarea, [data-testid*="chat-input"], [data-testid*="composer"]')
+    if (inputEl) {
+      const tag = inputEl.tagName.toLowerCase()
+      const testId = inputEl.getAttribute('data-testid') || ''
+      const ce = inputEl.isContentEditable ? '[contenteditable]' : ''
+      console.log(`${LOG_PREFIX} [DIAG-DOM] Input area: <${tag}${testId ? ` data-testid="${testId}"` : ''}${ce}> parent=${inputEl.parentElement?.tagName}${inputEl.parentElement?.getAttribute('class')?.slice(0, 40) || ''}`)
+    }
+
+    // body / main 文本长度（判断页面是否渲染完）
+    const bodyLen = document.body?.textContent?.length ?? 0
+    const mainLen = main.textContent?.length ?? 0
+    console.log(`${LOG_PREFIX} [DIAG-DOM] Page render state: body=${bodyLen} chars, main=${mainLen} chars`)
+  } catch (e) {
+    console.warn(`${LOG_PREFIX} [DIAG-DOM] Dump failed:`, e)
+  }
 }
 
 // ── 主入口 ───────────────────────────────────────────────────────────
