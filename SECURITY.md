@@ -6,10 +6,6 @@ If you discover a security vulnerability in ChatDuel, please **DO NOT** open a p
 
 Instead, report it privately by email to:
 
-> [INSERT SECURITY CONTACT EMAIL]
+> info@ifeeling.app
 
 We will acknowledge your report, investigate, and release a patch as soon as possible.
-
----
-
-> **Maintainer note:** the security contact email above is a placeholder. Replace it with a real address before relying on this policy.
