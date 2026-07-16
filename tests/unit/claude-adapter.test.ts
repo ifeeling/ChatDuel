@@ -129,3 +129,50 @@ describe('Claude 适配器：发送兜底', () => {
     return expect(adapter.sendMessage('Hi Claude')).rejects.toThrow('claude message did not submit')
   })
 })
+
+describe('Claude 适配器：data-last-message 最新回复定位', () => {
+  it('returns the latest AI response via data-last-message when newest message is from Claude', () => {
+    setBody(`
+      <main>
+        <div data-rs-index="0"><article role="article" aria-label="Message 1 of 2">You said: 你好</article></div>
+        <div data-rs-index="1" data-last-message="true"><article role="article" aria-label="Message 2 of 2">Claude responded: 这是最新的AI回复。</article></div>
+      </main>
+    `)
+    const adapter = createClaudeAdapter()
+    return adapter.getLastResponse().then((text) => {
+      expect(text).toBe('这是最新的AI回复。')
+    })
+  })
+
+  it('falls back to the previous AI response when data-last-message points to a user question', () => {
+    // 用户刚提问、AI 还没回答时，data-last-message 标在用户消息上，
+    // 应回退取倒数第二条 AI 回复，而不是误抓用户提问。
+    setBody(`
+      <main>
+        <div data-rs-index="0"><article role="article" aria-label="Message 1 of 3">Claude responded: 这是第一轮AI回复。</article></div>
+        <div data-rs-index="1"><article role="article" aria-label="Message 2 of 3">You said: 再问一个问题</article></div>
+        <div data-rs-index="2" data-last-message="true"><article role="article" aria-label="Message 3 of 3">You said: 这是最新的用户提问，AI还没回答</article></div>
+      </main>
+    `)
+    const adapter = createClaudeAdapter()
+    return adapter.getLastResponse().then((text) => {
+      expect(text).toBe('这是第一轮AI回复。')
+    })
+  })
+
+  it('prefers the newest AI response over a longer older one (no longest-text selection)', () => {
+    // 回归测试：旧版用「选最长文本」会误把更长的旧回答当当前回答，
+    // 导致抓取文本 == 发送前基线而被判定「无新内容」不写记录。
+    setBody(`
+      <main>
+        <div data-rs-index="0"><article role="article" aria-label="Message 1 of 3">Claude responded: 这是一段非常非常长的旧回答内容用来验证我们不再错误地选择最长文本而是选择最新的AI回复。</article></div>
+        <div data-rs-index="1"><article role="article" aria-label="Message 2 of 3">You said: 一个问题</article></div>
+        <div data-rs-index="2" data-last-message="true"><article role="article" aria-label="Message 3 of 3">Claude responded: 短回复。</article></div>
+      </main>
+    `)
+    const adapter = createClaudeAdapter()
+    return adapter.getLastResponse().then((text) => {
+      expect(text).toBe('短回复。')
+    })
+  })
+})

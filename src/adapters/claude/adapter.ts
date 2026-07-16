@@ -261,27 +261,68 @@ function findLastResponseFromMain(): string | null {
   return null
 }
 
-function getLatestResponseText(): string {
-  const candidates: string[] = []
-  // 优先级 1：selectors.json 的显式选择器（如果未来修正后能命中）
-  const explicit = document.querySelector<HTMLElement>(DEFAULT_SELECTORS.lastResponse)
-  if (explicit?.textContent) candidates.push(explicit.textContent)
-  // 优先级 2："Claude responded:" 文本块兄弟节点
-  const marked = findClaudeRespondedBlock()
-  if (marked) candidates.push(marked)
-  // 优先级 3：main 内已知标记的最后一个
-  const fromMain = findLastResponseFromMain()
-  if (fromMain) candidates.push(fromMain)
-  // 优先级 4：选择器无关的 DOM 深度遍历（当前最可靠）
-  const domWalk = findResponseByDomWalk()
-  if (domWalk) candidates.push(domWalk)
+// 判断一个消息 article 是否为 AI 回复：
+// Claude 为屏幕阅读器在每条消息 article 的 textContent 前缀注入
+// "Claude responded:"（AI 回复）或 "You said:"（用户提问），这是稳定标记。
+function isAiResponseArticle(article: HTMLElement | null): boolean {
+  if (!article) return false
+  const text = (article.textContent ?? '').trim()
+  return /^claude responded:/i.test(text)
+}
 
-  let best = ''
-  for (const c of candidates) {
-    const cleaned = cleanClaudeText(c)
-    if (cleaned.length > best.length) best = cleaned
+// 去掉 Claude 注入的 accessibility 前缀（"You said:" / "Claude responded:"），
+// 让记录里只保留真正的消息正文。
+function stripMessagePrefix(text: string): string {
+  return text.replace(/^\s*(You said:|Claude responded:)\s*/i, '').trim()
+}
+
+// 用 Claude 官方支持的 data-last-message 标记取「最新一条消息」；
+// 若最新消息是用户提问（AI 还没回答），则倒序遍历所有消息，
+// 取最新一条 AI 回复。返回去除前缀后的干净文本。
+function findLatestAiResponse(): string | null {
+  // 路径 1：data-last-message 直接命中「最新一条消息」
+  const lastMsg = document.querySelector<HTMLElement>("[data-last-message='true']")
+  if (lastMsg) {
+    const article = lastMsg.querySelector<HTMLElement>("[role='article']") ?? lastMsg
+    if (isAiResponseArticle(article)) {
+      const cleaned = cleanClaudeText(stripMessagePrefix(article.textContent ?? ''))
+      if (cleaned.length > 0) return cleaned
+    }
   }
-  return best
+  // 路径 2：倒序遍历所有消息，取最新一条 AI 回复
+  // （覆盖「用户刚提问、AI 还没答」导致 data-last-message 标在用户消息上的情况）
+  const messages = Array.from(document.querySelectorAll<HTMLElement>("[data-rs-index]"))
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const article = messages[i].querySelector<HTMLElement>("[role='article']") ?? messages[i]
+    if (isAiResponseArticle(article)) {
+      const cleaned = cleanClaudeText(stripMessagePrefix(article.textContent ?? ''))
+      if (cleaned.length > 0) return cleaned
+    }
+  }
+  return null
+}
+
+function getLatestResponseText(): string {
+  // 优先级 1：Claude 官方 data-last-message 标记 + AI/用户前缀区分（当前实页最准确）
+  const viaLastMessage = findLatestAiResponse()
+  if (viaLastMessage) return viaLastMessage
+  // 其余路径统一收口降噪（cleanClaudeText 幂等，重复调用无害）
+  const marked = findClaudeRespondedBlock()
+  if (marked) {
+    const cleaned = cleanClaudeText(marked)
+    if (cleaned.length > 0) return cleaned
+  }
+  const fromMain = findLastResponseFromMain()
+  if (fromMain) {
+    const cleaned = cleanClaudeText(fromMain)
+    if (cleaned.length > 0) return cleaned
+  }
+  const domWalk = findResponseByDomWalk()
+  if (domWalk) {
+    const cleaned = cleanClaudeText(domWalk)
+    if (cleaned.length > 0) return cleaned
+  }
+  return ''
 }
 
 function hasStopGeneratingButton(): boolean {
