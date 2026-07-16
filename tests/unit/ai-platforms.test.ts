@@ -3,7 +3,7 @@ import { AI_PLATFORMS, MAX_ACTIVE_PLATFORMS, MIN_ACTIVE_PLATFORMS, SUPPORTED_PLA
 
 describe('ai-platforms', () => {
   it('keeps supported platforms capped at three active panels', () => {
-    expect(SUPPORTED_PLATFORMS).toEqual(['chatgpt', 'gemini', 'doubao', 'deepseek'])
+    expect(SUPPORTED_PLATFORMS).toEqual(['chatgpt', 'gemini', 'doubao', 'deepseek', 'claude'])
     expect(MIN_ACTIVE_PLATFORMS).toBe(2)
     expect(MAX_ACTIVE_PLATFORMS).toBe(3)
   })

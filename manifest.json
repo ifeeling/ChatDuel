@@ -37,6 +37,7 @@
     "https://doubao.com/*",
     "https://www.doubao.com/*",
     "https://chat.deepseek.com/*",
+    "https://claude.ai/*",
     "https://chatduel.ifeeling.app/*"
   ],
   "content_scripts": [
@@ -77,6 +78,16 @@
       ],
       "js": [
         "src/content-scripts/deepseek-content.ts"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "https://claude.ai/*"
+      ],
+      "js": [
+        "src/content-scripts/claude-content.ts"
       ],
       "run_at": "document_idle",
       "all_frames": true

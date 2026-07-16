@@ -1,12 +1,24 @@
 # Claude 接入记录
 
-## 最终结论
+## 状态（2026-07-15 更新）
 
-2026-06-20，Claude 已从 ChatDuel 扩展运行时移除。
+- **2026-06-20**：Claude 曾从 ChatDuel 扩展运行时移除（原因见下文"关键问题"，核心是 iframe 内模型菜单无法列出/切换可用模型）。
+- **2026-07-15**：按用户授权（"沿用上次接入 Claude 的方式尝试，不行就用我自己的方式"），**重新接入 Claude**。代码已完整落地，类型检查通过，单测 279 项全过，`npm run build` 成功。
 
-保留这份记录，删除或不再构建 Claude adapter、Claude content script、Claude iframe panel、Claude manifest 权限、Claude DNR 规则和 Claude 相关测试。
+### 当前已接回的内容
 
-原因：Claude 官方页在 ChatDuel iframe 里会卡在不可用的旧模型 `claude-3-5-haiku-latest`，而模型菜单虽然能打开外壳，却不生成任何可选模型项。用户在独立 Claude 标签页里切到 `Sonnet 4.6 Low` 后，回到 iframe 刷新仍然显示旧模型。继续保留 Claude 会给用户一个“看起来能用，但模型不可用且无法切换”的入口。
+- 平台元数据：`AIPlatform` 联合类型、`SUPPORTED_PLATFORMS`、`AI_PLATFORMS` 均加入 `claude`（icon ✺，url `https://claude.ai/`，能力全开）。
+- 配置链路：manifest host permission + content script 入口、vite content script build input、DNR iframe 嵌入规则（RULE_IDS.claude = 3）、SW 官方 tab URL 前缀、远程 selector 白名单、会话 URL 识别、i18n、user-settings（默认关闭）、chat.html 面板与设置行。
+- 实现：`src/adapters/claude/adapter.ts`、`src/adapters/claude/selectors.json`、`src/content-scripts/claude-content.ts`（含 iframe 模型菜单高度补丁）。
+- 测试：`tests/unit/claude-adapter.test.ts`（5 项）、以及随新平台修正的 ai-platforms / at-parser / dnr-rules / chat-html / user-settings 单测。
+
+### 上线前必须手动验证的关卡（不可跳）
+
+代码层面无法保证 Claude 在扩展 iframe 里能正常**列出并切换可用模型**。这是 2026-06-20 移除 Claude 的根因，本次重接沿用了同一套机制，因此这个风险**没有被消除**，只是"先按老路接上、等实页验证"。
+
+> ⚠️ 若实页验证发现 iframe 里模型菜单仍为空/不可切换，则本次重接不能算"可用"，需要走"官方标签页驱动"备选方案（见文末），并与用户确认后再继续。
+
+下面的"关键问题"和"以后如果重新接 Claude"两节保留为历史排查依据。
 
 ## 当时实现过什么
 
@@ -79,13 +91,43 @@ LSS-model-selector-thinking:...:chat:claude-sonnet-4-6
 
 这会破坏 ChatDuel “同屏对比官方网页”的一致性，所以最后没有保留。
 
-## 以后如果重新接 Claude
+## 重新接入后的实页验证清单（上线前必做）
 
-先验证，不要直接恢复旧代码：
+以下步骤**只能由人工在浏览器里完成**（无头环境无法验证 iframe 模型菜单）。建议顺序执行，任一步失败即停，回到备选方案讨论。
 
-1. 在 ChatDuel iframe 中打开 Claude 模型菜单。
-2. 确认 DOM 里真的生成了 `Sonnet` / `Opus` / `Haiku` 等模型项。
-3. 确认能在 iframe 中切换到可用模型，并且刷新后仍保持可用模型。
-4. 再接回 adapter、content script、manifest、DNR、设置项和测试。
+### A. 基础链路（应已通过代码/单测保证，实页再确认一次）
 
-如果 Claude 仍然不能在 iframe 里切模型，就不要把它作为普通 iframe 平台接回。那时需要重新设计官方标签页方案，并在 UI 上明确告诉用户真实发送发生在独立 Claude 标签页，而不是当前面板。
+1. 加载扩展，进入设置页，在站点列表里看到 **Claude / Anthropic** 这一行（默认关闭）。
+2. 打开 Claude 开关，确认 chat.html 里出现 Claude 面板（iframe 指向 `https://claude.ai/`）。
+3. iframe 能加载、content script 注入并向父页发 `ready`（控制台无 `X-Frame-Options` / `CSP frame-ancestors` 拦截报错）。
+4. 登录态正常（面板状态显示已登录，或引导登录）。
+
+### B. 模型菜单（核心关卡，本次重接的最高风险点）
+
+5. 在 iframe 里点开 Claude 模型选择器，确认 `aria-expanded="true"`。
+6. **统计 iframe DOM 中是否真的生成了 `Sonnet` / `Opus` / `Haiku` 等模型项**（这是 2026-06-20 失败的根因：当时只有空的 `<div role="group"></div>`）。
+7. 从菜单切到一个可用模型（如 Sonnet 4.x），确认选择生效、面板顶部模型名更新。
+8. **刷新 iframe / 重新打开会话，确认仍保持刚才选的可用模型**（之前会回退到不可用的 `claude-3-5-haiku-latest`）。
+
+> 判定：步骤 6–8 全部通过 → iframe 模型菜单问题已解决，Claude 可作为普通 iframe 平台上线。
+> 步骤 6 失败（菜单为空）或步骤 8 失败（刷新回退旧模型）→ 本次重接仍不可用，进入备选方案。
+
+### C. 发送与抓取
+
+9. 用底部输入框向 Claude 面板转发一个问题，确认：写入成功、发送按钮触发、提示词离开输入框（adapter 有 Enter 兜底与残留检测）。
+10. 等待 Claude 回答，确认 ChatDuel 能读到最后回答，且工具进度（`Fetching ... data` / `Searched the web`）和纯图标行已被清洗过滤。
+11. 附一张图片再发一次，确认 `attachImageToFileInput` 能注入文件 input 并等待上传就绪。
+
+### D. selectors.json 回填
+
+12. `src/adapters/claude/selectors.json` 当前是基于 Gemini 模板的**最佳猜测**，注释已标 "需实页验证"。实页跑通后，用真实 Claude DOM 选择器覆盖其中的 `inputBox` / `sendButton` / `messageContainer` / `lastResponse` / `userMessage` / `fileInput` 等字段，并补到 `tests/unit/selectors-schema.test.ts`。
+
+## 备选方案：官方标签页驱动（仅当模型菜单仍不可用）
+
+若 B 步验证失败，不要强行把 Claude 当作普通 iframe 平台上线。参考 2026-06-20 的短暂尝试，改造方向是：
+
+- 发送 Claude 时，优先通过 Service Worker 把消息发到用户**单独打开并已在那里切好可用模型**的 Claude 官方标签页。
+- 找不到官方 tab 时回落到 iframe。
+- **必须在 UI 上明确告知用户：真实发送发生在独立 Claude 标签页，而非当前面板**，避免状态不透明、破坏"同屏对比"一致性。
+
+该方案需要重新设计并单独评审，不在本次重接范围内。

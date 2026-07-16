@@ -73,7 +73,7 @@ describe('filterCandidates', () => {
     expect(filterCandidates(candidates, '').length).toBe(candidates.length)
   })
   it('filters by key prefix', () => {
-    expect(filterCandidates(candidates, 'c')).toEqual([
+    expect(filterCandidates(candidates, 'chat')).toEqual([
       AI_PLATFORMS.chatgpt,
     ])
   })

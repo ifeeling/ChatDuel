@@ -79,6 +79,24 @@
         <iframe class="panel-iframe" data-platform="deepseek" src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
       </section>
 
+      <div class="splitter"></div>
+
+      <section class="panel" data-platform="claude">
+        <header class="panel-header">
+          <span class="panel-title-wrap">
+            <span class="panel-title">Claude</span>
+            <span class="status-item" data-platform="claude">
+              <span class="dot"></span><span class="status-text">待接入</span>
+            </span>
+          </span>
+          <button class="panel-transfer" data-platform="claude" title="把这里的回答转发给其它 AI">转发 ➔</button>
+          <button class="panel-switch" data-platform="claude" title="切换这个位置的 AI" type="button">切换</button>
+          <button class="panel-open" data-platform="claude" title="在新标签页打开官方页面">↗</button>
+          <button class="panel-close" data-platform="claude" title="关闭这个 AI 面板" type="button">×</button>
+        </header>
+        <iframe class="panel-iframe" data-platform="claude" src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
+      </section>
+
     </main>
 
     <footer class="composer">
@@ -197,6 +215,16 @@
                 <span class="site-name">DeepSeek</span>
                 <span class="site-owner" data-site-owner="deepseek">深度求索</span>
                 <a class="site-open" href="https://chat.deepseek.com/" target="_blank" rel="noreferrer" title="打开 DeepSeek">↗</a>
+              </label>
+              <label class="site-row">
+                <span class="switch">
+                  <input id="setting-claude" type="checkbox" data-platform="claude">
+                  <span class="switch-track"></span>
+                </span>
+                <span class="site-icon">✺</span>
+                <span class="site-name">Claude</span>
+                <span class="site-owner" data-site-owner="claude">Anthropic</span>
+                <a class="site-open" href="https://claude.ai/" target="_blank" rel="noreferrer" title="打开 Claude">↗</a>
               </label>
             </div>
             <div class="settings-note">

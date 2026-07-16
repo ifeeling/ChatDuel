@@ -10,7 +10,7 @@ describe('chat.html', () => {
     document.body.innerHTML = html
     const frames = [...document.querySelectorAll<HTMLIFrameElement>('.panel-iframe')]
 
-    expect(frames.length).toBe(4)
+    expect(frames.length).toBe(5)
     for (const frame of frames) {
       const allow = frame.getAttribute('allow') ?? ''
       expect(allow).toContain('clipboard-read')
@@ -156,14 +156,16 @@ describe('chat.html', () => {
     expect(doubaoPanel?.textContent).not.toContain('文本能力待验证')
   })
 
-  it('does not render Claude as an optional site row or panel', () => {
+  it('renders Claude as an optional site row and panel', () => {
     document.body.innerHTML = html
 
     const claudePanel = document.querySelector<HTMLElement>('.panel[data-platform="claude"]')
-    const claudeSiteRow = document.querySelector<HTMLElement>('#setting-claude')
+    const claudeSiteRow = document.querySelector<HTMLElement>('#setting-claude')?.closest('.site-row')
 
-    expect(claudePanel).toBeNull()
-    expect(claudeSiteRow).toBeNull()
+    expect(claudePanel).toBeTruthy()
+    expect(claudePanel?.textContent).toContain('Claude')
+    expect(claudeSiteRow?.textContent).toContain('Claude')
+    expect(claudeSiteRow?.textContent).toContain('Anthropic')
   })
 
   it('renders DeepSeek as an optional site row and panel', () => {
@@ -245,14 +247,14 @@ describe('chat.html', () => {
     document.body.innerHTML = html
 
     expect(document.querySelector('.topbar')).toBeNull()
-    expect(document.querySelectorAll('.panel')).toHaveLength(4)
+    expect(document.querySelectorAll('.panel')).toHaveLength(5)
     expect(document.querySelector('.panel[data-platform="doubao"]')).toBeTruthy()
     expect(document.querySelector<HTMLButtonElement>('.panel-transfer[data-platform="doubao"]')?.title)
       .toBe('把这里的回答转发给其它 AI')
-    expect(document.querySelectorAll('.panel-switch')).toHaveLength(4)
-    expect(document.querySelectorAll('.panel-close')).toHaveLength(4)
+    expect(document.querySelectorAll('.panel-switch')).toHaveLength(5)
+    expect(document.querySelectorAll('.panel-close')).toHaveLength(5)
     expect(document.querySelector('#panel-switch-menu')).toBeTruthy()
-    expect(document.querySelectorAll('.splitter')).toHaveLength(3)
+    expect(document.querySelectorAll('.splitter')).toHaveLength(4)
     expect(document.querySelectorAll('#btn-quote')).toHaveLength(0)
     expect(document.querySelectorAll('#btn-summary')).toHaveLength(1)
     expect(document.querySelectorAll('#btn-history')).toHaveLength(1)

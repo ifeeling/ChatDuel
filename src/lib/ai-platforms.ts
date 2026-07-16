@@ -36,7 +36,7 @@ export interface AIPlatformCapabilities {
 
 export const MIN_ACTIVE_PLATFORMS = 2
 export const MAX_ACTIVE_PLATFORMS = 3
-export const SUPPORTED_PLATFORMS: AIPlatform[] = ['chatgpt', 'gemini', 'doubao', 'deepseek']
+export const SUPPORTED_PLATFORMS: AIPlatform[] = ['chatgpt', 'gemini', 'doubao', 'deepseek', 'claude']
 
 /** 元数据表(key 必须跟 types/index.ts AIPlatform 联合一致) */
 export const AI_PLATFORMS: Record<AIPlatform, AIPlatformMeta> = {
@@ -84,6 +84,19 @@ export const AI_PLATFORMS: Record<AIPlatform, AIPlatformMeta> = {
     label: 'DeepSeek',
     icon: 'DS',
     url: 'https://chat.deepseek.com/',
+    capabilities: {
+      supportsEmbed: true,
+      supportsText: true,
+      supportsImageUpload: true,
+      supportsFileUpload: false,
+      supportsLastResponse: true,
+    },
+  },
+  claude: {
+    key: 'claude',
+    label: 'Claude',
+    icon: '✺',
+    url: 'https://claude.ai/',
     capabilities: {
       supportsEmbed: true,
       supportsText: true,

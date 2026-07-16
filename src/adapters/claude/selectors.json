@@ -1,0 +1,16 @@
+{
+  "version": "2026.07",
+  "lastVerified": "2026-07-16",
+  "selectors": {
+    "inputBox": "div[contenteditable='true'][role='textbox'], main div[contenteditable='true'], textarea[placeholder*='Talk' i]",
+    "sendButton": "button[aria-label*='Send' i], button[aria-label*='发送' i]",
+    "messageContainer": "main",
+    "lastResponse": "main div[data-testid='assistant-message'], main article[role='article'], main .font-claude-message",
+    "userMessage": "main div[data-testid='user-message']",
+    "rateLimitToast": "[role='alert']",
+    "continueButton": "button[aria-label*='Continue' i], button[aria-label*='继续' i]",
+    "stopButton": "button[aria-label*='Stop' i], button[aria-label*='停止' i]",
+    "loggedIn": "[data-testid='user-menu'], button[aria-label*='Account' i], img[alt*='avatar' i]",
+    "fileInput": "input[type='file']"
+  }
+}

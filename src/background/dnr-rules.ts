@@ -5,7 +5,7 @@
 //
 // 详见 docs/postmortems/2026-06-09-iframe-no-response.md
 
-const RULE_IDS = { chatgpt: 1, gemini: 2, doubao: 4, deepseek: 5 } as const
+const RULE_IDS = { chatgpt: 1, gemini: 2, claude: 3, doubao: 4, deepseek: 5 } as const
 const REMOVE_RULE_IDS = [1, 2, 3, 4, 5, 6, 7, 8]
 
 type ModifyHeadersRule = chrome.declarativeNetRequest.Rule
@@ -49,6 +49,7 @@ export function buildEmbedRules(frameAncestorsValue: string): ModifyHeadersRule[
     buildRule(RULE_IDS.chatgpt, 'chatgpt.com', frameAncestorsValue),
     buildRule(RULE_IDS.gemini, 'gemini.google.com', frameAncestorsValue),
     buildRule(RULE_IDS.doubao, 'doubao.com', frameAncestorsValue),
+    buildRule(RULE_IDS.claude, 'claude.ai', frameAncestorsValue),
     buildRule(RULE_IDS.deepseek, 'chat.deepseek.com', frameAncestorsValue),
   ]
 }

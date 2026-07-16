@@ -17,6 +17,7 @@ describe('dnr embed rules', () => {
       '||chatgpt.com/*',
       '||gemini.google.com/*',
       '||doubao.com/*',
+      '||claude.ai/*',
       '||chat.deepseek.com/*',
     ])
     expect(rules.every((rule) => rule.condition.resourceTypes?.join(',') === 'sub_frame')).toBe(true)

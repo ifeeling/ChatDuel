@@ -20,6 +20,7 @@ export function isSpecificConversationUrl(platform: AIPlatform, url: string | un
     if (platform === 'gemini') return parsed.hostname.endsWith('gemini.google.com') && /^\/app\/[^/]+/.test(parsed.pathname)
     if (platform === 'doubao') return parsed.hostname.endsWith('doubao.com') && /^\/chat\/\d+/.test(parsed.pathname)
     if (platform === 'deepseek') return parsed.hostname.endsWith('chat.deepseek.com') && /^\/a\/chat\/s\/[a-f0-9-]+/.test(parsed.pathname)
+    if (platform === 'claude') return parsed.hostname.endsWith('claude.ai') && /\/(chat|c)\/[a-f0-9-]+/.test(parsed.pathname)
   } catch {
     return false
   }

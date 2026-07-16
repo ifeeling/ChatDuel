@@ -39,6 +39,18 @@ const ALLOWED_SELECTOR_KEYS: Record<AIPlatform, Set<string>> = {
   ]),
   doubao: new Set(['inputBox', 'sendButton', 'response']),
   deepseek: new Set(['inputBox', 'sendButton', 'response']),
+  claude: new Set([
+    'inputBox',
+    'sendButton',
+    'messageContainer',
+    'lastResponse',
+    'userMessage',
+    'rateLimitToast',
+    'continueButton',
+    'stopButton',
+    'loggedIn',
+    'fileInput',
+  ]),
 }
 
 const SUPPORTED_PLATFORMS = Object.keys(ALLOWED_SELECTOR_KEYS) as AIPlatform[]
