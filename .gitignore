@@ -10,3 +10,7 @@ test-results/
 .superpowers/
 docs/
 *.zip
+
+# 环境变量 / 密钥(防止误提交)
+.env
+.env.*
