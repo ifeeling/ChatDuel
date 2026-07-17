@@ -383,7 +383,7 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
       if (len > lastPolledTextLength && (now - lastMutationTimestamp < 2000)) {
         if (!isStreaming) {
           isStreaming = true
-          lastEventHandler({ type: 'start', platform: 'claude', timestamp: now })
+          lastEventHandler({ type: 'started', platform: 'claude', timestamp: now })
         }
         dirty = false
         lastPolledTextLength = len
@@ -395,7 +395,7 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
       } else if (isStreaming && len > 0 && (now - lastMutationTimestamp > 3000)) {
         // 超过 3 秒无新 DOM 变化 → 判定流式结束
         isStreaming = false
-        lastEventHandler({ type: 'done', platform: 'claude', text, timestamp: now })
+        lastEventHandler({ type: 'finished', platform: 'claude', text, timestamp: now })
         lastPolledTextLength = len
       }
     }, 150)

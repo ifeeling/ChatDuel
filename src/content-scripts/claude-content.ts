@@ -343,7 +343,7 @@ function dumpSelectorDiagnostics(): void {
       const btnRows = buttons.map(b => {
         const testId = b.getAttribute('data-testid') || ''
         const ariaLabel = b.getAttribute('aria-label') || ''
-        const disabled = b.disabled ? ' [DISABLED]' : ''
+        const disabled = (b as HTMLButtonElement).disabled ? ' [DISABLED]' : ''
         return `    button${testId ? `[data-testid="${testId}"]` : ''}[aria-label="${ariaLabel}"]${disabled}`
       })
       console.log(`${LOG_PREFIX} [DIAG-DOM] Action buttons found:\n${btnRows.join('\n')}`)
