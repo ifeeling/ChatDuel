@@ -15,6 +15,13 @@ A Chrome extension that lets you compare answers from multiple AIs side by side 
 
 You can show up to **3 panels** at the same time.
 
+## Install
+
+Get ChatDuel from your browser's extension store:
+
+- **Chrome:** https://chromewebstore.google.com/detail/chatduel/ggddfpmgeppjejfanaloopfpiiakljjl
+- **Edge:** https://microsoftedge.microsoft.com/addons/detail/chatduel/jnnocldpbodbnnkojbdklkgcoeiajekk
+
 ## Features
 
 - **Shared input box** — type once at the bottom and send to all enabled AIs at once.

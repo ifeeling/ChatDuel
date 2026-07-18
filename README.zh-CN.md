@@ -15,6 +15,13 @@ Chrome 扩展，用来在一个页面里同时对比多个 AI 的回答。它不
 
 同一时间最多可同时显示 **3 个面板**。
 
+## 安装
+
+从浏览器的扩展商店获取 ChatDuel：
+
+- **Chrome：** https://chromewebstore.google.com/detail/chatduel/ggddfpmgeppjejfanaloopfpiiakljjl
+- **Edge：** https://microsoftedge.microsoft.com/addons/detail/chatduel/jnnocldpbodbnnkojbdklkgcoeiajekk
+
 ## 主要功能
 
 - **多 AI 同屏**：当前支持 ChatGPT、Claude、Gemini、豆包、DeepSeek，最多同时显示 3 个面板。
