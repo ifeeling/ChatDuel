@@ -103,4 +103,5 @@ export interface ConversationState {
   status: StreamStatus
   lastResponse?: string
   errorMessage?: string
+  stopButtonDetected?: boolean
 }

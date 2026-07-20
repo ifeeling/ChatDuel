@@ -1,10 +1,11 @@
-import type { AIAdapter } from '../base'
+import type { AIAdapter, AdapterDiagnostics } from '../base'
 import type { ConversationState, StreamEvent } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 import selectorsJson from './selectors.json'
 
 type ChatGPTSelectors = typeof selectorsJson.selectors
 const DEFAULT_SELECTORS = selectorsJson.selectors
+export const CHATGPT_SELECTOR_VERSION = selectorsJson.version
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // chatgpt.com 的输入框是 contenteditable div(ProseMirror/TipTap 风格),
@@ -174,6 +175,13 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
     return nodes.length > 0 ? nodes[nodes.length - 1] : null
   }
 
+  function emit(diagnostics: AdapterDiagnostics | undefined, event: Parameters<AdapterDiagnostics['reporter']['emit']>[0]) {
+    diagnostics?.reporter.emit({
+      ...event,
+      selectorConfigVersion: diagnostics.selectorConfigVersion,
+    })
+  }
+
   function startObserver() {
     observer = new MutationObserver(() => { dirty = true })
     observer.observe(document.body, { childList: true, subtree: true, characterData: true })
@@ -214,22 +222,125 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
       btn.click()
     },
 
-    async sendMessage(text: string, image?: File) {
-      await this.writeText(text)
+    async sendMessage(text: string, image?: File, diagnostics?: AdapterDiagnostics) {
+      const inputCharacterCount = text.length
+      const box = q<HTMLElement>(S.inputBox)
+      if (!box) {
+        emit(diagnostics, {
+          component: 'platform-adapter',
+          operation: 'input-locate',
+          stage: 'failed',
+          eventStatus: 'failed',
+          runOutcome: 'failed',
+          errorCode: 'input-box-not-found',
+          inputCharacterCount,
+        })
+        throw new Error('input box not found')
+      }
+      emit(diagnostics, {
+        component: 'platform-adapter',
+        operation: 'input-locate',
+        stage: 'located',
+        eventStatus: 'succeeded',
+        inputCharacterCount,
+      })
+      try {
+        writeEditableValue(box, text)
+        emit(diagnostics, {
+          component: 'platform-adapter',
+          operation: 'input-write',
+          stage: 'written',
+          eventStatus: 'succeeded',
+          inputCharacterCount,
+        })
+      } catch {
+        emit(diagnostics, {
+          component: 'platform-adapter',
+          operation: 'input-write',
+          stage: 'failed',
+          eventStatus: 'failed',
+          runOutcome: 'failed',
+          errorCode: 'input-write-failed',
+          inputCharacterCount,
+        })
+        throw new Error('input write failed')
+      }
       // 写完文字再附加图片(等 React/Quill 状态稳定)
       await new Promise((r) => setTimeout(r, 50))
       if (image) {
-        await this.attachImage(image)
-        // 等上传组件把缩略图渲染进 input,并等 AI 网站自己的图片处理流水线跑完
-        // (ChatGPT/Gemini 在收到文件后还要走内部转码/特征抽取)
-        await waitForUploadReady()
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'attachment-prepare', stage: 'preparing', eventStatus: 'observed', hasAttachment: true,
+        })
+        try {
+          await this.attachImage(image)
+          // 等上传组件把缩略图渲染进 input,并等 AI 网站自己的图片处理流水线跑完
+          await waitForUploadReady()
+          emit(diagnostics, {
+            component: 'platform-adapter', operation: 'attachment-prepare', stage: 'prepared', eventStatus: 'succeeded', hasAttachment: true,
+          })
+        } catch {
+          emit(diagnostics, {
+            component: 'platform-adapter',
+            operation: 'attachment-prepare',
+            stage: 'failed',
+            eventStatus: 'failed',
+            runOutcome: 'failed',
+            errorCode: 'attachment-preparation-timeout',
+            hasAttachment: true,
+          })
+          throw new Error('attachment preparation failed')
+        }
+      } else {
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'attachment-prepare', stage: 'skipped', eventStatus: 'skipped', hasAttachment: false,
+        })
       }
       // 给 React/ProseMirror 一个微任务让状态更新,再点发送按钮
       for (let attempt = 0; attempt < 3; attempt += 1) {
-        await this.triggerSend()
-        if (await waitForSendAccepted(S)) return
+        const retryNumber = attempt + 1
+        try {
+          await this.triggerSend()
+        } catch {
+          emit(diagnostics, {
+            component: 'platform-adapter',
+            operation: 'send-click',
+            stage: 'timed-out',
+            eventStatus: 'timed-out',
+            runOutcome: 'timed-out',
+            errorCode: 'send-button-not-ready',
+            retryNumber,
+            timeoutMs: 8_000,
+          })
+          throw new Error('send button is not ready')
+        }
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber,
+        })
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'send-ack', stage: 'waiting', eventStatus: 'observed', retryNumber,
+        })
+        if (await waitForSendAccepted(S)) {
+          emit(diagnostics, {
+            component: 'platform-adapter',
+            operation: 'send-ack',
+            stage: 'accepted',
+            eventStatus: 'succeeded',
+            retryNumber,
+            retryCount: retryNumber,
+          })
+          return
+        }
         await sleep(250)
       }
+      emit(diagnostics, {
+        component: 'platform-adapter',
+        operation: 'send-ack',
+        stage: 'failed',
+        eventStatus: 'failed',
+        runOutcome: 'failed',
+        errorCode: 'message-not-accepted',
+        retryCount: 3,
+      })
       throw new Error('message was not accepted by ChatGPT composer')
     },
 
@@ -244,10 +355,10 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
 
     getConversationState(): Promise<ConversationState> {
       const lastText = last(S.lastResponse)?.textContent ?? ''
-      if (hasStopGeneratingButton(S)) return Promise.resolve({ status: 'streaming', lastResponse: lastText })
-      if (q(S.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText })
-      if (!lastText) return Promise.resolve({ status: 'idle' })
-      return Promise.resolve({ status: 'finished', lastResponse: lastText })
+      if (hasStopGeneratingButton(S)) return Promise.resolve({ status: 'streaming', lastResponse: lastText, stopButtonDetected: true })
+      if (q(S.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText, stopButtonDetected: false })
+      if (!lastText) return Promise.resolve({ status: 'idle', stopButtonDetected: false })
+      return Promise.resolve({ status: 'finished', lastResponse: lastText, stopButtonDetected: false })
     },
 
     onStreamEvent(handler) {

@@ -1,10 +1,12 @@
-import { createChatGPTAdapter } from '../adapters/chatgpt/adapter'
+import { CHATGPT_SELECTOR_VERSION, createChatGPTAdapter } from '../adapters/chatgpt/adapter'
 import type { SwToContent, ContentToSw } from '../shared/messages'
 import type { AIPlatform } from '../types'
-import { loadSelectorOverrides } from './selector-overrides'
+import { createAdapterDiagnostics } from '../lib/diagnostic-client'
+import { loadSelectorConfig } from './selector-overrides'
 
 async function boot() {
-  const adapter = createChatGPTAdapter(await loadSelectorOverrides('chatgpt'))
+  const selectorConfig = await loadSelectorConfig('chatgpt', CHATGPT_SELECTOR_VERSION)
+  const adapter = createChatGPTAdapter(selectorConfig.selectors)
 
   adapter.onStreamEvent((event) => {
     const msg: ContentToSw = { type: 'stream-event', event }
@@ -26,7 +28,7 @@ async function boot() {
   // 接收父页通过 postMessage 直接发来的指令(iframe 模式)
   window.addEventListener('message', (e: MessageEvent) => {
     const data = e.data as
-      | { source?: string; action?: string; text?: string; imageDataUrl?: string; imageMime?: string; imageName?: string }
+      | { source?: string; action?: string; text?: string; imageDataUrl?: string; imageMime?: string; imageName?: string; diagnostics?: unknown }
       | undefined
     if (!data || data.source !== 'aichatroom-parent') return
     if (data.action !== 'write-and-send') {
@@ -65,7 +67,11 @@ async function boot() {
       : undefined
 
     void Promise.resolve()
-      .then(() => adapter.sendMessage(text, file))
+      .then(() => adapter.sendMessage(
+        text,
+        file,
+        createAdapterDiagnostics('chatgpt', data.diagnostics, selectorConfig.version),
+      ))
       .then(() => {
         e.source?.postMessage(
           { source: 'aichatroom-content', event: 'result', action: 'write-and-send', platform: 'chatgpt', ok: true },
@@ -90,8 +96,15 @@ async function boot() {
   // 接收 SW 通过 chrome.tabs.sendMessage 发来的指令(用户手动开 tab 模式)
   chrome.runtime.onMessage.addListener((msg: SwToContent, _sender, sendResponse) => {
     if (msg.type === 'write-and-send') {
+      const file = msg.imageDataUrl
+        ? dataUrlToFile(msg.imageDataUrl, msg.imageMime || 'image/png', msg.imageName || 'image.png')
+        : undefined
       adapter
-        .sendMessage(msg.text)
+        .sendMessage(
+          msg.text,
+          file,
+          createAdapterDiagnostics('chatgpt', msg.diagnostics, selectorConfig.version),
+        )
         .then(() => sendResponse({ ok: true }))
         .catch((e: unknown) => sendResponse({ ok: false, error: String(e) }))
       return true
