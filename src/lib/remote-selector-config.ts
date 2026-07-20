@@ -12,6 +12,11 @@ export interface RemoteSelectorConfig {
   platforms: Partial<Record<AIPlatform, { selectors: SelectorOverrideMap }>>
 }
 
+export interface StoredSelectorConfig {
+  selectors?: SelectorOverrideMap
+  version?: string
+}
+
 const ALLOWED_SELECTOR_KEYS: Record<AIPlatform, Set<string>> = {
   chatgpt: new Set([
     'inputBox',
@@ -129,11 +134,18 @@ export function mergeSelectorOverrides<T extends Record<string, SelectorValue>>(
 }
 
 export async function getStoredSelectorOverrides(platform: AIPlatform): Promise<SelectorOverrideMap | undefined> {
+  return (await getStoredSelectorConfig(platform)).selectors
+}
+
+export async function getStoredSelectorConfig(platform: AIPlatform): Promise<StoredSelectorConfig> {
   try {
     const result = await chrome.storage.local.get(REMOTE_SELECTOR_CONFIG_STORAGE_KEY)
     const config = sanitizeRemoteSelectorConfig(result[REMOTE_SELECTOR_CONFIG_STORAGE_KEY])
-    return config?.platforms[platform]?.selectors
+    return {
+      selectors: config?.platforms[platform]?.selectors,
+      version: config?.platforms[platform] ? config.version : undefined,
+    }
   } catch {
-    return undefined
+    return {}
   }
 }

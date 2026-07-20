@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   DIAGNOSTIC_SCHEMA_VERSION,
   mapDiagnosticError,
+  sanitizeDiagnosticContext,
   sanitizeDiagnosticEventDraft,
 } from '../../src/lib/diagnostic-types'
 
@@ -43,6 +44,15 @@ describe('diagnostic types', () => {
   it('rejects records without a supported schema version', () => {
     expect(sanitizeDiagnosticEventDraft(validDraft({ schemaVersion: undefined }))).toBeNull()
     expect(sanitizeDiagnosticEventDraft(validDraft({ schemaVersion: 999 }))).toBeNull()
+  })
+
+  it('sanitizes an untrusted cross-frame diagnostic context', () => {
+    expect(sanitizeDiagnosticContext({
+      batchId: 'batch_1',
+      platformRunId: 'run_1',
+      privateText: 'PRIVATE_PROMPT',
+    })).toEqual({ batchId: 'batch_1', platformRunId: 'run_1' })
+    expect(sanitizeDiagnosticContext({ batchId: 'bad id', platformRunId: 'run_1' })).toBeNull()
   })
 
   it('rejects invalid required ids, enums, and producer sequences', () => {

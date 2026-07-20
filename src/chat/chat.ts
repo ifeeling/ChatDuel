@@ -90,7 +90,18 @@ import { bindComposerFocusRestorer } from '../lib/focus-restore'
 import { filterSessionsByTitle } from '../lib/history-search'
 import { deleteConversation, isSpecificConversationUrl, loadConversations, renameConversation, upsertConversation } from '../lib/conversation-store'
 import { logCaptureDebug, textPreview } from '../lib/capture-debug'
-import { choosePlatformMessageRoute, iframeWriteResultTimeoutMs } from './platform-message-route'
+import {
+  createDiagnosticBatchId,
+  createDiagnosticContext,
+  createDiagnosticProducerId,
+  createDiagnosticReporter,
+} from '../lib/diagnostic-client'
+import type { DiagnosticContext } from '../lib/diagnostic-types'
+import {
+  choosePlatformMessageRoute,
+  iframeWriteResultTimeoutMs,
+  routeTimeoutErrorCode,
+} from './platform-message-route'
 
 // ---------- DOM 引用 ----------
 const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => document.querySelector<T>(sel)!
@@ -1308,6 +1319,12 @@ async function onSend() {
     }
   }
 
+  const diagnosticContexts: Partial<Record<AIPlatform, DiagnosticContext>> = {}
+  if (userSettings.diagnosticEnabled) {
+    const batchId = createDiagnosticBatchId()
+    for (const platform of targets) diagnosticContexts[platform] = createDiagnosticContext(batchId)
+  }
+
   beginSendLock(targets)
   targets.forEach((platform) => setStatus(platform, 'warn', t(userSettings.language, 'send.statusSending')))
 
@@ -1362,12 +1379,46 @@ async function onSend() {
   await Promise.all(
     targets.map(async (p) => {
       const shouldUploadFile = deliveryPlan.autoUploadTargets.includes(p)
+      const diagnosticContext = diagnosticContexts[p]
+      const reporter = diagnosticContext
+        ? createDiagnosticReporter(diagnosticContext, p, createDiagnosticProducerId('chat-ui'))
+        : undefined
+      const route = platformMessageRoute(p)
+      reporter?.emit({
+        component: 'chat-ui',
+        operation: 'route-select',
+        stage: 'routed',
+        eventStatus: 'succeeded',
+        route,
+        inputCharacterCount: textToSend.length,
+        hasAttachment: shouldUploadFile,
+      })
       const result = await writeAndSendToPlatform(p, {
         text: textToSend,
         imageDataUrl: shouldUploadFile ? imageDataUrl : undefined,
         imageMime: shouldUploadFile ? imageMime : undefined,
         imageName: shouldUploadFile ? imageName : undefined,
+        diagnostics: diagnosticContext,
       })
+      if (!result.ok) {
+        const timedOutWithoutReply = !result.error
+        reporter?.emit({
+          component: route === 'iframe' ? 'iframe-bridge' : 'official-tab',
+          operation: 'result-return',
+          stage: timedOutWithoutReply ? 'timed-out' : 'failed',
+          eventStatus: timedOutWithoutReply ? 'timed-out' : 'failed',
+          route,
+          ...(timedOutWithoutReply
+            ? {
+                runOutcome: 'timed-out',
+                errorCode: routeTimeoutErrorCode(route),
+                timeoutMs: route === 'iframe' ? iframeWriteResultTimeoutMs({
+                  imageDataUrl: shouldUploadFile ? imageDataUrl : undefined,
+                }) : undefined,
+              }
+            : {}),
+        })
+      }
       results.push(result)
     }),
   )

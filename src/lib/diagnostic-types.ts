@@ -151,6 +151,11 @@ function isId(value: unknown): value is string {
     && /^[A-Za-z0-9_-]+$/.test(value)
 }
 
+export function sanitizeDiagnosticContext(value: unknown): DiagnosticContext | null {
+  if (!isRecord(value) || !isId(value.batchId) || !isId(value.platformRunId)) return null
+  return { batchId: value.batchId, platformRunId: value.platformRunId }
+}
+
 function boundedInteger(value: unknown, min: number, max: number): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
   return Math.min(max, Math.max(min, Math.trunc(value)))

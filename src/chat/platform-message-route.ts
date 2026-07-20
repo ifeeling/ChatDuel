@@ -1,4 +1,5 @@
 import type { AIPlatform } from '../types'
+import type { DiagnosticErrorCode } from '../lib/diagnostic-types'
 
 export type PlatformMessageRoute = 'iframe' | 'official-tab'
 
@@ -19,4 +20,8 @@ export function iframeWriteResultTimeoutMs(payload: Record<string, unknown>): nu
   return typeof payload.imageDataUrl === 'string' && payload.imageDataUrl.length > 0
     ? 30000
     : 8000
+}
+
+export function routeTimeoutErrorCode(route: PlatformMessageRoute): DiagnosticErrorCode {
+  return route === 'iframe' ? 'iframe-result-timeout' : 'official-tab-unavailable'
 }

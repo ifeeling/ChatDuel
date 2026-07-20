@@ -1,5 +1,5 @@
 import type { AIPlatform, ConversationState, StreamEvent } from '../types'
-import type { DiagnosticEventDraft } from '../lib/diagnostic-types'
+import type { DiagnosticContext, DiagnosticEventDraft } from '../lib/diagnostic-types'
 
 export type DiagnosticToSw =
   | { type: 'diagnostic:append'; event: DiagnosticEventDraft }
@@ -15,7 +15,7 @@ export type PopupToSw =
   | { type: 'request-summary'; target: AIPlatform }
 
 export type SwToContent =
-  | { type: 'write-and-send'; text: string; imageDataUrl?: string; imageMime?: string; imageName?: string }
+  | { type: 'write-and-send'; text: string; imageDataUrl?: string; imageMime?: string; imageName?: string; diagnostics?: DiagnosticContext }
   | { type: 'get-state' }
   | { type: 'get-last-response' }
 

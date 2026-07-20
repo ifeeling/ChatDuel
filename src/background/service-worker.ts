@@ -16,7 +16,7 @@ import { SUPPORTED_PLATFORMS } from '../lib/ai-platforms'
 import {
   REMOTE_SELECTOR_CONFIG_STORAGE_KEY,
   REMOTE_SELECTOR_CONFIG_URL,
-  getStoredSelectorOverrides,
+  getStoredSelectorConfig,
   sanitizeRemoteSelectorConfig,
 } from '../lib/remote-selector-config'
 import type { AIPlatform } from '../types'
@@ -209,9 +209,10 @@ chrome.runtime.onMessage.addListener((msg: { type: string; [k: string]: unknown 
     const imageDataUrl = typeof msg.imageDataUrl === 'string' ? msg.imageDataUrl : undefined
     const imageMime = typeof msg.imageMime === 'string' ? msg.imageMime : undefined
     const imageName = typeof msg.imageName === 'string' ? msg.imageName : undefined
+    const diagnostics = msg.diagnostics
     const contentMessage =
       command === 'write-and-send'
-        ? { type: 'write-and-send', text, imageDataUrl, imageMime, imageName }
+        ? { type: 'write-and-send', text, imageDataUrl, imageMime, imageName, diagnostics }
         : command === 'get-state'
           ? { type: 'get-state' }
           : command === 'get-last-response'
@@ -227,8 +228,8 @@ chrome.runtime.onMessage.addListener((msg: { type: string; [k: string]: unknown 
     return true
   }
   if (msg.type === 'selector-config:get') {
-    getStoredSelectorOverrides(msg.platform as AIPlatform)
-      .then((selectors) => sendResponse({ ok: true, selectors }))
+    getStoredSelectorConfig(msg.platform as AIPlatform)
+      .then((config) => sendResponse({ ok: true, ...config }))
       .catch((e) => sendResponse({ ok: false, error: String(e) }))
     return true
   }
