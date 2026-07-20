@@ -31,7 +31,7 @@ ChatDuel 通过 iframe 或官方标签页操作各 AI 官网，并根据页面 D
 
 - `batchId`：一次用户发送操作。群发到多个 AI 时共用同一个值。
 - `platformRunId`：这次发送中，某个平台的一条完整执行链。
-- `attempt`：该平台执行链中的重试序号，从 1 开始，不额外生成随机 ID。
+- `attempt`：该平台完整执行链的尝试序号，从 1 开始。只有重新执行整条平台链路时才递增，例如 iframe 链路失败后改走官方标签页。发送按钮点击等单一步骤内部的瞬时重试使用 `retryNumber`，并在最终事件中汇总 `retryCount`，不递增 `attempt`。
 
 每条事件至少包含：
 
@@ -45,7 +45,7 @@ ChatDuel 通过 iframe 或官方标签页操作各 AI 官网，并根据页面 D
 - 组件，例如 chat UI、background、content script、iframe bridge、official tab、platform adapter、response capture 或 storage。
 - 操作，例如选择路由、查找输入框、写入、点击发送、等待确认、读取状态、读取回答、比较回答或返回结果。
 - 当前阶段，例如开始发送、等待按钮、已点击、等待官网接受、回答中、检查回答、完成或失败。
-- `eventStatus`：observed、succeeded、failed、timed-out 或 skipped。
+- `eventStatus`：observed、succeeded、failed、timed-out 或 skipped。其中 `skipped` 只表示该步骤按设计不适用或无需执行，例如无附件发送跳过附件准备；不得用作未知状态或错误兜底。
 - 仅在终结事件填写 `runOutcome`：completed、paused、failed、timed-out 或 interrupted。批次层可以额外汇总为 partially-completed。
 - 稳定的错误代码。
 - 实际等待时间和适用的超时上限。
@@ -75,13 +75,13 @@ ChatDuel 通过 iframe 或官方标签页操作各 AI 官网，并根据页面 D
 - `input-write-failed`
 - `send-click-failed`
 - `attachment-preparation-timeout`
-- `diagnostic-storage-failed`
-- `diagnostic-schema-invalid`
 - `unexpected-error`
 
 底层异常的原始字符串不得直接保存。保存前需要映射为稳定错误代码和经过白名单限制的技术字段，避免第三方错误信息意外带入用户内容或 URL。
 
-项目不为此引入新的 schema 依赖。诊断模块提供运行时校验和净化函数，只构造并返回预定义字段；未知字段、类型不匹配、枚举范围外和超长字段直接丢弃，并在控制台输出不含原始值的固定警告。读取旧数据时按 `schemaVersion` 做兼容净化，无法识别的记录跳过，不能让诊断界面崩溃。
+项目不为此引入新的 schema 依赖。诊断模块提供运行时校验和净化函数，只构造并返回预定义字段；未知字段、类型不匹配、枚举范围外和超长字段直接丢弃，并在控制台输出不含原始值的固定警告。读取数据时按 `schemaVersion` 做兼容净化；完全没有版本号、无法识别或无法迁移的记录直接跳过，不能让诊断界面崩溃。
+
+诊断系统内部故障不进入同一份持久化日志。schema 校验失败或 storage 写入失败只输出限频的固定控制台警告，并可在当前后台生命周期内保留一个内存状态供诊断页显示。禁止为了记录诊断系统写入失败而再次调用诊断 writer，也不无限重试。
 
 ### 2. 全平台数据流
 
@@ -100,7 +100,7 @@ ChatDuel 通过 iframe 或官方标签页操作各 AI 官网，并根据页面 D
 
 ChatGPT、Gemini、Claude、豆包和 DeepSeek 均接入这条主干。平台特有行为，例如 DeepSeek 识图模式切换或不同平台的附件准备，只增加对应阶段事件，不建立独立日志系统。
 
-单个平台失败不会阻止其它平台继续记录。一次群发中的平台共享 `batchId`，各自使用独立的 `platformRunId`。发送按钮内部重试使用递增的 `attempt` 区分。
+单个平台失败不会阻止其它平台继续记录。一次群发中的平台共享 `batchId`，各自使用独立的 `platformRunId`。整条平台链路重新执行时递增 `attempt`；步骤内部重试只记录 `retryNumber` 或 `retryCount`。
 
 轮询不逐次落盘。仅在状态或关键布尔值变化、等待达到 5 秒/15 秒/30 秒/60 秒等检查点，以及出现最终结果时记录。最终事件汇总 `pollCount`、`stateChangeCount` 和 `lastObservedState`，减少重复事件。
 
@@ -110,12 +110,19 @@ ChatGPT、Gemini、Claude、豆包和 DeepSeek 均接入这条主干。平台特
 - 默认自动记录，不要求用户在问题发生前开启开关。
 - 最多保留最近 20 个发送批次、100 个平台执行链、1000 条事件、最近 7 天，且序列化总大小不超过 1 MB。
 - 任一上限触发时，从最旧的完整 `batchId` 开始整体淘汰，不截断一次群发或其中某个平台的执行链。
+- 单个发送批次最多 200 条事件和 256 KB；单个 `platformRunId` 最多 50 条事件。
 - 存储写入失败不得影响消息发送；仅在控制台输出固定前缀的技术警告。
 - 清除浏览器扩展数据或卸载扩展时，记录随本地扩展数据一并删除。
 
-所有 content script、adapter 和 chat 页面只发送诊断事件，不直接读改诊断 storage。后台 Service Worker 是唯一写入者：它先执行 schema 净化，再通过串行队列追加；同时到达的少量事件可以合并为一次写入，并在对应 runtime message 响应前完成落盘。这样不依赖不可靠的页面卸载回调，也避免多个上下文读改写同一个 key 时互相覆盖。
+如果当前批次或平台执行链自身达到上限，写入器保留起始事件、关键状态变化、最近事件和终结事件，把被省略的中间事件折叠为 `eventsTruncated: true` 和 `droppedEventCount`。终结事件必须预留位置，异常批次不能无限挤占其它记录。
+
+所有 content script、adapter 和 chat 页面只发送诊断事件，不直接读改诊断 storage。后台 Service Worker 是唯一写入者：它先执行 schema 净化，再通过串行队列追加；同时到达的少量事件可以合并为一次写入。业务发送流程以 fire-and-forget 方式提交诊断事件，不等待诊断结果；后台则在持久化完成后才响应对应 runtime message，使 Chrome 在写入期间保持 Service Worker 生命周期。这样既不把诊断写入放进业务关键路径，也不依赖不可靠的页面卸载回调。
+
+体积检查在每次合并写入时对最多 1 MB 的候选日志做一次完整序列化，以准确计算转义后的 UTF-8 大小。不维护容易在 Service Worker 重启后失准的运行时字节累加器。
 
 `runSequence` 由平台执行链产生；`storageSequence` 只由后台写入器分配。跨平台按 `storageSequence` 和时间近似排序，单个平台执行链按 `runSequence` 还原。
+
+`storageSequence` 不能只存在内存中。持久化数据同时保存下一个可用序号；Service Worker 初始化写入器时，读取该值并与已保存事件中的最大序号核对，从更大的值继续分配，保证重启后新事件序号仍严格递增。
 
 ### 4. 隐私边界
 
@@ -129,7 +136,7 @@ ChatGPT、Gemini、Claude、豆包和 DeepSeek 均接入这条主干。平台特
 
 允许保存：
 
-- 问题和回答的字符数。
+- 问题和回答的字符数。只接受 0 到 100000 的整数，超过上限时按 100000 记录。
 - 是否包含附件及附件的大类，不包含文件名。
 - 是否找到目标 DOM、是否为空、是否不同于基线等布尔值。
 - 预先定义的状态、阶段、错误代码、计时和版本号。
@@ -143,8 +150,8 @@ ChatGPT、Gemini、Claude、豆包和 DeepSeek 均接入这条主干。平台特
 - 显示当前记录数量和最早记录时间。
 - “查看最近诊断”：按 `batchId` 和 `platformRunId` 分组显示，可折叠查看完整轨迹。
 - “复制诊断记录”：复制格式化 JSON。
-- “复制最近一次失败”：只复制包含最近失败平台执行链的批次。
-- “下载 JSON”：使用现有下载能力导出。
+- “复制最近一次失败”：按最终结果定位最近失败的平台执行链，并复制它所属的完整批次，包含同批次成功平台作为时间线对照。
+- “下载 JSON”：把用户已预览确认的同一份字符串创建为 Blob，通过用户点击的 `<a download>` 导出并及时释放 object URL；不调用 `chrome.downloads` API，不新增权限。
 - “清空记录”：清除前要求用户确认，并立即更新数量。
 - “本地诊断记录”开关：默认开启；关闭后不新增事件，并让用户选择保留或清空已有记录。
 
@@ -152,9 +159,11 @@ ChatGPT、Gemini、Claude、豆包和 DeepSeek 均接入这条主干。平台特
 
 > 诊断记录只保存在本机，不包含问题和回答正文。只有你主动复制、下载或发送时，记录才会离开设备。
 
-复制或下载前先显示实际 JSON 预览，让用户可以人工检查。导出文件包含字段说明、扩展版本、导出时间和诊断事件，不包含其它设置或历史记录。
+复制或下载前先显示摘要；用户展开后使用只读纯文本区域显示实际 JSON，不使用 `innerHTML`。预览、复制和下载复用同一次生成的序列化字符串，用户确认后不重新读取日志，保证三者字节一致。导出文件包含字段说明、扩展版本、导出时间和诊断事件，不包含其它设置或历史记录。
 
 首次安装以及首次升级到包含该功能的版本时，显示一次简短说明：默认在本机保存最少量技术诊断记录、不包含对话正文、不会自动上传，并可以随时关闭或清空。
+
+提示使用独立的 `diagnosticNoticeVersionSeen` 版本号，仅当已读版本小于当前提示版本时显示。`diagnosticEnabled` 只在该设置不存在时初始化为 `true`；后续升级不能把用户已经关闭的设置重新打开。只有诊断数据处理范围发生实质变化时才提高提示版本。
 
 ### 6. Chrome Web Store 合规
 
@@ -171,23 +180,36 @@ ChatGPT、Gemini、Claude、豆包和 DeepSeek 均接入这条主干。平台特
 
 当前平台 adapter 的 `paused` 只能说明页面出现“继续生成”按钮，不能证明一定由用户主动点击停止。因此它使用非错误结局 `paused`，不命名为 `paused-by-user`。只有 ChatDuel 自己明确接收到用户取消操作时，才可以记录用户主动取消；当前版本不虚构无法观测的原因。
 
+`interrupted` 表示平台执行链没有正常完成，并且 ChatDuel 已无法继续观察最终状态。它必须同时带有可观测的原因代码，例如 `extension-context-invalidated`、`tab-closed`、`tab-navigation-detected`、`content-script-unavailable`、`official-tab-unavailable` 或 `message-route-unavailable`，不允许保存没有原因的裸 `interrupted`。
+
 回答较长时，如果达到当前回填上限，记录最后一次检测到的页面状态、已等待时长、回答字符数、停止按钮是否存在以及超时上限。不得记录回答文本。
 
 诊断日志是排查证据，不保证能够完整复现第三方官网当时的页面状态。导出内容需要包含这一说明，避免把日志描述成完整会话快照。
+
+“复制最近一次失败”只匹配最终 `runOutcome` 为 `failed`、`timed-out` 或 `interrupted` 的平台执行链，按终结事件的 `storageSequence` 查找最近一条，并导出其完整批次。`paused` 不属于失败；某次 attempt 失败但后续 attempt 最终成功时，汇总为 `recoveredAfterRetry: true`，不算最终失败。
+
+如果某个执行链没有终结事件、最后事件已超过 10 分钟且当前不存在对应活跃任务，查看和导出时派生显示 `derivedOutcome: abandoned` 与 `derivedReason: missing-terminal-event`。这是导出时的说明，不补写或伪造历史事件。
 
 ## 测试与验收
 
 至少覆盖：
 
 - 五个平台都能写入统一格式的发送阶段和最终结果。
-- 群发事件可以通过 `batchId` 串联，各平台通过 `platformRunId` 区分，重试通过 `attempt` 区分。
+- 群发事件可以通过 `batchId` 串联，各平台通过 `platformRunId` 区分；完整链路重试使用 `attempt`，步骤内部重试使用 `retryNumber`/`retryCount`。
 - 正常完成、发送确认超时、iframe 结果超时、回答抓取超时和页面状态请求超时均有稳定错误代码。
 - 只有状态变化、稀疏检查点和最终结果会形成事件，逐次轮询不会产生大量重复记录。
 - 任一保存上限触发后，只按完整批次淘汰，不留下半条执行链。
+- 单批次或单平台执行链异常膨胀时，记录保持有界，并保留起始、关键、最近和终结信息以及截断计数。
 - 超过 7 天的事件会被清除。
 - 两个平台并发各写入 50 条事件时，不丢失、不覆盖，并由后台分配唯一 `storageSequence`。
-- 未知字段、错误类型、枚举外值和旧 schema 数据会被净化或安全跳过。
+- 模拟 Service Worker 重启后，新事件的 `storageSequence` 严格大于已持久化最大值。
+- 未知字段、错误类型、枚举外值、缺少 `schemaVersion` 和无法迁移的数据会被安全跳过，界面不崩溃。
 - 本地写入失败不影响正常发送。
+- storage 持续写入失败或 schema 持续校验失败时，不递归写诊断、不无限重试，只限频输出固定控制台警告。
+- 用户关闭诊断后升级，设置保持关闭；提示版本未变化时不重复显示。
+- attempt 1 失败而后续 attempt 成功时，不被“复制最近一次失败”识别为最终失败。
+- 缺少终结事件的执行链安全显示为派生的“未观测到最终结果”。
+- 预览、剪贴板和下载文件使用同一份序列化字符串。
 - 复制、下载和清空功能正常。
 - 日志序列化结果不包含问题正文、回答正文、附件名、URL 或原始异常消息。
 - 不新增 manifest 权限，不发生自动网络上传。
