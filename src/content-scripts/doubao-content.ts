@@ -1,12 +1,14 @@
 import type { ContentToSw, SwToContent } from '../shared/messages'
 import type { AIPlatform, ConversationState } from '../types'
-import { createDoubaoAdapter } from '../adapters/doubao/adapter'
-import { loadSelectorOverrides } from './selector-overrides'
+import { DOUBAO_SELECTOR_VERSION, createDoubaoAdapter } from '../adapters/doubao/adapter'
+import { createAdapterDiagnostics } from '../lib/diagnostic-client'
+import { loadSelectorConfig } from './selector-overrides'
 
 const PLATFORM: AIPlatform = 'doubao'
 
 async function boot() {
-  const adapter = createDoubaoAdapter(await loadSelectorOverrides(PLATFORM))
+  const selectorConfig = await loadSelectorConfig(PLATFORM, DOUBAO_SELECTOR_VERSION)
+  const adapter = createDoubaoAdapter(selectorConfig.selectors)
 
   function hasUsableComposer(): boolean {
     return !!document.querySelector([
@@ -57,7 +59,7 @@ async function boot() {
 
   window.addEventListener('message', (e: MessageEvent) => {
     const data = e.data as
-      | { source?: string; action?: string; text?: string; imageDataUrl?: string; imageMime?: string; imageName?: string }
+      | { source?: string; action?: string; text?: string; imageDataUrl?: string; imageMime?: string; imageName?: string; diagnostics?: unknown }
       | undefined
     if (!data || data.source !== 'aichatroom-parent') return
 
@@ -95,7 +97,7 @@ async function boot() {
       const file = data.imageDataUrl
         ? dataUrlToFile(data.imageDataUrl, data.imageMime || 'image/png', data.imageName || 'image.png')
         : undefined
-      adapter.sendMessage(text, file)
+      adapter.sendMessage(text, file, createAdapterDiagnostics(PLATFORM, data.diagnostics, selectorConfig.version))
         .then(() => {
           e.source?.postMessage(
             { source: 'aichatroom-content', event: 'result', action: 'write-and-send', platform: PLATFORM, ok: true },
@@ -154,8 +156,11 @@ async function boot() {
       return true
     }
     if (msg.type === 'write-and-send') {
+      const file = msg.imageDataUrl
+        ? dataUrlToFile(msg.imageDataUrl, msg.imageMime || 'image/png', msg.imageName || 'image.png')
+        : undefined
       adapter
-        .sendMessage(msg.text)
+        .sendMessage(msg.text, file, createAdapterDiagnostics(PLATFORM, msg.diagnostics, selectorConfig.version))
         .then(() => sendResponse({ ok: true }))
         .catch((e: unknown) => sendResponse({ ok: false, error: String(e) }))
       return true

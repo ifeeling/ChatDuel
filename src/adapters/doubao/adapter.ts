@@ -1,4 +1,4 @@
-import type { AIAdapter } from '../base'
+import type { AIAdapter, AdapterDiagnostics } from '../base'
 import type { ConversationState, StreamEvent } from '../../types'
 import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
 import { elementToMarkdownText } from '../../lib/dom-response-text'
@@ -85,6 +85,7 @@ const DEFAULT_SELECTORS: DoubaoSelectors = {
   stopButton: DEFAULT_STOP_BUTTON_SELECTORS,
   response: DEFAULT_RESPONSE_SELECTORS,
 }
+export const DOUBAO_SELECTOR_VERSION = 'builtin-1'
 
 export interface DoubaoAttachmentProbeResult {
   inputFound: boolean
@@ -473,6 +474,10 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
   const selectors = mergeSelectorOverrides(DEFAULT_SELECTORS, selectorOverrides) as DoubaoSelectors
   let lastEventHandler: ((e: StreamEvent) => void) | null = null
 
+  function emit(diagnostics: AdapterDiagnostics | undefined, event: Parameters<AdapterDiagnostics['reporter']['emit']>[0]) {
+    diagnostics?.reporter.emit({ ...event, selectorConfigVersion: diagnostics.selectorConfigVersion })
+  }
+
   return {
     async isLoggedIn() {
       return !!queryFirst(selectors.inputBox)
@@ -500,12 +505,69 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
       dispatchEnter(box)
     },
 
-    async sendMessage(text: string, image?: File) {
-      await this.writeText(text)
+    async sendMessage(text: string, image?: File, diagnostics?: AdapterDiagnostics) {
+      const box = queryFirst<HTMLElement>(selectors.inputBox)
+      if (!box) {
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'input-locate', stage: 'failed', eventStatus: 'failed',
+          runOutcome: 'failed', errorCode: 'input-box-not-found', inputCharacterCount: text.length,
+        })
+        throw new Error('doubao input box not found')
+      }
+      emit(diagnostics, {
+        component: 'platform-adapter', operation: 'input-locate', stage: 'located', eventStatus: 'succeeded', inputCharacterCount: text.length,
+      })
+      try {
+        if (box instanceof HTMLTextAreaElement) writeNativeTextareaValue(box, text)
+        else writeEditableValue(box, text)
+      } catch {
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'input-write', stage: 'failed', eventStatus: 'failed',
+          runOutcome: 'failed', errorCode: 'input-write-failed', inputCharacterCount: text.length,
+        })
+        throw new Error('input write failed')
+      }
+      emit(diagnostics, {
+        component: 'platform-adapter', operation: 'input-write', stage: 'written', eventStatus: 'succeeded', inputCharacterCount: text.length,
+      })
       await new Promise((resolve) => setTimeout(resolve, 80))
-      if (image) await this.attachImage(image)
+      if (image) {
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'attachment-prepare', stage: 'preparing', eventStatus: 'observed', hasAttachment: true,
+        })
+        try {
+          await this.attachImage(image)
+        } catch {
+          emit(diagnostics, {
+            component: 'platform-adapter', operation: 'attachment-prepare', stage: 'failed', eventStatus: 'failed',
+            runOutcome: 'failed', errorCode: 'attachment-preparation-timeout', hasAttachment: true,
+          })
+          throw new Error('attachment preparation failed')
+        }
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'attachment-prepare', stage: 'prepared', eventStatus: 'succeeded', hasAttachment: true,
+        })
+      } else {
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'attachment-prepare', stage: 'skipped', eventStatus: 'skipped', hasAttachment: false,
+        })
+      }
       await new Promise((resolve) => setTimeout(resolve, 200))
-      await this.triggerSend()
+      try {
+        await this.triggerSend()
+      } catch {
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'send-click', stage: 'failed', eventStatus: 'failed',
+          runOutcome: 'failed', errorCode: 'send-click-failed', retryNumber: 1,
+        })
+        throw new Error('doubao send failed')
+      }
+      emit(diagnostics, {
+        component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber: 1,
+      })
+      emit(diagnostics, {
+        component: 'platform-adapter', operation: 'send-ack', stage: 'accepted', eventStatus: 'succeeded', retryNumber: 1, retryCount: 1,
+      })
     },
 
     async attachImage(file: File) {
@@ -520,11 +582,11 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
     },
 
     async getConversationState(): Promise<ConversationState> {
-      if (!queryFirst(selectors.inputBox)) return { status: 'error', errorMessage: '豆包输入框未识别' }
+      if (!queryFirst(selectors.inputBox)) return { status: 'error', errorMessage: '豆包输入框未识别', stopButtonDetected: false }
       const lastResponse = getLatestResponseText(selectors)
-      if (hasStopGeneratingButton(selectors)) return { status: 'streaming', lastResponse }
-      if (lastResponse) return { status: 'finished', lastResponse }
-      return { status: 'idle' }
+      if (hasStopGeneratingButton(selectors)) return { status: 'streaming', lastResponse, stopButtonDetected: true }
+      if (lastResponse) return { status: 'finished', lastResponse, stopButtonDetected: false }
+      return { status: 'idle', stopButtonDetected: false }
     },
 
     onStreamEvent(handler) {
