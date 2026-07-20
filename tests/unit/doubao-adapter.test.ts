@@ -531,7 +531,7 @@ describe('doubao adapter', () => {
     expect(JSON.stringify(trace.emit.mock.calls)).not.toContain('kitty.png')
   })
 
-  it('does not report accepted when the composer stays unchanged after clicking send', async () => {
+  it('keeps the original send result while acceptance is not yet observable', async () => {
     vi.useFakeTimers()
     document.body.innerHTML = `
       <div class="composer">
@@ -541,12 +541,11 @@ describe('doubao adapter', () => {
     `
     const trace = diagnostics()
     const sending = createDoubaoAdapter().sendMessage('不会被接受', undefined, trace.value)
-    const rejection = expect(sending).rejects.toThrow('doubao message not accepted')
 
     await vi.runAllTimersAsync()
-    await rejection
+    await expect(sending).resolves.toBeUndefined()
     expect(trace.emit).toHaveBeenLastCalledWith(expect.objectContaining({
-      operation: 'send-ack', stage: 'failed', runOutcome: 'failed', errorCode: 'message-not-accepted',
+      operation: 'send-ack', stage: 'waiting', eventStatus: 'observed',
     }))
     vi.useRealTimers()
   })

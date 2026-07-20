@@ -53,7 +53,7 @@ describe('deepseek adapter', () => {
     expect(trace.emit.mock.calls.some(([event]) => event.operation === 'vision-mode')).toBe(false)
   })
 
-  it('does not report accepted when the button fallback has no acceptance evidence', async () => {
+  it('keeps the original fallback result while acceptance is not yet observable', async () => {
     vi.useFakeTimers()
     document.body.innerHTML = `
       <div class="composer">
@@ -63,12 +63,11 @@ describe('deepseek adapter', () => {
     `
     const trace = diagnostics()
     const sending = createDeepSeekAdapter().sendMessage('不会被接受', undefined, trace.value)
-    const rejection = expect(sending).rejects.toThrow('deepseek message not accepted')
 
     await vi.runAllTimersAsync()
-    await rejection
+    await expect(sending).resolves.toBeUndefined()
     expect(trace.emit).toHaveBeenLastCalledWith(expect.objectContaining({
-      operation: 'send-ack', stage: 'failed', runOutcome: 'failed', errorCode: 'message-not-accepted',
+      operation: 'send-ack', stage: 'waiting', eventStatus: 'observed',
     }))
     vi.useRealTimers()
   })

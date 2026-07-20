@@ -344,11 +344,13 @@ function terminalAnalysis(events: DiagnosticEvent[]): {
 } {
   const warnings: DiagnosticStructuralWarning[] = []
   const accepted = events.find((event) => event.operation === 'send-ack' && event.stage === 'accepted')
+  const acceptancePending = events.find((event) => event.operation === 'send-ack' && event.stage === 'waiting')
+  const responseOwnerStart = accepted ?? acceptancePending
   const terminals = events.filter((event) => event.runOutcome !== undefined)
   const valid: DiagnosticEvent[] = []
   for (const terminal of terminals) {
-    const validOwner = accepted
-      ? terminal.storageSequence > accepted.storageSequence && terminal.component === 'response-capture'
+    const validOwner = responseOwnerStart
+      ? terminal.storageSequence > responseOwnerStart.storageSequence && terminal.component === 'response-capture'
       : terminal.component !== 'response-capture'
         && terminal.runOutcome !== 'completed'
         && terminal.runOutcome !== 'paused'

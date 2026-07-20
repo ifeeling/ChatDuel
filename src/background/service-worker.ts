@@ -239,13 +239,9 @@ chrome.runtime.onMessage.addListener((msg: { type: string; [k: string]: unknown 
         sendResponse({
           ok: false,
           error: String(e),
-          ...(command === 'write-and-send'
-            ? {
-                diagnosticErrorCode: mappedError === 'unexpected-error'
-                  ? 'official-tab-unavailable'
-                  : mappedError,
-              }
-            : {}),
+          diagnosticErrorCode: mappedError === 'unexpected-error'
+            ? 'official-tab-unavailable'
+            : mappedError,
         })
       })
     return true

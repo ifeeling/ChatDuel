@@ -115,6 +115,23 @@ describe('diagnostic retention', () => {
     expect(run.structuralWarnings).toContain('invalid-terminal-owner')
   })
 
+  it('uses response capture as terminal owner after an unconfirmed send acknowledgement', () => {
+    const envelope = createEmptyDiagnosticEnvelope()
+    envelope.events = [
+      event('batch_1', 'run_1', 1, {
+        component: 'platform-adapter', operation: 'send-ack', stage: 'waiting', eventStatus: 'observed',
+      }),
+      event('batch_1', 'run_1', 2, {
+        component: 'response-capture', stage: 'timed-out', eventStatus: 'timed-out',
+        runOutcome: 'timed-out', errorCode: 'response-selector-empty',
+      }),
+    ]
+
+    const run = deriveDiagnosticExport(envelope, { now: NOW, activePlatformRunIds: new Set() }).batches[0].runs[0]
+    expect(run.finalOutcome).toBe('timed-out')
+    expect(run.structuralWarnings).toEqual([])
+  })
+
   it('does not pick a winner when a run has multiple valid terminal events', () => {
     const envelope = createEmptyDiagnosticEnvelope()
     envelope.events = [

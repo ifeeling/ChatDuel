@@ -245,15 +245,6 @@ function hasPendingContent(selectors: DoubaoSelectors): boolean {
   return text.trim().length > 0
 }
 
-async function waitForSendAccepted(selectors: DoubaoSelectors, maxMs = 700): Promise<boolean> {
-  const start = Date.now()
-  while (Date.now() - start < maxMs) {
-    if (hasStopGeneratingButton(selectors) || !hasPendingContent(selectors)) return true
-    await new Promise((resolve) => setTimeout(resolve, 100))
-  }
-  return hasStopGeneratingButton(selectors) || !hasPendingContent(selectors)
-}
-
 function activateControl(button: HTMLElement): void {
   const mouseInit: MouseEventInit = { bubbles: true, cancelable: true, composed: true }
   button.dispatchEvent(new MouseEvent('mousedown', mouseInit))
@@ -583,16 +574,15 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
       emit(diagnostics, {
         component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber: 1,
       })
-      if (!await waitForSendAccepted(selectors)) {
+      if (hasStopGeneratingButton(selectors) || !hasPendingContent(selectors)) {
         emit(diagnostics, {
-          component: 'platform-adapter', operation: 'send-ack', stage: 'failed', eventStatus: 'failed',
-          runOutcome: 'failed', errorCode: 'message-not-accepted', retryNumber: 1, retryCount: 1,
+          component: 'platform-adapter', operation: 'send-ack', stage: 'accepted', eventStatus: 'succeeded', retryNumber: 1, retryCount: 1,
         })
-        throw new Error('doubao message not accepted')
+      } else {
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'send-ack', stage: 'waiting', eventStatus: 'observed', retryNumber: 1, retryCount: 1,
+        })
       }
-      emit(diagnostics, {
-        component: 'platform-adapter', operation: 'send-ack', stage: 'accepted', eventStatus: 'succeeded', retryNumber: 1, retryCount: 1,
-      })
     },
 
     async attachImage(file: File) {

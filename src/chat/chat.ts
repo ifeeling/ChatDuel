@@ -1214,13 +1214,46 @@ function requestLastResponse(p: AIPlatform, timeoutMs = 3000): Promise<string> {
   })
 }
 
-type ConversationStateResult = ConversationState & { requestTimedOut?: boolean }
+interface ResponseReadResult {
+  text: string
+  diagnosticErrorCode?: DiagnosticErrorCode
+}
+
+function requestLastResponseForCapture(p: AIPlatform, timeoutMs = 3000): Promise<ResponseReadResult> {
+  if (platformMessageRoute(p) === 'official-tab') {
+    return sendOfficialTabCommand<{
+      text?: string
+      diagnosticErrorCode?: DiagnosticErrorCode
+    }>(p, 'get-last-response').then((response) => ({
+      text: response?.text ?? '',
+      diagnosticErrorCode: response?.diagnosticErrorCode,
+    }))
+  }
+  return requestLastResponse(p, timeoutMs).then((text) => ({ text }))
+}
+
+type ConversationStateResult = ConversationState & {
+  requestTimedOut?: boolean
+  diagnosticErrorCode?: DiagnosticErrorCode
+}
 
 function requestConversationState(p: AIPlatform, timeoutMs = 3000): Promise<ConversationStateResult> {
   if (platformMessageRoute(p) === 'official-tab') {
-    return sendOfficialTabCommand<{ type?: string; state?: ConversationState; ok?: boolean; error?: string }>(p, 'get-state')
+    return sendOfficialTabCommand<{
+      type?: string
+      state?: ConversationState
+      ok?: boolean
+      error?: string
+      diagnosticErrorCode?: DiagnosticErrorCode
+    }>(p, 'get-state')
       .then((response) => {
-        if (response?.ok === false) return { status: 'error', errorMessage: response.error ?? '官方标签页不可用' }
+        if (response?.ok === false) {
+          return {
+            status: 'error',
+            errorMessage: response.error ?? '官方标签页不可用',
+            diagnosticErrorCode: response.diagnosticErrorCode,
+          }
+        }
         return response?.state ?? { status: 'idle', requestTimedOut: true }
       })
   }
@@ -1345,7 +1378,14 @@ function scheduleSessionResponseBackfill(
   if (attempt >= RESPONSE_BACKFILL_MAX_ATTEMPTS) {
     void (async () => {
       const session = await getSession(sessionId)
-      if (!session) return
+      if (!session) {
+        for (const platform of platforms) {
+          diagnosticTrackers[platform]?.finish({
+            outcome: 'failed', errorCode: 'unexpected-error', now: Date.now(),
+          })
+        }
+        return
+      }
       const failures: Partial<Record<AIPlatform, string>> = {}
       for (const platform of platforms) {
         const response = session.responses[platform]
@@ -1370,7 +1410,14 @@ function scheduleSessionResponseBackfill(
       }
       const updated = applyCaptureFailures(session, failures)
       if (updated !== session) await updateSession(updated)
-    })().catch((e) => console.error('[AIChatRoom chat] response backfill timeout failed', e))
+    })().catch((e) => {
+      for (const platform of platforms) {
+        diagnosticTrackers[platform]?.finish({
+          outcome: 'failed', errorCode: 'unexpected-error', now: Date.now(),
+        })
+      }
+      console.error('[AIChatRoom chat] response backfill timeout failed', e)
+    })
     for (const platform of platforms) {
       logCaptureDebug({
         platform,
@@ -1409,7 +1456,14 @@ async function backfillSessionResponses(
 ) {
   try {
     const session = await getSession(sessionId)
-    if (!session) return
+    if (!session) {
+      for (const platform of platforms) {
+        diagnosticTrackers[platform]?.finish({
+          outcome: 'failed', errorCode: 'unexpected-error', now: Date.now(),
+        })
+      }
+      return
+    }
 
     const trackedPlatforms = platforms.filter((platform) => {
       const response = session.responses[platform]
@@ -1425,7 +1479,16 @@ async function backfillSessionResponses(
       if (state.status === 'streaming') {
         setStatus(platform, 'warn', t(userSettings.language, 'send.statusResponding'))
       }
-      const text = state.lastResponse ? state.lastResponse : await requestLastResponse(platform, 1500)
+      const responseRead = state.lastResponse
+        ? { text: state.lastResponse }
+        : await requestLastResponseForCapture(platform, 1500)
+      const text = responseRead.text
+      const interruptionCode = state.diagnosticErrorCode ?? responseRead.diagnosticErrorCode
+      if (interruptionCode) {
+        diagnosticTrackers[platform]?.finish({
+          outcome: 'interrupted', errorCode: interruptionCode, now: Date.now(),
+        })
+      }
       const trimmedText = text.trim()
       const baselineText = (baselines[platform] ?? '').trim()
       diagnosticTrackers[platform]?.observe({
