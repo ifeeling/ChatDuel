@@ -31,7 +31,7 @@ type PartialUserSettings = Partial<Omit<UserSettings, 'enabledPlatforms' | 'prom
   promptTemplateCustomizations?: Partial<UserPromptTemplateCustomizations>
 }
 
-export const USER_SETTINGS_STORAGE_KEY = 'userSettings'
+const STORAGE_KEY = 'userSettings'
 export const CURRENT_DIAGNOSTIC_NOTICE_VERSION = 1
 
 export function getDefaultUserPromptTemplates(language: UserLanguage): UserPromptTemplates {
@@ -313,13 +313,13 @@ function normalizeSettings(value: PartialUserSettings | undefined): UserSettings
 }
 
 export async function loadUserSettings(): Promise<UserSettings> {
-  const result = await chrome.storage.local.get(USER_SETTINGS_STORAGE_KEY)
-  return normalizeSettings(result[USER_SETTINGS_STORAGE_KEY] as PartialUserSettings | undefined)
+  const result = await chrome.storage.local.get(STORAGE_KEY)
+  return normalizeSettings(result[STORAGE_KEY] as PartialUserSettings | undefined)
 }
 
 export async function saveUserSettings(settings: PartialUserSettings): Promise<UserSettings> {
-  const result = await chrome.storage.local.get(USER_SETTINGS_STORAGE_KEY)
-  const current = result[USER_SETTINGS_STORAGE_KEY] as PartialUserSettings | undefined
+  const result = await chrome.storage.local.get(STORAGE_KEY)
+  const current = result[STORAGE_KEY] as PartialUserSettings | undefined
   const merged: PartialUserSettings = {
     ...(current ?? {}),
     ...settings,
@@ -334,6 +334,6 @@ export async function saveUserSettings(settings: PartialUserSettings): Promise<U
       : current?.promptTemplateCustomizations,
   }
   const normalized = normalizeSettings(merged)
-  await chrome.storage.local.set({ [USER_SETTINGS_STORAGE_KEY]: normalized })
+  await chrome.storage.local.set({ [STORAGE_KEY]: normalized })
   return normalized
 }

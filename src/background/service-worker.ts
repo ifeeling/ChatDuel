@@ -13,7 +13,6 @@
 import { enableEmbedRules, disableEmbedRules, getEmbedRuleCleanupIds } from './dnr-rules'
 import { createDiagnosticWriter, handleDiagnosticWriterMessage } from './diagnostic-writer'
 import { SUPPORTED_PLATFORMS } from '../lib/ai-platforms'
-import { USER_SETTINGS_STORAGE_KEY } from '../lib/user-settings'
 import { mapDiagnosticError } from '../lib/diagnostic-types'
 import {
   REMOTE_SELECTOR_CONFIG_STORAGE_KEY,
@@ -34,6 +33,7 @@ const PLATFORM_URL_PREFIXES: Record<AIPlatform, string[]> = {
 }
 
 const CHAT_TAB_IDS_KEY = 'chatTabIds'
+const USER_SETTINGS_STORAGE_KEY = 'userSettings'
 const SELECTOR_CONFIG_REFRESH_ALARM = 'selector-config-refresh'
 const diagnosticWriter = createDiagnosticWriter(
   chrome.storage.local,
