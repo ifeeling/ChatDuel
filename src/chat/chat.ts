@@ -98,6 +98,10 @@ import {
 } from '../lib/diagnostic-client'
 import type { DiagnosticContext } from '../lib/diagnostic-types'
 import {
+  createResponseDiagnosticTracker,
+  type ResponseDiagnosticTracker,
+} from './response-diagnostic'
+import {
   choosePlatformMessageRoute,
   iframeWriteResultTimeoutMs,
   routeTimeoutErrorCode,
@@ -1113,6 +1117,7 @@ function scheduleSessionResponseBackfill(
   baselines: Partial<Record<AIPlatform, string>>,
   progress: Partial<Record<AIPlatform, ResponseCaptureProgress>> = {},
   attempt = 0,
+  diagnosticTrackers: Partial<Record<AIPlatform, ResponseDiagnosticTracker>> = {},
 ) {
   // 修改回答回填前先看 docs/RESPONSE_CAPTURE_MAINTENANCE.md，避免再次覆盖旧历史或无限等待。
   if (platforms.length === 0) return
@@ -1124,6 +1129,11 @@ function scheduleSessionResponseBackfill(
       for (const platform of platforms) {
         const response = session.responses[platform]
         if (response?.status !== 'pending') continue
+        diagnosticTrackers[platform]?.finish({
+          outcome: 'timed-out',
+          errorCode: 'response-capture-timeout',
+          now: Date.now(),
+        })
         failures[platform] = 'response capture timed out'
         setStatus(platform, 'err', t(userSettings.language, 'send.statusFailed'))
         finishSendLockPlatform(platform)
@@ -1155,7 +1165,14 @@ function scheduleSessionResponseBackfill(
   }
 
   setTimeout(() => {
-    void backfillSessionResponses(sessionId, platforms, baselines, progress, attempt)
+    void backfillSessionResponses(
+      sessionId,
+      platforms,
+      baselines,
+      progress,
+      attempt,
+      diagnosticTrackers,
+    )
   }, RESPONSE_BACKFILL_INTERVAL_MS)
 }
 
@@ -1165,6 +1182,7 @@ async function backfillSessionResponses(
   baselines: Partial<Record<AIPlatform, string>>,
   progress: Partial<Record<AIPlatform, ResponseCaptureProgress>>,
   attempt: number,
+  diagnosticTrackers: Partial<Record<AIPlatform, ResponseDiagnosticTracker>>,
 ) {
   try {
     const session = await getSession(sessionId)
@@ -1184,6 +1202,16 @@ async function backfillSessionResponses(
         setStatus(platform, 'warn', t(userSettings.language, 'send.statusResponding'))
       }
       const text = state.lastResponse ? state.lastResponse : await requestLastResponse(platform, 1500)
+      const trimmedText = text.trim()
+      const baselineText = (baselines[platform] ?? '').trim()
+      diagnosticTrackers[platform]?.observe({
+        now: Date.now(),
+        status: state.status,
+        responseLength: trimmedText.length,
+        baselineLength: baselineText.length,
+        differsFromBaseline: trimmedText !== baselineText,
+        stopButtonDetected: state.stopButtonDetected === true,
+      })
       const decision = evaluateResponseCapture(
         { text, status: state.status },
         baselines[platform],
@@ -1196,8 +1224,6 @@ async function backfillSessionResponses(
       // 详细诊断：分析 completeForUnlock 为 false 的原因
       const completeForUnlockReason = (() => {
         if (completeForUnlock) return 'complete'
-        const trimmedText = text.trim()
-        const baselineText = (baselines[platform] ?? '').trim()
         if (!trimmedText) return 'text-empty'
         if (trimmedText === baselineText) return 'text-equals-baseline'
         if (state.status === 'streaming' || state.status === 'queued' || state.status === 'sending') return `status-active-${state.status}`
@@ -1222,6 +1248,10 @@ async function backfillSessionResponses(
         completeForUnlockReason,
       })
       if (completeForUnlock) {
+        diagnosticTrackers[platform]?.finish({
+          outcome: state.status === 'paused' ? 'paused' : 'completed',
+          now: Date.now(),
+        })
         setStatus(platform, 'ok', t(userSettings.language, 'send.statusDone'))
         finishSendLockPlatform(platform)
       }
@@ -1244,8 +1274,22 @@ async function backfillSessionResponses(
     if (updated !== session) await updateSession(updated)
 
     const remaining = trackedPlatforms
-    scheduleSessionResponseBackfill(sessionId, remaining, baselines, nextProgress, attempt + 1)
+    scheduleSessionResponseBackfill(
+      sessionId,
+      remaining,
+      baselines,
+      nextProgress,
+      attempt + 1,
+      diagnosticTrackers,
+    )
   } catch (e) {
+    for (const platform of platforms) {
+      diagnosticTrackers[platform]?.finish({
+        outcome: 'failed',
+        errorCode: 'unexpected-error',
+        now: Date.now(),
+      })
+    }
     console.error('[AIChatRoom chat] response backfill failed', e)
   }
 }
@@ -1442,6 +1486,26 @@ async function onSend() {
         currentSession.id,
         results.filter((r) => r.ok).map((r) => r.p),
         responseBaselines,
+        {},
+        0,
+        Object.fromEntries(
+          results
+            .filter((result) => result.ok && diagnosticContexts[result.p])
+            .map((result) => {
+              const context = diagnosticContexts[result.p]!
+              return [
+                result.p,
+                createResponseDiagnosticTracker(
+                  createDiagnosticReporter(
+                    context,
+                    result.p,
+                    createDiagnosticProducerId('response-capture'),
+                  ),
+                  Date.now(),
+                ),
+              ]
+            }),
+        ),
       )
     } catch (e) {
       console.error('[AIChatRoom chat] failed to update session history', e)
