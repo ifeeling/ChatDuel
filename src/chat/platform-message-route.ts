@@ -25,3 +25,17 @@ export function iframeWriteResultTimeoutMs(payload: Record<string, unknown>): nu
 export function routeTimeoutErrorCode(route: PlatformMessageRoute): DiagnosticErrorCode {
   return route === 'iframe' ? 'iframe-result-timeout' : 'official-tab-unavailable'
 }
+
+interface IframeReadyRetryInput {
+  waitForReady: () => Promise<boolean>
+  ensureRules: () => Promise<void>
+  reload: () => void
+}
+
+export async function waitForIframeReadyWithRetry(input: IframeReadyRetryInput): Promise<boolean> {
+  if (await input.waitForReady()) return true
+
+  await input.ensureRules()
+  input.reload()
+  return input.waitForReady()
+}

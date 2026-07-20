@@ -104,4 +104,5 @@ export interface ConversationState {
   lastResponse?: string
   errorMessage?: string
   stopButtonDetected?: boolean
+  completionActionBarDetected?: boolean
 }

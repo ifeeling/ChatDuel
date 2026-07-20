@@ -11,6 +11,7 @@
 // 没有 tabId,SW 找不到它们)。详见 docs/postmortems/2026-06-09-iframe-no-response.md
 
 import { enableEmbedRules, disableEmbedRules, getEmbedRuleCleanupIds } from './dnr-rules'
+import { removeTrackedChatTab } from './embed-rule-lifecycle'
 import { createDiagnosticWriter, handleDiagnosticWriterMessage } from './diagnostic-writer'
 import { SUPPORTED_PLATFORMS } from '../lib/ai-platforms'
 import { mapDiagnosticError } from '../lib/diagnostic-types'
@@ -60,10 +61,16 @@ async function addChatTabId(id: number): Promise<void> {
   await chrome.storage.session.set({ [CHAT_TAB_IDS_KEY]: [...ids] })
 }
 
-async function removeChatTabId(id: number): Promise<void> {
+async function removeChatTabId(id: number): Promise<{ wasTracked: boolean; shouldDisableRules: boolean }> {
   const ids = await getChatTabIds()
-  ids.delete(id)
-  await chrome.storage.session.set({ [CHAT_TAB_IDS_KEY]: [...ids] })
+  const result = removeTrackedChatTab(ids, id)
+  if (result.wasTracked) {
+    await chrome.storage.session.set({ [CHAT_TAB_IDS_KEY]: [...result.remainingTabIds] })
+  }
+  return {
+    wasTracked: result.wasTracked,
+    shouldDisableRules: result.shouldDisableRules,
+  }
 }
 
 async function findOfficialTab(platform: AIPlatform): Promise<chrome.tabs.Tab | null> {
@@ -151,19 +158,10 @@ chrome.action.onClicked.addListener(() => {
 // ---------- 维护 chatTabIds ----------
 chrome.tabs.onRemoved.addListener((tabId) => {
   void removeChatTabId(tabId)
-  // tab 关闭后,如果 chatTabIds 空了,关掉 DNR 规则(兜底)
-  void getChatTabIds().then((ids) => {
-    if (ids.size === 0) {
-      void disableEmbedRules().catch(() => {})
-    }
-  })
-})
-
-// 监听 chat 页导航(防止 tabId 重用时 chatTabIds 残留,跟 ChatBrawl 同款)
-chrome.webNavigation?.onCommitted.addListener((details) => {
-  if (details.url === chrome.runtime.getURL(CHAT_PAGE_URL)) {
-    void addChatTabId(details.tabId)
-  }
+    .then((result) => {
+      if (result.shouldDisableRules) return disableEmbedRules()
+    })
+    .catch((e) => console.warn('[ChatDuel] failed to update embed rule lifecycle', e))
 })
 
 // ---------- 官方页 tab 状态广播 ----------
@@ -186,7 +184,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, _change, tab) => {
 })
 
 // ---------- 来自 chat 页 / popup / content script 的消息 ----------
-chrome.runtime.onMessage.addListener((msg: { type: string; [k: string]: unknown }, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg: { type: string; [k: string]: unknown }, sender, sendResponse) => {
   const diagnosticResponse = handleDiagnosticWriterMessage(diagnosticWriter, msg)
   if (diagnosticResponse) {
     diagnosticResponse
@@ -195,13 +193,24 @@ chrome.runtime.onMessage.addListener((msg: { type: string; [k: string]: unknown 
     return true
   }
   if (msg.type === 'enable-embed-rules') {
-    enableEmbedRules()
+    const tabId = sender.tab?.id
+    Promise.resolve()
+      .then(async () => {
+        if (tabId !== undefined) await addChatTabId(tabId)
+        await enableEmbedRules()
+      })
       .then(() => sendResponse({ ok: true }))
       .catch((e) => sendResponse({ ok: false, error: String(e) }))
     return true
   }
   if (msg.type === 'disable-embed-rules') {
-    disableEmbedRules()
+    const tabId = sender.tab?.id
+    Promise.resolve()
+      .then(async () => {
+        if (tabId === undefined) return
+        const result = await removeChatTabId(tabId)
+        if (result.shouldDisableRules) await disableEmbedRules()
+      })
       .then(() => sendResponse({ ok: true }))
       .catch((e) => sendResponse({ ok: false, error: String(e) }))
     return true

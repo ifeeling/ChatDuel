@@ -30,6 +30,7 @@ describe('doubao adapter', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
     localStorage.clear()
+    vi.useRealTimers()
     vi.restoreAllMocks()
   })
 
@@ -159,6 +160,180 @@ describe('doubao adapter', () => {
     await expect(createDoubaoAdapter().getConversationState()).resolves.toMatchObject({
       status: 'streaming',
       lastResponse: '目前世界杯正在进行中。',
+    })
+  })
+
+  it('does not treat the prompt or search progress as the response after sending', async () => {
+    vi.useFakeTimers()
+    document.body.innerHTML = `
+      <main>
+        <div class="message-list">
+          <div class="my-0 w-full mx-auto max-w-content">浏览器扩展上架前检查事项（50条）</div>
+        </div>
+      </main>
+      <div class="composer">
+        <textarea placeholder="发消息...">浏览器扩展上架前检查事项（50条）</textarea>
+        <button aria-label="发送">发送</button>
+      </div>
+    `
+    document.querySelector('button')!.addEventListener('click', () => {
+      document.querySelector<HTMLTextAreaElement>('textarea')!.value = ''
+    })
+    const adapter = createDoubaoAdapter({ response: ['.message-list'] })
+    const sending = adapter.sendMessage('浏览器扩展上架前检查事项（50条）')
+    await vi.advanceTimersByTimeAsync(300)
+    await sending
+
+    await expect(adapter.getLastResponse()).resolves.toBe('')
+
+    document.querySelector('.message-list')!.insertAdjacentHTML(
+      'beforeend',
+      '<div class="my-0 w-full mx-auto max-w-content">找到 24 篇资料</div>',
+    )
+    await expect(adapter.getLastResponse()).resolves.toBe('')
+    await expect(adapter.getConversationState()).resolves.toMatchObject({ status: 'streaming' })
+  })
+
+  it('tracks the new turn when an older answer has a higher candidate score', async () => {
+    vi.useFakeTimers()
+    document.body.innerHTML = `
+      <main>
+        <div class="message assistant">
+          <p>浏览器扩展上架前 50 项完整检查清单</p>
+          <div class="answer-actions"><button>复制</button><button>点赞</button></div>
+        </div>
+      </main>
+      <div class="composer">
+        <textarea placeholder="发消息...">请介绍网站上线前的检查事项</textarea>
+        <button aria-label="发送">发送</button>
+      </div>
+    `
+    document.querySelector('button[aria-label="发送"]')!.addEventListener('click', () => {
+      document.querySelector<HTMLTextAreaElement>('textarea')!.value = ''
+      document.querySelector('main')!.insertAdjacentHTML(
+        'beforeend',
+        `
+          <div class="my-0 w-full mx-auto max-w-content">请介绍网站上线前的检查事项</div>
+          <div class="my-0 w-full mx-auto max-w-content">网站上线前应检查域名、服务器和监控告警。</div>
+        `,
+      )
+    })
+
+    const adapter = createDoubaoAdapter({ response: ['main > div'] })
+    const sending = adapter.sendMessage('请介绍网站上线前的检查事项')
+    await vi.advanceTimersByTimeAsync(300)
+    await sending
+
+    await expect(adapter.getLastResponse()).resolves.toBe('网站上线前应检查域名、服务器和监控告警。')
+    await expect(adapter.getConversationState()).resolves.toMatchObject({
+      status: 'streaming',
+      lastResponse: '网站上线前应检查域名、服务器和监控告警。',
+    })
+
+    await vi.advanceTimersByTimeAsync(45_000)
+    await expect(adapter.getConversationState()).resolves.toMatchObject({
+      status: 'finished',
+      lastResponse: '网站上线前应检查域名、服务器和监控告警。',
+    })
+    await expect(adapter.getConversationState()).resolves.toMatchObject({
+      status: 'finished',
+      lastResponse: '网站上线前应检查域名、服务器和监控告警。',
+    })
+  })
+
+  it('finishes from a visible action bar belonging to the current response', async () => {
+    vi.useFakeTimers()
+    document.body.innerHTML = `
+      <main></main>
+      <div class="composer">
+        <textarea placeholder="发消息...">请介绍上线检查事项</textarea>
+        <button aria-label="发送">发送</button>
+      </div>
+    `
+    document.querySelector('button[aria-label="发送"]')!.addEventListener('click', () => {
+      document.querySelector<HTMLTextAreaElement>('textarea')!.value = ''
+      document.querySelector('main')!.insertAdjacentHTML(
+        'beforeend',
+        `
+          <div class="turn">
+            <div class="current-answer">完整回答内容</div>
+            <div class="message-action-bar-abc" style="opacity: 0">
+              <span data-button-mode="max" class="hidden"></span>
+              <div class="message-action-button-main"></div>
+            </div>
+          </div>
+        `,
+      )
+    })
+
+    const adapter = createDoubaoAdapter({ response: ['.current-answer'] })
+    const sending = adapter.sendMessage('请介绍上线检查事项')
+    await vi.advanceTimersByTimeAsync(300)
+    await sending
+
+    await expect(adapter.getConversationState()).resolves.toMatchObject({
+      status: 'streaming',
+      lastResponse: '完整回答内容',
+    })
+    document.querySelector<HTMLElement>('.message-action-bar-abc')!.style.opacity = '1'
+
+    await expect(adapter.getConversationState()).resolves.toMatchObject({
+      status: 'streaming',
+      lastResponse: '完整回答内容',
+      completionActionBarDetected: true,
+    })
+    await expect(adapter.getConversationState()).resolves.toMatchObject({
+      status: 'finished',
+      lastResponse: '完整回答内容',
+      completionActionBarDetected: true,
+    })
+  })
+
+  it('keeps a Doubao response streaming through a 15 second pause and falls back after 45 seconds', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-20T07:38:00.000Z'))
+    document.body.innerHTML = `
+      <main>
+        <div class="message-list">
+          <div class="my-0 w-full mx-auto max-w-content">请列出 50 条检查事项</div>
+        </div>
+      </main>
+      <div class="composer">
+        <textarea placeholder="发消息...">请列出 50 条检查事项</textarea>
+        <button aria-label="发送">发送</button>
+      </div>
+    `
+    document.querySelector('button')!.addEventListener('click', () => {
+      document.querySelector<HTMLTextAreaElement>('textarea')!.value = ''
+    })
+    const adapter = createDoubaoAdapter({ response: ['.message-list'] })
+    const sending = adapter.sendMessage('请列出 50 条检查事项')
+    await vi.advanceTimersByTimeAsync(300)
+    await sending
+
+    document.querySelector('.message-list')!.insertAdjacentHTML(
+      'beforeend',
+      '<div id="answer" class="my-0 w-full mx-auto max-w-content">1. 检查权限</div>',
+    )
+    await expect(adapter.getConversationState()).resolves.toMatchObject({ status: 'streaming' })
+
+    document.querySelector('#answer')!.textContent = '1. 检查权限\n2. 检查隐私政策'
+    await vi.advanceTimersByTimeAsync(4_000)
+    await expect(adapter.getConversationState()).resolves.toMatchObject({ status: 'streaming' })
+
+    await vi.advanceTimersByTimeAsync(14_999)
+    await expect(adapter.getConversationState()).resolves.toMatchObject({ status: 'streaming' })
+
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(adapter.getConversationState()).resolves.toMatchObject({ status: 'streaming' })
+
+    await vi.advanceTimersByTimeAsync(29_999)
+    await expect(adapter.getConversationState()).resolves.toMatchObject({ status: 'streaming' })
+
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(adapter.getConversationState()).resolves.toMatchObject({
+      status: 'finished',
+      lastResponse: '1. 检查权限 2. 检查隐私政策',
     })
   })
 

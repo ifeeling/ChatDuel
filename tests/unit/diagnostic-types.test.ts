@@ -29,6 +29,7 @@ describe('diagnostic types', () => {
       responseCharacterCount: 999_999,
       waitedMs: -20,
       retryCount: 500,
+      completionActionBarDetected: true,
       unknownSecret: 'https://chatgpt.com/c/private-prompt',
     }))
 
@@ -36,6 +37,7 @@ describe('diagnostic types', () => {
       responseCharacterCount: 100_000,
       waitedMs: 0,
       retryCount: 100,
+      completionActionBarDetected: true,
     })
     expect(JSON.stringify(result)).not.toContain('private-prompt')
     expect(result).not.toHaveProperty('unknownSecret')

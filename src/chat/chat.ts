@@ -117,6 +117,7 @@ import {
   choosePlatformMessageRoute,
   iframeWriteResultTimeoutMs,
   routeTimeoutErrorCode,
+  waitForIframeReadyWithRetry,
 } from './platform-message-route'
 
 // ---------- DOM 引用 ----------
@@ -748,10 +749,10 @@ async function loadDiagnosticSummary() {
         ? t(userSettings.language, 'diagnostic.writerFailed')
         : t(userSettings.language, 'diagnostic.writerOk'),
     })
-    btnDiagnosticCopyFailure.disabled = !summary.hasFinalFailure
+    btnDiagnosticCopyFailure.disabled = false
   } catch {
     diagnosticSummary.textContent = t(userSettings.language, 'diagnostic.summaryFailed')
-    btnDiagnosticCopyFailure.disabled = true
+    btnDiagnosticCopyFailure.disabled = false
   }
 }
 
@@ -1059,14 +1060,19 @@ function fileToDataUrl(file: File): Promise<string> {
 }
 
 // ---------- 启动 ----------
+async function ensureEmbedRulesEnabled(): Promise<void> {
+  const result = await sendToSw<{ ok?: boolean; error?: string }>({ type: 'enable-embed-rules' })
+  if (!result?.ok) throw new Error(result?.error ?? '启用 iframe 嵌入规则失败')
+}
+
 async function bootstrap() {
   try {
-    await sendToSw({ type: 'enable-embed-rules' })
+    await ensureEmbedRulesEnabled()
     console.log('[AIChatRoom chat] embed rules enabled')
   } catch (e) {
     console.error('[AIChatRoom chat] enable-embed-rules failed', e)
   }
-  refreshAllStatuses()
+  await refreshAllStatuses()
 }
 
 async function refreshAllStatuses() {
@@ -1083,7 +1089,19 @@ async function refreshAllStatuses() {
     if (iframe.src === 'about:blank' || !iframe.src) {
       iframe.src = platformUrl(p)
     }
-    const ok = await waitForIframeReady(p)
+    let ok = false
+    try {
+      ok = await waitForIframeReadyWithRetry({
+        waitForReady: () => waitForIframeReady(p),
+        ensureRules: ensureEmbedRulesEnabled,
+        reload: () => {
+          readyMap[p] = false
+          iframe.src = platformUrl(p)
+        },
+      })
+    } catch (e) {
+      console.error(`[AIChatRoom chat] failed to recover ${p} iframe`, e)
+    }
     if (ok) {
       const capabilities = getPlatformCapabilities(p)
       if (capabilities.supportsText) {
@@ -1192,6 +1210,7 @@ function requestLastResponse(p: AIPlatform, timeoutMs = 3000): Promise<string> {
   const win = panelIframe(p).contentWindow
   if (!win) return Promise.resolve('')
   return new Promise<string>((resolve) => {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
     const onMsg = (e: MessageEvent) => {
       const d = e.data as { source?: string; type?: string; platform?: AIPlatform; text?: string } | undefined
       if (
@@ -1201,12 +1220,12 @@ function requestLastResponse(p: AIPlatform, timeoutMs = 3000): Promise<string> {
         d.platform === p
       ) {
         window.removeEventListener('message', onMsg)
+        if (timeoutId !== undefined) clearTimeout(timeoutId)
         resolve(d.text ?? '')
       }
     }
     window.addEventListener('message', onMsg)
-    postToIframe(p, 'get-last-response')
-    setTimeout(() => {
+    timeoutId = setTimeout(() => {
       window.removeEventListener('message', onMsg)
       logCaptureDebug({
         platform: p,
@@ -1215,6 +1234,7 @@ function requestLastResponse(p: AIPlatform, timeoutMs = 3000): Promise<string> {
       })
       resolve('')
     }, timeoutMs)
+    postToIframe(p, 'get-last-response')
   })
 }
 
@@ -1264,6 +1284,7 @@ function requestConversationState(p: AIPlatform, timeoutMs = 3000): Promise<Conv
   const win = panelIframe(p).contentWindow
   if (!win) return Promise.resolve({ status: 'idle', requestTimedOut: true })
   return new Promise<ConversationStateResult>((resolve) => {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
     const onMsg = (e: MessageEvent) => {
       const d = e.data as {
         source?: string
@@ -1279,12 +1300,12 @@ function requestConversationState(p: AIPlatform, timeoutMs = 3000): Promise<Conv
         d.state
       ) {
         window.removeEventListener('message', onMsg)
+        if (timeoutId !== undefined) clearTimeout(timeoutId)
         resolve(d.state)
       }
     }
     window.addEventListener('message', onMsg)
-    postToIframe(p, 'get-state')
-    setTimeout(() => {
+    timeoutId = setTimeout(() => {
       window.removeEventListener('message', onMsg)
       logCaptureDebug({
         platform: p,
@@ -1293,6 +1314,7 @@ function requestConversationState(p: AIPlatform, timeoutMs = 3000): Promise<Conv
       })
       resolve({ status: 'idle', requestTimedOut: true })
     }, timeoutMs)
+    postToIframe(p, 'get-state')
   })
 }
 
@@ -1520,6 +1542,7 @@ async function backfillSessionResponses(
         baselineLength: baselineText.length,
         differsFromBaseline: trimmedText !== baselineText,
         stopButtonDetected: state.stopButtonDetected === true,
+        completionActionBarDetected: state.completionActionBarDetected === true,
       })
       nextDiagnosticWaitErrors[platform] = classifyResponseCaptureWait({
         stateRequestTimedOut: state.requestTimedOut === true,
@@ -1562,16 +1585,15 @@ async function backfillSessionResponses(
         willCapture,
         completeForUnlock,
         completeForUnlockReason,
+        completionActionBarDetected: state.completionActionBarDetected === true,
       })
-      if (completeForUnlock) {
+      if (willCapture) {
         diagnosticTrackers[platform]?.finish({
           outcome: state.status === 'paused' ? 'paused' : 'completed',
           now: Date.now(),
         })
         setStatus(platform, 'ok', t(userSettings.language, 'send.statusDone'))
         finishSendLockPlatform(platform)
-      }
-      if (willCapture) {
         captured[platform] = decision.text
       }
     }))
@@ -3612,15 +3634,6 @@ function bindEvents() {
 
   btnRefresh.addEventListener('click', () => void refreshAllStatuses())
 }
-
-// ---------- 离开时关 DNR 规则 ----------
-window.addEventListener('beforeunload', () => {
-  try {
-    chrome.runtime.sendMessage({ type: 'disable-embed-rules' })
-  } catch {
-    /* ignore */
-  }
-})
 
 // ---------- 启动 ----------
 window.addEventListener('DOMContentLoaded', () => {

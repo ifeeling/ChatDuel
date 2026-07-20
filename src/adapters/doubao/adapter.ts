@@ -71,6 +71,13 @@ const RESPONSE_EXCLUDE_ANCESTORS = [
   '[contenteditable="true"]',
 ].join(',')
 
+const RESPONSE_QUIET_FALLBACK_MS = 45_000
+const COMPLETION_ACTION_BAR_SELECTORS = [
+  '[class*="message-action-bar"]',
+  '[data-foundation-type*="message-action-bar"]',
+  '[data-testid*="message-action"]',
+]
+
 interface DoubaoSelectors {
   [key: string]: string[]
   inputBox: string[]
@@ -408,7 +415,7 @@ function removeTrailingSuggestionLines(text: string): string {
 }
 
 function isSearchLoadingText(text: string): boolean {
-  return /^正在搜索$|^搜索中/.test(text.trim())
+  return /^正在搜索$|^搜索中|^找到\s*\d+\s*篇资料$/u.test(text.trim())
 }
 
 function isSearchResultWithAnswer(text: string): boolean {
@@ -437,7 +444,25 @@ function responseCandidateScore(el: HTMLElement): number {
   return score
 }
 
-function getLatestResponseText(selectors: DoubaoSelectors): string {
+function snapshotResponseCandidates(selectors: DoubaoSelectors): ReadonlyMap<HTMLElement, string> {
+  return new Map(
+    collectResponseCandidateElements(selectors)
+      .map((el) => [el, elementText(el)] as const),
+  )
+}
+
+interface DoubaoResponseCandidate {
+  el: HTMLElement
+  text: string
+  score: number
+  index: number
+}
+
+function getLatestResponseCandidate(
+  selectors: DoubaoSelectors,
+  excludedTexts: ReadonlySet<string> = new Set(),
+  candidatesBeforeSend: ReadonlyMap<HTMLElement, string> = new Map(),
+): DoubaoResponseCandidate | undefined {
   // 豆包会出现外层列表、搜索块和建议问题；改候选选择前先看 docs/RESPONSE_CAPTURE_MAINTENANCE.md。
   const seen = new Set<string>()
   const candidates = collectResponseCandidateElements(selectors)
@@ -447,6 +472,9 @@ function getLatestResponseText(selectors: DoubaoSelectors): string {
     .filter((el) => !isUserMessage(el))
     .map((el, index) => ({ el, text: elementText(el), score: responseCandidateScore(el), index }))
     .filter((candidate) => candidate.text.length > 0)
+    .filter((candidate) => !excludedTexts.has(normalizeText(candidate.text)))
+    .filter((candidate) => !isSearchLoadingText(candidate.text))
+    .filter((candidate) => candidatesBeforeSend.get(candidate.el) !== candidate.text)
     .filter((candidate) => {
       if (seen.has(candidate.text)) return false
       seen.add(candidate.text)
@@ -476,12 +504,61 @@ function getLatestResponseText(selectors: DoubaoSelectors): string {
       : undefined,
   })
 
-  return candidates[candidates.length - 1]?.text ?? ''
+  return candidates[candidates.length - 1]
+}
+
+function getLatestResponseText(
+  selectors: DoubaoSelectors,
+  excludedTexts: ReadonlySet<string> = new Set(),
+  candidatesBeforeSend: ReadonlyMap<HTMLElement, string> = new Map(),
+): string {
+  return getLatestResponseCandidate(selectors, excludedTexts, candidatesBeforeSend)?.text ?? ''
+}
+
+function isVisiblyRendered(el: HTMLElement): boolean {
+  for (let current: HTMLElement | null = el; current; current = current.parentElement) {
+    if (isHidden(current)) return false
+    if (window.getComputedStyle?.(current).opacity === '0') return false
+    if (current === document.body) break
+  }
+  return true
+}
+
+function appearsBefore(first: HTMLElement, second: HTMLElement): boolean {
+  return (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+}
+
+function hasVisibleCompletionActionBar(candidate: DoubaoResponseCandidate, selectors: DoubaoSelectors): boolean {
+  const responseElements = collectResponseCandidateElements(selectors)
+  return [...document.querySelectorAll<HTMLElement>(COMPLETION_ACTION_BAR_SELECTORS.join(','))]
+    .filter((bar) => isVisiblyRendered(bar))
+    .some((bar) => {
+      if (candidate.el.contains(bar)) return true
+      if (!appearsBefore(candidate.el, bar)) return false
+      const hasInterveningResponse = responseElements.some((other) => {
+        if (other === candidate.el || candidate.el.contains(other) || other.contains(candidate.el)) return false
+        return appearsBefore(candidate.el, other) && appearsBefore(other, bar) && elementText(other).length > 0
+      })
+      return !hasInterveningResponse
+    })
 }
 
 export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter {
   const selectors = mergeSelectorOverrides(DEFAULT_SELECTORS, selectorOverrides) as DoubaoSelectors
   let lastEventHandler: ((e: StreamEvent) => void) | null = null
+  let activeSend: {
+    prompt: string
+    candidatesBeforeSend: ReadonlyMap<HTMLElement, string>
+    lastObservedResponse: string
+    lastResponseChangeAt: number
+    completed: boolean
+    completionActionBarDetected: boolean
+    completionActionBarStableCount: number
+  } | null = null
+
+  function responseExclusions(): ReadonlySet<string> {
+    return activeSend?.prompt ? new Set([activeSend.prompt]) : new Set()
+  }
 
   function emit(diagnostics: AdapterDiagnostics | undefined, event: Parameters<AdapterDiagnostics['reporter']['emit']>[0]) {
     diagnostics?.reporter.emit({ ...event, selectorConfigVersion: diagnostics.selectorConfigVersion })
@@ -515,6 +592,7 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
     },
 
     async sendMessage(text: string, image?: File, diagnostics?: AdapterDiagnostics) {
+      const candidatesBeforeSend = snapshotResponseCandidates(selectors)
       const box = queryFirst<HTMLElement>(selectors.inputBox)
       if (!box) {
         emit(diagnostics, {
@@ -571,6 +649,15 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
         })
         throw new Error('doubao send failed')
       }
+      activeSend = {
+        prompt: normalizeText(text),
+        candidatesBeforeSend,
+        lastObservedResponse: '',
+        lastResponseChangeAt: Date.now(),
+        completed: false,
+        completionActionBarDetected: false,
+        completionActionBarStableCount: 0,
+      }
       emit(diagnostics, {
         component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber: 1,
       })
@@ -593,13 +680,68 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
     },
 
     async getLastResponse() {
-      return getLatestResponseText(selectors)
+      if (activeSend?.completed) return activeSend.lastObservedResponse
+      return getLatestResponseText(selectors, responseExclusions(), activeSend?.candidatesBeforeSend)
     },
 
     async getConversationState(): Promise<ConversationState> {
       if (!queryFirst(selectors.inputBox)) return { status: 'error', errorMessage: '豆包输入框未识别', stopButtonDetected: false }
-      const lastResponse = getLatestResponseText(selectors)
+      if (activeSend?.completed) {
+        return {
+          status: 'finished',
+          lastResponse: activeSend.lastObservedResponse,
+          stopButtonDetected: false,
+          completionActionBarDetected: activeSend.completionActionBarDetected,
+        }
+      }
+      const candidate = getLatestResponseCandidate(selectors, responseExclusions(), activeSend?.candidatesBeforeSend)
+      const lastResponse = candidate?.text ?? ''
       if (hasStopGeneratingButton(selectors)) return { status: 'streaming', lastResponse, stopButtonDetected: true }
+      if (activeSend) {
+        const meaningfulResponse = lastResponse
+        if (!meaningfulResponse) {
+          return { status: 'streaming', lastResponse, stopButtonDetected: false }
+        }
+        const completionActionBarDetected = !!candidate && hasVisibleCompletionActionBar(candidate, selectors)
+        activeSend.completionActionBarStableCount = completionActionBarDetected
+          ? activeSend.completionActionBarStableCount + 1
+          : 0
+        if (meaningfulResponse !== activeSend.lastObservedResponse) {
+          activeSend.lastObservedResponse = meaningfulResponse
+          activeSend.lastResponseChangeAt = Date.now()
+          return {
+            status: 'streaming',
+            lastResponse: meaningfulResponse,
+            stopButtonDetected: false,
+            completionActionBarDetected,
+          }
+        }
+        if (activeSend.completionActionBarStableCount >= 2) {
+          activeSend.completed = true
+          activeSend.completionActionBarDetected = true
+          return {
+            status: 'finished',
+            lastResponse: meaningfulResponse,
+            stopButtonDetected: false,
+            completionActionBarDetected: true,
+          }
+        }
+        if (Date.now() - activeSend.lastResponseChangeAt < RESPONSE_QUIET_FALLBACK_MS) {
+          return {
+            status: 'streaming',
+            lastResponse: meaningfulResponse,
+            stopButtonDetected: false,
+            completionActionBarDetected,
+          }
+        }
+        activeSend.completed = true
+        return {
+          status: 'finished',
+          lastResponse: meaningfulResponse,
+          stopButtonDetected: false,
+          completionActionBarDetected: false,
+        }
+      }
       if (lastResponse) return { status: 'finished', lastResponse, stopButtonDetected: false }
       return { status: 'idle', stopButtonDetected: false }
     },

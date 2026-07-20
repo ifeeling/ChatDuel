@@ -11,6 +11,7 @@ export interface ResponseDiagnosticObservation {
   baselineLength: number
   differsFromBaseline: boolean
   stopButtonDetected: boolean
+  completionActionBarDetected?: boolean
 }
 
 export interface ResponseDiagnosticFinish {
@@ -52,6 +53,7 @@ function safeObservationFields(observation: ResponseDiagnosticObservation) {
     baselineCharacterCount: observation.baselineLength,
     differsFromBaseline: observation.differsFromBaseline,
     stopButtonDetected: observation.stopButtonDetected,
+    completionActionBarDetected: observation.completionActionBarDetected === true,
   }
 }
 
@@ -74,6 +76,7 @@ export function createResponseDiagnosticTracker(
         || lastObservation.status !== observation.status
         || lastObservation.differsFromBaseline !== observation.differsFromBaseline
         || lastObservation.stopButtonDetected !== observation.stopButtonDetected
+        || lastObservation.completionActionBarDetected !== observation.completionActionBarDetected
       lastObservation = observation
 
       if (stateChanged) {

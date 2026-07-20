@@ -82,6 +82,21 @@ describe('response diagnostic tracker', () => {
     expect(JSON.stringify(trace.emit.mock.calls)).not.toContain('完整回答')
   })
 
+  it('records whether the current response completion action bar was detected', () => {
+    const trace = reporter()
+    const tracker = createResponseDiagnosticTracker(trace, 0)
+
+    tracker.observe({
+      now: 3_000, status: 'finished', responseLength: 30, baselineLength: 5,
+      differsFromBaseline: true, stopButtonDetected: false,
+      completionActionBarDetected: true,
+    } as Parameters<typeof tracker.observe>[0])
+
+    expect(trace.emit).toHaveBeenLastCalledWith(expect.objectContaining({
+      completionActionBarDetected: true,
+    }))
+  })
+
   it('does not invent observation fields when finishing before the first poll', () => {
     const trace = reporter()
     const tracker = createResponseDiagnosticTracker(trace, 100)

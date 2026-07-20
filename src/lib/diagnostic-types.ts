@@ -127,6 +127,7 @@ export interface DiagnosticEventDraft extends DiagnosticContext {
   baselineCharacterCount?: number
   hasAttachment?: boolean
   stopButtonDetected?: boolean
+  completionActionBarDetected?: boolean
   differsFromBaseline?: boolean
   pollCount?: number
   stateChangeCount?: number
@@ -232,6 +233,7 @@ export function sanitizeDiagnosticEventDraft(value: unknown): DiagnosticEventDra
   copyOptionalInteger(result, value, 'stateChangeCount', MAX_PRODUCER_SEQUENCE)
   copyOptionalBoolean(result, value, 'hasAttachment')
   copyOptionalBoolean(result, value, 'stopButtonDetected')
+  copyOptionalBoolean(result, value, 'completionActionBarDetected')
   copyOptionalBoolean(result, value, 'differsFromBaseline')
 
   return result as unknown as DiagnosticEventDraft
