@@ -90,6 +90,12 @@ import { bindComposerFocusRestorer } from '../lib/focus-restore'
 import { filterSessionsByTitle } from '../lib/history-search'
 import { deleteConversation, isSpecificConversationUrl, loadConversations, renameConversation, upsertConversation } from '../lib/conversation-store'
 import { logCaptureDebug, textPreview } from '../lib/capture-debug'
+import { prepareDiagnosticExport, type PreparedDiagnosticExport } from '../lib/diagnostic-export'
+import {
+  deriveDiagnosticExport,
+  type DiagnosticEnvelope,
+  type DiagnosticExportPayload,
+} from '../lib/diagnostic-retention'
 import {
   createDiagnosticBatchId,
   createDiagnosticContext,
@@ -146,6 +152,15 @@ const settingPromptLabel = $<HTMLSpanElement>('#setting-prompt-label')
 const settingPromptTemplate = $<HTMLTextAreaElement>('#setting-prompt-template')
 const settingPromptHelp = $<HTMLParagraphElement>('#setting-prompt-help')
 const settingCaptureDebug = $<HTMLInputElement>('#setting-capture-debug')
+const settingDiagnosticEnabled = $<HTMLInputElement>('#setting-diagnostic-enabled')
+const diagnosticSummary = $<HTMLDivElement>('#diagnostic-summary')
+const diagnosticList = $<HTMLDivElement>('#diagnostic-list')
+const diagnosticPreviewWrap = $<HTMLLabelElement>('#diagnostic-preview-wrap')
+const diagnosticExportPreview = $<HTMLTextAreaElement>('#diagnostic-export-preview')
+const btnDiagnosticView = $<HTMLButtonElement>('#btn-diagnostic-view')
+const btnDiagnosticCopyFailure = $<HTMLButtonElement>('#btn-diagnostic-copy-failure')
+const btnDiagnosticDownload = $<HTMLButtonElement>('#btn-diagnostic-download')
+const btnDiagnosticClear = $<HTMLButtonElement>('#btn-diagnostic-clear')
 const btnResetPromptTemplate = $<HTMLButtonElement>('#btn-reset-prompt-template')
 const historyOverlay = $<HTMLDivElement>('#history-overlay')
 const btnHistoryClose = $<HTMLButtonElement>('#btn-history-close')
@@ -195,6 +210,10 @@ const RESPONSE_BACKFILL_INTERVAL_MS = 3000
 const RESPONSE_BACKFILL_MAX_ATTEMPTS = 20
 const RESPONSE_STABLE_REQUIRED_POLLS = 2
 let userSettings: UserSettings = DEFAULT_USER_SETTINGS
+let diagnosticEventCount = 0
+let preparedDiagnosticExport: PreparedDiagnosticExport | null = null
+let clearDiagnosticsWhenDisabled = false
+const DIAGNOSTIC_NOTICE_VERSION = 1
 let selectedPromptTemplateKey: UserPromptTemplateKey = 'transfer'
 let promptTemplateDrafts: UserPromptTemplates = { ...DEFAULT_USER_SETTINGS.promptTemplates }
 let promptTemplateCustomizationDrafts: UserPromptTemplateCustomizations = { ...DEFAULT_USER_SETTINGS.promptTemplateCustomizations }
@@ -273,6 +292,13 @@ function applyStaticUiLanguage(language: UserLanguage) {
   setElementText('.prompt-kind-field span', t(language, 'settings.promptKind'))
   setElementText('#btn-reset-prompt-template', t(language, 'settings.resetPrompt'))
   setElementText('#diagnostics-lead', t(language, 'settings.diagnosticsLead'))
+  setElementText('#diagnostic-local-title', t(language, 'diagnostic.title'))
+  setElementText('#diagnostic-local-disclosure', t(language, 'diagnostic.disclosure'))
+  setElementText('#btn-diagnostic-view', t(language, 'diagnostic.view'))
+  setElementText('#btn-diagnostic-copy-failure', t(language, 'diagnostic.copyFailure'))
+  setElementText('#btn-diagnostic-download', t(language, 'diagnostic.download'))
+  setElementText('#btn-diagnostic-clear', t(language, 'diagnostic.clear'))
+  setElementText('#diagnostic-preview-title', t(language, 'diagnostic.preview'))
   setElementText('#diagnostics-capture-title', t(language, 'settings.captureDebugTitle'))
   setElementText('#diagnostics-capture-help', t(language, 'settings.captureDebugHelp'))
   setElementText('.settings-field span', t(language, 'settings.language'))
@@ -673,17 +699,174 @@ function renderSettingsForm() {
   promptTemplateDrafts = { ...userSettings.promptTemplates }
   promptTemplateCustomizationDrafts = { ...userSettings.promptTemplateCustomizations }
   settingCaptureDebug.checked = userSettings.captureDebug
+  settingDiagnosticEnabled.checked = userSettings.diagnosticEnabled
   selectedPromptTemplateKey = settingPromptKind.value as UserPromptTemplateKey || 'transfer'
   renderPromptTemplateEditor()
+}
+
+interface DiagnosticSummaryResponse {
+  ok?: boolean
+  summary?: {
+    eventCount: number
+    batchCount: number
+    runCount: number
+    earliestTimestamp?: number
+    hasFinalFailure: boolean
+  }
+  internalStatus?: { schemaError: boolean; storageError: boolean }
+}
+
+function clearPreparedDiagnosticExport() {
+  preparedDiagnosticExport = null
+  diagnosticExportPreview.value = ''
+  diagnosticPreviewWrap.hidden = true
+}
+
+async function loadDiagnosticSummary() {
+  try {
+    const response = await sendToSw<DiagnosticSummaryResponse>({ type: 'diagnostic:summary' })
+    const summary = response?.summary
+    if (!response?.ok || !summary) throw new Error('diagnostic summary unavailable')
+    diagnosticEventCount = summary.eventCount
+    const earliest = summary.earliestTimestamp
+      ? new Date(summary.earliestTimestamp).toLocaleString(userSettings.language)
+      : t(userSettings.language, 'diagnostic.none')
+    const writerFailed = response.internalStatus?.schemaError || response.internalStatus?.storageError
+    diagnosticSummary.textContent = formatUiText(userSettings.language, 'diagnostic.summary', {
+      batches: summary.batchCount,
+      runs: summary.runCount,
+      events: summary.eventCount,
+      earliest,
+      status: writerFailed
+        ? t(userSettings.language, 'diagnostic.writerFailed')
+        : t(userSettings.language, 'diagnostic.writerOk'),
+    })
+    btnDiagnosticCopyFailure.disabled = !summary.hasFinalFailure
+  } catch {
+    diagnosticSummary.textContent = t(userSettings.language, 'diagnostic.summaryFailed')
+    btnDiagnosticCopyFailure.disabled = true
+  }
+}
+
+async function loadDiagnosticPayload(latestFailureOnly = false): Promise<DiagnosticExportPayload> {
+  const response = await sendToSw<{ ok?: boolean; envelope?: DiagnosticEnvelope }>({ type: 'diagnostic:snapshot' })
+  if (!response?.ok || !response.envelope) throw new Error('diagnostic snapshot unavailable')
+  return deriveDiagnosticExport(response.envelope, {
+    now: Date.now(),
+    activePlatformRunIds: new Set(),
+    latestFailureOnly,
+  })
+}
+
+function showDiagnosticPreview(payload: DiagnosticExportPayload): PreparedDiagnosticExport {
+  preparedDiagnosticExport = prepareDiagnosticExport(payload)
+  diagnosticExportPreview.value = preparedDiagnosticExport.previewText
+  diagnosticPreviewWrap.hidden = false
+  return preparedDiagnosticExport
+}
+
+function renderDiagnosticBatches(payload: DiagnosticExportPayload) {
+  diagnosticList.replaceChildren()
+  if (payload.batches.length === 0) {
+    const empty = document.createElement('p')
+    empty.className = 'settings-help'
+    empty.textContent = t(userSettings.language, 'diagnostic.none')
+    diagnosticList.appendChild(empty)
+  }
+  for (const batch of payload.batches) {
+    const details = document.createElement('details')
+    const summary = document.createElement('summary')
+    summary.textContent = formatUiText(userSettings.language, 'diagnostic.batch', {
+      id: batch.batchId,
+      runs: batch.runs.length,
+    })
+    details.appendChild(summary)
+    for (const run of batch.runs) {
+      const row = document.createElement('div')
+      row.className = 'diagnostic-run'
+      const platform = run.events[0]?.platform ?? '-'
+      const outcome = run.finalOutcome ?? run.derivedOutcome ?? t(userSettings.language, 'diagnostic.noTerminal')
+      row.textContent = formatUiText(userSettings.language, 'diagnostic.run', {
+        platform,
+        outcome,
+        events: run.events.length,
+      })
+      details.appendChild(row)
+    }
+    diagnosticList.appendChild(details)
+  }
+  diagnosticList.hidden = false
+}
+
+async function viewDiagnostics() {
+  clearPreparedDiagnosticExport()
+  const payload = await loadDiagnosticPayload()
+  renderDiagnosticBatches(payload)
+  showDiagnosticPreview(payload)
+}
+
+async function copyLatestFailedDiagnostics() {
+  clearPreparedDiagnosticExport()
+  const payload = await loadDiagnosticPayload(true)
+  if (payload.batches.length === 0) {
+    showToast(t(userSettings.language, 'diagnostic.noFailure'), 'info')
+    return
+  }
+  const prepared = showDiagnosticPreview(payload)
+  await navigator.clipboard.writeText(prepared.clipboardText)
+  showToast(t(userSettings.language, 'diagnostic.copiedFailure'), 'success', 1800)
+}
+
+async function downloadDiagnostics() {
+  clearPreparedDiagnosticExport()
+  const payload = await loadDiagnosticPayload()
+  const prepared = showDiagnosticPreview(payload)
+  const url = URL.createObjectURL(prepared.blob)
+  try {
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `chatduel-diagnostics-${new Date().toISOString().slice(0, 10)}.json`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
+async function clearDiagnostics() {
+  if (!confirm(t(userSettings.language, 'diagnostic.clearConfirm'))) return
+  const response = await sendToSw<{ ok?: boolean }>({ type: 'diagnostic:clear' })
+  if (!response?.ok) throw new Error('diagnostic clear failed')
+  diagnosticEventCount = 0
+  diagnosticList.replaceChildren()
+  diagnosticList.hidden = true
+  clearPreparedDiagnosticExport()
+  await loadDiagnosticSummary()
+  showToast(t(userSettings.language, 'diagnostic.cleared'), 'success', 1800)
+}
+
+function reportDiagnosticUiFailure(error: unknown) {
+  console.error('[AIChatRoom chat] diagnostic action failed', error)
+  showToast(t(userSettings.language, 'diagnostic.actionFailed'), 'err')
 }
 
 function openSettings() {
   renderSettingsForm()
   settingsOverlay.hidden = false
+  void loadDiagnosticSummary()
+  if (userSettings.diagnosticNoticeVersionSeen < DIAGNOSTIC_NOTICE_VERSION) {
+    showToast(t(userSettings.language, 'diagnostic.firstNotice'), 'info', 7000)
+    void saveUserSettings({ diagnosticNoticeVersionSeen: DIAGNOSTIC_NOTICE_VERSION })
+      .then((settings) => { userSettings = settings })
+      .catch((error) => console.error('[AIChatRoom chat] save diagnostic notice failed', error))
+  }
 }
 
 function closeSettings() {
   settingsOverlay.hidden = true
+  clearDiagnosticsWhenDisabled = false
+  clearPreparedDiagnosticExport()
 }
 
 function selectSettingsTab(tab: string) {
@@ -694,6 +877,7 @@ function selectSettingsTab(tab: string) {
     panel.classList.toggle('active', panel.dataset.settingsPanel === tab)
   })
   btnSettingsSave.hidden = tab === 'help'
+  if (tab === 'diagnostics') void loadDiagnosticSummary()
 }
 
 function toggleInputExpanded() {
@@ -739,7 +923,7 @@ async function onSaveSettings() {
     platformOrder: userSettings.platformOrder,
     language: settingLanguage.value as UserLanguage,
     captureDebug: settingCaptureDebug.checked,
-    diagnosticEnabled: userSettings.diagnosticEnabled,
+    diagnosticEnabled: settingDiagnosticEnabled.checked,
     diagnosticNoticeVersionSeen: userSettings.diagnosticNoticeVersionSeen,
     promptTemplates: promptTemplateDrafts,
     promptTemplateCustomizations: promptTemplateCustomizationDrafts,
@@ -749,6 +933,15 @@ async function onSaveSettings() {
   try {
     const saved = await saveUserSettings(next)
     applyUserSettings(saved)
+    if (!saved.diagnosticEnabled && clearDiagnosticsWhenDisabled) {
+      try {
+        const cleared = await sendToSw<{ ok?: boolean }>({ type: 'diagnostic:clear' })
+        if (!cleared?.ok) throw new Error('diagnostic clear failed')
+      } catch (error) {
+        reportDiagnosticUiFailure(error)
+      }
+      clearDiagnosticsWhenDisabled = false
+    }
     closeSettings()
     await refreshAllStatuses()
     showToast(t(userSettings.language, 'settings.saveSuccess'), 'success', 1600)
@@ -3248,6 +3441,15 @@ function bindEvents() {
     promptTemplateCustomizationDrafts[selectedPromptTemplateKey] = false
     syncCurrentPromptDraft()
   })
+  settingDiagnosticEnabled.addEventListener('change', () => {
+    clearDiagnosticsWhenDisabled = !settingDiagnosticEnabled.checked
+      && diagnosticEventCount > 0
+      && confirm(t(userSettings.language, 'diagnostic.clearOnDisableConfirm'))
+  })
+  btnDiagnosticView.addEventListener('click', () => void viewDiagnostics().catch(reportDiagnosticUiFailure))
+  btnDiagnosticCopyFailure.addEventListener('click', () => void copyLatestFailedDiagnostics().catch(reportDiagnosticUiFailure))
+  btnDiagnosticDownload.addEventListener('click', () => void downloadDiagnostics().catch(reportDiagnosticUiFailure))
+  btnDiagnosticClear.addEventListener('click', () => void clearDiagnostics().catch(reportDiagnosticUiFailure))
   document.querySelectorAll<HTMLButtonElement>('.settings-nav-item[data-settings-tab]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const tab = btn.dataset.settingsTab

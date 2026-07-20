@@ -251,7 +251,29 @@
             <button id="btn-reset-prompt-template" class="settings-secondary" type="button">恢复当前提示词默认值</button>
           </div>
           <div class="settings-panel" data-settings-panel="diagnostics">
-            <p class="settings-lead" id="diagnostics-lead">遇到历史记录抓错回答、内容不完整或混入参考资料时，可以临时打开诊断日志。</p>
+            <p class="settings-lead" id="diagnostics-lead">在本机保留最近的技术诊断记录，方便排查发送和回答读取问题。</p>
+            <label class="site-row diagnostic-row diagnostic-local-toggle">
+              <span class="switch">
+                <input id="setting-diagnostic-enabled" type="checkbox">
+                <span class="switch-track"></span>
+              </span>
+              <span class="site-icon">LOG</span>
+              <span class="site-name" id="diagnostic-local-title">本地诊断记录</span>
+            </label>
+            <p class="settings-help" id="diagnostic-local-disclosure">技术诊断只保存在本机，不包含问题、回答、附件名称、网页地址或账号信息，也不会自动上传。你可以在导出前预览内容。</p>
+            <div class="diagnostic-summary" id="diagnostic-summary" aria-live="polite">正在读取诊断摘要…</div>
+            <div class="diagnostic-actions">
+              <button id="btn-diagnostic-view" class="settings-secondary" type="button">查看最近诊断</button>
+              <button id="btn-diagnostic-copy-failure" class="settings-secondary" type="button">复制最近一次失败</button>
+              <button id="btn-diagnostic-download" class="settings-secondary" type="button">下载全部诊断</button>
+              <button id="btn-diagnostic-clear" class="settings-secondary diagnostic-danger" type="button">清空记录</button>
+            </div>
+            <div id="diagnostic-list" class="diagnostic-list" hidden></div>
+            <label class="diagnostic-preview" id="diagnostic-preview-wrap" hidden>
+              <span id="diagnostic-preview-title">导出预览（只读）</span>
+              <textarea id="diagnostic-export-preview" readonly spellcheck="false"></textarea>
+            </label>
+            <hr class="diagnostic-divider">
             <label class="site-row diagnostic-row">
               <span class="switch">
                 <input id="setting-capture-debug" type="checkbox">
