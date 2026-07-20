@@ -724,6 +724,8 @@ async function onSaveSettings() {
     platformOrder: userSettings.platformOrder,
     language: settingLanguage.value as UserLanguage,
     captureDebug: settingCaptureDebug.checked,
+    diagnosticEnabled: userSettings.diagnosticEnabled,
+    diagnosticNoticeVersionSeen: userSettings.diagnosticNoticeVersionSeen,
     promptTemplates: promptTemplateDrafts,
     promptTemplateCustomizations: promptTemplateCustomizationDrafts,
   }
@@ -2955,6 +2957,8 @@ async function onSwitchPanel(source: AIPlatform, target: AIPlatform) {
     platformOrder: swapPlatformOrder(userSettings.platformOrder, source, target),
     language: userSettings.language,
     captureDebug: userSettings.captureDebug,
+    diagnosticEnabled: userSettings.diagnosticEnabled,
+    diagnosticNoticeVersionSeen: userSettings.diagnosticNoticeVersionSeen,
     promptTemplates: userSettings.promptTemplates,
     promptTemplateCustomizations: userSettings.promptTemplateCustomizations,
   }
@@ -2975,6 +2979,8 @@ async function onAddPanel(platform: AIPlatform) {
     platformOrder: userSettings.platformOrder,
     language: userSettings.language,
     captureDebug: userSettings.captureDebug,
+    diagnosticEnabled: userSettings.diagnosticEnabled,
+    diagnosticNoticeVersionSeen: userSettings.diagnosticNoticeVersionSeen,
     promptTemplates: userSettings.promptTemplates,
     promptTemplateCustomizations: userSettings.promptTemplateCustomizations,
   }, t(userSettings.language, 'panelMenu.added'), t(userSettings.language, 'panelMenu.addFailed'))
@@ -2992,6 +2998,8 @@ async function onClosePanel(platform: AIPlatform) {
     platformOrder: userSettings.platformOrder,
     language: userSettings.language,
     captureDebug: userSettings.captureDebug,
+    diagnosticEnabled: userSettings.diagnosticEnabled,
+    diagnosticNoticeVersionSeen: userSettings.diagnosticNoticeVersionSeen,
     promptTemplates: userSettings.promptTemplates,
     promptTemplateCustomizations: userSettings.promptTemplateCustomizations,
   }, t(userSettings.language, 'panelMenu.closed'), t(userSettings.language, 'panelMenu.closeFailed'))

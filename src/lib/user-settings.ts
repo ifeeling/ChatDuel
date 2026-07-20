@@ -18,6 +18,8 @@ export interface UserSettings {
   platformOrder: AIPlatform[]
   language: UserLanguage
   captureDebug: boolean
+  diagnosticEnabled: boolean
+  diagnosticNoticeVersionSeen: number
   promptTemplates: UserPromptTemplates
   promptTemplateCustomizations: UserPromptTemplateCustomizations
 }
@@ -30,6 +32,7 @@ type PartialUserSettings = Partial<Omit<UserSettings, 'enabledPlatforms' | 'prom
 }
 
 const STORAGE_KEY = 'userSettings'
+export const CURRENT_DIAGNOSTIC_NOTICE_VERSION = 1
 
 export function getDefaultUserPromptTemplates(language: UserLanguage): UserPromptTemplates {
   const defaults = getDefaultTemplatesForLanguage(language)
@@ -214,6 +217,8 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   platformOrder: ['gemini', 'chatgpt', 'claude', 'doubao', 'deepseek'],
   language: 'zh-CN',
   captureDebug: false,
+  diagnosticEnabled: true,
+  diagnosticNoticeVersionSeen: 0,
   promptTemplates: getDefaultUserPromptTemplates('zh-CN'),
   promptTemplateCustomizations: DEFAULT_PROMPT_CUSTOMIZATIONS,
 }
@@ -297,6 +302,11 @@ function normalizeSettings(value: PartialUserSettings | undefined): UserSettings
     platformOrder,
     language,
     captureDebug: value?.captureDebug === true,
+    diagnosticEnabled: value?.diagnosticEnabled !== false,
+    diagnosticNoticeVersionSeen: typeof value?.diagnosticNoticeVersionSeen === 'number'
+      && Number.isInteger(value.diagnosticNoticeVersionSeen)
+      ? Math.max(0, value.diagnosticNoticeVersionSeen)
+      : 0,
     promptTemplates,
     promptTemplateCustomizations,
   }
@@ -308,7 +318,22 @@ export async function loadUserSettings(): Promise<UserSettings> {
 }
 
 export async function saveUserSettings(settings: PartialUserSettings): Promise<UserSettings> {
-  const normalized = normalizeSettings(settings)
+  const result = await chrome.storage.local.get(STORAGE_KEY)
+  const current = result[STORAGE_KEY] as PartialUserSettings | undefined
+  const merged: PartialUserSettings = {
+    ...(current ?? {}),
+    ...settings,
+    enabledPlatforms: settings.enabledPlatforms
+      ? { ...(current?.enabledPlatforms ?? {}), ...settings.enabledPlatforms }
+      : current?.enabledPlatforms,
+    promptTemplates: settings.promptTemplates
+      ? { ...(current?.promptTemplates ?? {}), ...settings.promptTemplates }
+      : current?.promptTemplates,
+    promptTemplateCustomizations: settings.promptTemplateCustomizations
+      ? { ...(current?.promptTemplateCustomizations ?? {}), ...settings.promptTemplateCustomizations }
+      : current?.promptTemplateCustomizations,
+  }
+  const normalized = normalizeSettings(merged)
   await chrome.storage.local.set({ [STORAGE_KEY]: normalized })
   return normalized
 }
