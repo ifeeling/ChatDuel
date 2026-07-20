@@ -1,7 +1,8 @@
-import { createClaudeAdapter } from '../adapters/claude/adapter'
+import { CLAUDE_SELECTOR_VERSION, createClaudeAdapter } from '../adapters/claude/adapter'
 import type { SwToContent, ContentToSw } from '../shared/messages'
 import type { AIPlatform } from '../types'
-import { loadSelectorOverrides } from './selector-overrides'
+import { createAdapterDiagnostics } from '../lib/diagnostic-client'
+import { loadSelectorConfig } from './selector-overrides'
 import selectorsJson from '../adapters/claude/selectors.json'
 
 // selectors.json 是「最佳猜测」，以下诊断用于在实页确认每个选择器是否命中。
@@ -401,7 +402,8 @@ async function boot() {
     console.log(`${LOG_PREFIX} Post-cache-reload init (cache was cleared in previous load)`)
   }
 
-  const adapter = createClaudeAdapter(await loadSelectorOverrides('claude'))
+  const selectorConfig = await loadSelectorConfig('claude', CLAUDE_SELECTOR_VERSION)
+  const adapter = createClaudeAdapter(selectorConfig.selectors)
 
   // 延迟 ~3s 等 Claude 页面渲染完，再诊断 selectors.json 命中情况
   setTimeout(dumpSelectorDiagnostics, 3000)
@@ -424,7 +426,7 @@ async function boot() {
 
   window.addEventListener('message', (e: MessageEvent) => {
     const data = e.data as
-      | { source?: string; action?: string; text?: string; imageDataUrl?: string; imageMime?: string; imageName?: string }
+      | { source?: string; action?: string; text?: string; imageDataUrl?: string; imageMime?: string; imageName?: string; diagnostics?: unknown }
       | undefined
     if (!data || data.source !== 'aichatroom-parent') return
     if (data.action !== 'write-and-send') {
@@ -462,7 +464,7 @@ async function boot() {
       : undefined
 
     void Promise.resolve()
-      .then(() => adapter.sendMessage(text, file))
+      .then(() => adapter.sendMessage(text, file, createAdapterDiagnostics('claude', data.diagnostics, selectorConfig.version)))
       .then(() => {
         e.source?.postMessage(
           { source: 'aichatroom-content', event: 'result', action: 'write-and-send', platform: 'claude', ok: true },
@@ -486,8 +488,11 @@ async function boot() {
 
   chrome.runtime.onMessage.addListener((msg: SwToContent, _sender, sendResponse) => {
     if (msg.type === 'write-and-send') {
+      const file = msg.imageDataUrl
+        ? dataUrlToFile(msg.imageDataUrl, msg.imageMime || 'image/png', msg.imageName || 'image.png')
+        : undefined
       adapter
-        .sendMessage(msg.text)
+        .sendMessage(msg.text, file, createAdapterDiagnostics('claude', msg.diagnostics, selectorConfig.version))
         .then(() => sendResponse({ ok: true }))
         .catch((e: unknown) => sendResponse({ ok: false, error: String(e) }))
       return true

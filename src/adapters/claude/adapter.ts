@@ -1,10 +1,11 @@
-import type { AIAdapter } from '../base'
+import type { AIAdapter, AdapterDiagnostics } from '../base'
 import type { ConversationState, StreamEvent } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 import selectorsJson from './selectors.json'
 
 type ClaudeSelectors = typeof selectorsJson.selectors
 const DEFAULT_SELECTORS = selectorsJson.selectors
+export const CLAUDE_SELECTOR_VERSION = selectorsJson.version
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // ===========================================================================
@@ -332,8 +333,8 @@ function getLatestResponseText(): string {
   return ''
 }
 
-function hasStopGeneratingButton(): boolean {
-  return !!document.querySelector(DEFAULT_SELECTORS.stopButton)
+function hasStopGeneratingButton(selectors = DEFAULT_SELECTORS): boolean {
+  return !!document.querySelector(selectors.stopButton)
 }
 
 // ── 基于 MutationObserver 的流式状态检测（选择器无关兜底） ─────────
@@ -365,6 +366,10 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
   function last<T extends Element = Element>(sel: string): T | null {
     const nodes = document.querySelectorAll<T>(sel)
     return nodes.length > 0 ? nodes[nodes.length - 1] : null
+  }
+
+  function emit(diagnostics: AdapterDiagnostics | undefined, event: Parameters<AdapterDiagnostics['reporter']['emit']>[0]) {
+    diagnostics?.reporter.emit({ ...event, selectorConfigVersion: diagnostics.selectorConfigVersion })
   }
 
   function startObserver() {
@@ -430,19 +435,75 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
       btn.click()
     },
 
-    async sendMessage(text: string, image?: File) {
-      await this.writeText(text)
+    async sendMessage(text: string, image?: File, diagnostics?: AdapterDiagnostics) {
+      const box = q<HTMLElement>(S.inputBox)
+      if (!box) {
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'input-locate', stage: 'failed', eventStatus: 'failed',
+          runOutcome: 'failed', errorCode: 'input-box-not-found', inputCharacterCount: text.length,
+        })
+        throw new Error('claude input box not found')
+      }
+      emit(diagnostics, {
+        component: 'platform-adapter', operation: 'input-locate', stage: 'located', eventStatus: 'succeeded', inputCharacterCount: text.length,
+      })
+      try {
+        writeEditableValue(box, text)
+      } catch {
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'input-write', stage: 'failed', eventStatus: 'failed',
+          runOutcome: 'failed', errorCode: 'input-write-failed', inputCharacterCount: text.length,
+        })
+        throw new Error('input write failed')
+      }
+      emit(diagnostics, {
+        component: 'platform-adapter', operation: 'input-write', stage: 'written', eventStatus: 'succeeded', inputCharacterCount: text.length,
+      })
       await new Promise((r) => setTimeout(r, 50))
       if (image) {
-        await this.attachImage(image)
-        await waitForUploadReady()
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'attachment-prepare', stage: 'preparing', eventStatus: 'observed', hasAttachment: true,
+        })
+        try {
+          await this.attachImage(image)
+          await waitForUploadReady()
+        } catch {
+          emit(diagnostics, {
+            component: 'platform-adapter', operation: 'attachment-prepare', stage: 'failed', eventStatus: 'failed',
+            runOutcome: 'failed', errorCode: 'attachment-preparation-timeout', hasAttachment: true,
+          })
+          throw new Error('attachment preparation failed')
+        }
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'attachment-prepare', stage: 'prepared', eventStatus: 'succeeded', hasAttachment: true,
+        })
+      } else {
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'attachment-prepare', stage: 'skipped', eventStatus: 'skipped', hasAttachment: false,
+        })
       }
       let submitted = false
       for (let attempt = 0; attempt < 3 && !submitted; attempt += 1) {
-        await this.triggerSend()
+        const retryNumber = attempt + 1
+        try {
+          await this.triggerSend()
+        } catch {
+          emit(diagnostics, {
+            component: 'platform-adapter', operation: 'send-click', stage: 'timed-out', eventStatus: 'timed-out',
+            runOutcome: 'timed-out', errorCode: 'send-button-not-ready', retryNumber, timeoutMs: 8_000,
+          })
+          throw new Error('send button is not ready')
+        }
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber,
+        })
         await new Promise((r) => setTimeout(r, 350))
         if (composerRemainingText().length === 0) {
           submitted = true
+          emit(diagnostics, {
+            component: 'platform-adapter', operation: 'send-ack', stage: 'accepted', eventStatus: 'succeeded',
+            retryNumber, retryCount: retryNumber,
+          })
           break
         }
         // 兜底：聚焦输入框发 Enter
@@ -450,10 +511,20 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
         await new Promise((r) => setTimeout(r, 350))
         if (composerRemainingText().length === 0) {
           submitted = true
+          emit(diagnostics, {
+            component: 'platform-adapter', operation: 'send-ack', stage: 'accepted', eventStatus: 'succeeded',
+            retryNumber, retryCount: retryNumber,
+          })
           break
         }
       }
-      if (!submitted) throw new Error('claude message did not submit')
+      if (!submitted) {
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'send-ack', stage: 'failed', eventStatus: 'failed',
+          runOutcome: 'failed', errorCode: 'message-not-accepted', retryCount: 3,
+        })
+        throw new Error('claude message did not submit')
+      }
     },
 
     async attachImage(file: File) {
@@ -468,16 +539,16 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
     getConversationState(): Promise<ConversationState> {
       const lastText = getLatestResponseText()
       // 优先用选择器检测（最准确）
-      if (hasStopGeneratingButton()) return Promise.resolve({ status: 'streaming', lastResponse: lastText })
-      if (q(S.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText })
+      if (hasStopGeneratingButton(S)) return Promise.resolve({ status: 'streaming', lastResponse: lastText, stopButtonDetected: true })
+      if (q(S.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText, stopButtonDetected: false })
       // 选择器无关的兜底：基于 DOM 变化时间戳
       const timeSinceMutation = Date.now() - lastMutationTimestamp
       if (isStreaming || timeSinceMutation < 2000) {
-        return Promise.resolve({ status: 'streaming', lastResponse: lastText })
+        return Promise.resolve({ status: 'streaming', lastResponse: lastText, stopButtonDetected: false })
       }
-      if (!lastText) return Promise.resolve({ status: 'idle' })
+      if (!lastText) return Promise.resolve({ status: 'idle', stopButtonDetected: false })
       // 有文本、无停止按钮、最近 3 秒无 DOM 变化 → 判定已完成
-      return Promise.resolve({ status: 'finished', lastResponse: lastText })
+      return Promise.resolve({ status: 'finished', lastResponse: lastText, stopButtonDetected: false })
     },
 
     onStreamEvent(handler) {
