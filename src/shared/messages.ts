@@ -1,4 +1,11 @@
 import type { AIPlatform, ConversationState, StreamEvent } from '../types'
+import type { DiagnosticEventDraft } from '../lib/diagnostic-types'
+
+export type DiagnosticToSw =
+  | { type: 'diagnostic:append'; event: DiagnosticEventDraft }
+  | { type: 'diagnostic:summary' }
+  | { type: 'diagnostic:snapshot' }
+  | { type: 'diagnostic:clear' }
 
 export type PopupToSw =
   | { type: 'send-message'; platforms: AIPlatform[]; text: string; imageDataUrl?: string; imageMime?: string; imageName?: string }

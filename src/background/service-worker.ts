@@ -11,6 +11,7 @@
 // 没有 tabId,SW 找不到它们)。详见 docs/postmortems/2026-06-09-iframe-no-response.md
 
 import { enableEmbedRules, disableEmbedRules, getEmbedRuleCleanupIds } from './dnr-rules'
+import { createDiagnosticWriter, handleDiagnosticWriterMessage } from './diagnostic-writer'
 import { SUPPORTED_PLATFORMS } from '../lib/ai-platforms'
 import {
   REMOTE_SELECTOR_CONFIG_STORAGE_KEY,
@@ -32,6 +33,11 @@ const PLATFORM_URL_PREFIXES: Record<AIPlatform, string[]> = {
 
 const CHAT_TAB_IDS_KEY = 'chatTabIds'
 const SELECTOR_CONFIG_REFRESH_ALARM = 'selector-config-refresh'
+const diagnosticWriter = createDiagnosticWriter(
+  chrome.storage.local,
+  chrome.runtime.getManifest().version,
+  (message) => console.warn(message),
+)
 
 async function getChatTabIds(): Promise<Set<number>> {
   const r = await chrome.storage.session.get(CHAT_TAB_IDS_KEY)
@@ -171,6 +177,13 @@ chrome.tabs.onUpdated.addListener(async (tabId, _change, tab) => {
 
 // ---------- 来自 chat 页 / popup / content script 的消息 ----------
 chrome.runtime.onMessage.addListener((msg: { type: string; [k: string]: unknown }, _sender, sendResponse) => {
+  const diagnosticResponse = handleDiagnosticWriterMessage(diagnosticWriter, msg)
+  if (diagnosticResponse) {
+    diagnosticResponse
+      .then((response) => sendResponse(response))
+      .catch(() => sendResponse({ ok: false }))
+    return true
+  }
   if (msg.type === 'enable-embed-rules') {
     enableEmbedRules()
       .then(() => sendResponse({ ok: true }))
