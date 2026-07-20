@@ -944,10 +944,17 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
         emit(diagnostics, {
           component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber: 4,
         })
+        if (await waitForSendAccepted(selectors)) {
+          emit(diagnostics, {
+            component: 'platform-adapter', operation: 'send-ack', stage: 'accepted', eventStatus: 'succeeded', retryNumber: 4, retryCount: 4,
+          })
+          return
+        }
         emit(diagnostics, {
-          component: 'platform-adapter', operation: 'send-ack', stage: 'accepted', eventStatus: 'succeeded', retryNumber: 4, retryCount: 4,
+          component: 'platform-adapter', operation: 'send-ack', stage: 'failed', eventStatus: 'failed',
+          runOutcome: 'failed', errorCode: 'message-not-accepted', retryNumber: 4, retryCount: 4,
         })
-        return
+        throw new Error('deepseek message not accepted')
       }
       emit(diagnostics, {
         component: 'platform-adapter', operation: 'send-click', stage: 'failed', eventStatus: 'failed',

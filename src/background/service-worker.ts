@@ -13,6 +13,8 @@
 import { enableEmbedRules, disableEmbedRules, getEmbedRuleCleanupIds } from './dnr-rules'
 import { createDiagnosticWriter, handleDiagnosticWriterMessage } from './diagnostic-writer'
 import { SUPPORTED_PLATFORMS } from '../lib/ai-platforms'
+import { USER_SETTINGS_STORAGE_KEY } from '../lib/user-settings'
+import { mapDiagnosticError } from '../lib/diagnostic-types'
 import {
   REMOTE_SELECTOR_CONFIG_STORAGE_KEY,
   REMOTE_SELECTOR_CONFIG_URL,
@@ -37,6 +39,14 @@ const diagnosticWriter = createDiagnosticWriter(
   chrome.storage.local,
   chrome.runtime.getManifest().version,
   (message) => console.warn(message),
+  async () => {
+    const stored = await chrome.storage.local.get(USER_SETTINGS_STORAGE_KEY)
+    const settings = stored[USER_SETTINGS_STORAGE_KEY]
+    return typeof settings !== 'object'
+      || settings === null
+      || !('diagnosticEnabled' in settings)
+      || settings.diagnosticEnabled !== false
+  },
 )
 
 async function getChatTabIds(): Promise<Set<number>> {
@@ -224,7 +234,20 @@ chrome.runtime.onMessage.addListener((msg: { type: string; [k: string]: unknown 
     }
     sendOfficialTabMessage(platform, contentMessage)
       .then((response) => sendResponse(response ?? { ok: true }))
-      .catch((e) => sendResponse({ ok: false, error: String(e) }))
+      .catch((e) => {
+        const mappedError = mapDiagnosticError(e)
+        sendResponse({
+          ok: false,
+          error: String(e),
+          ...(command === 'write-and-send'
+            ? {
+                diagnosticErrorCode: mappedError === 'unexpected-error'
+                  ? 'official-tab-unavailable'
+                  : mappedError,
+              }
+            : {}),
+        })
+      })
     return true
   }
   if (msg.type === 'selector-config:get') {

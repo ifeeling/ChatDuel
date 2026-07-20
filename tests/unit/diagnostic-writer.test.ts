@@ -64,6 +64,29 @@ describe('diagnostic writer', () => {
     expect((await restarted.snapshot()).events.map((event) => event.storageSequence)).toEqual([1, 2])
   })
 
+  it('drops new events while local diagnostics are disabled', async () => {
+    let enabled = true
+    const writer = createDiagnosticWriter(memoryStorage(), '0.4.13', vi.fn(), () => enabled)
+    await writer.append(draft(0))
+
+    enabled = false
+    await expect(writer.append(draft(1))).resolves.toEqual({ ok: true })
+
+    expect((await writer.snapshot()).events).toHaveLength(1)
+  })
+
+  it('does not recreate records after diagnostics are disabled and cleared', async () => {
+    let enabled = true
+    const writer = createDiagnosticWriter(memoryStorage(), '0.4.13', vi.fn(), () => enabled)
+    await writer.append(draft(0))
+
+    enabled = false
+    await writer.clear()
+    await writer.append(draft(1))
+
+    expect((await writer.snapshot()).events).toEqual([])
+  })
+
   it('does not recurse or repeatedly warn when storage keeps failing', async () => {
     const storage = memoryStorage()
     storage.set = vi.fn().mockRejectedValue(new Error('quota'))
@@ -100,6 +123,30 @@ describe('diagnostic writer', () => {
     expect((await writer.snapshot()).events).toHaveLength(1)
     expect((await writer.snapshot()).events[0].storageSequence).toBe(1)
     expect(writer.getInternalStatus()).toMatchObject({ schemaError: true })
+  })
+
+  it('prunes and persists expired batches when diagnostics are only read', async () => {
+    const expired = {
+      ...draft(0),
+      timestamp: Date.now() - 8 * 24 * 60 * 60 * 1_000,
+      storageSequence: 1,
+      extensionVersion: '0.4.13',
+    }
+    const storage = memoryStorage({
+      [DIAGNOSTIC_STORAGE_KEY]: {
+        schemaVersion: 1,
+        nextStorageSequence: 2,
+        events: [expired],
+        truncation: { runs: {}, batches: {} },
+      },
+    })
+    storage.set = vi.fn(storage.set)
+    const writer = createDiagnosticWriter(storage, '0.4.13', vi.fn())
+
+    expect((await writer.snapshot()).events).toEqual([])
+    expect(storage.set).toHaveBeenCalledWith(expect.objectContaining({
+      [DIAGNOSTIC_STORAGE_KEY]: expect.objectContaining({ events: [] }),
+    }))
   })
 
   it('serializes append, snapshot, and clear on one command queue', async () => {

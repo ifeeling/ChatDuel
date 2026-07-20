@@ -1,11 +1,40 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createResponseDiagnosticTracker } from '../../src/chat/response-diagnostic'
+import {
+  classifyResponseCaptureWait,
+  createResponseDiagnosticTracker,
+} from '../../src/chat/response-diagnostic'
 
 function reporter() {
   return { emit: vi.fn() }
 }
 
 describe('response diagnostic tracker', () => {
+  it('classifies the last safe reason for a response capture timeout', () => {
+    expect(classifyResponseCaptureWait({
+      stateRequestTimedOut: true,
+      status: 'idle',
+      responseLength: 0,
+      differsFromBaseline: false,
+    })).toBe('state-request-timeout')
+    expect(classifyResponseCaptureWait({
+      stateRequestTimedOut: false,
+      status: 'idle',
+      responseLength: 0,
+      differsFromBaseline: false,
+    })).toBe('response-selector-empty')
+    expect(classifyResponseCaptureWait({
+      stateRequestTimedOut: false,
+      status: 'idle',
+      responseLength: 10,
+      differsFromBaseline: false,
+    })).toBe('response-equals-baseline')
+    expect(classifyResponseCaptureWait({
+      stateRequestTimedOut: false,
+      status: 'streaming',
+      responseLength: 10,
+      differsFromBaseline: true,
+    })).toBe('response-still-streaming')
+  })
   it('emits state changes and sparse checkpoints but not every poll', () => {
     const trace = reporter()
     const tracker = createResponseDiagnosticTracker(trace, 0)

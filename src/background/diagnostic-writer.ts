@@ -2,6 +2,7 @@ import {
   appendDiagnosticEvents,
   createEmptyDiagnosticEnvelope,
   deriveDiagnosticExport,
+  pruneDiagnosticEnvelope,
   sanitizeDiagnosticEnvelope,
   type DiagnosticEnvelope,
 } from '../lib/diagnostic-retention'
@@ -32,6 +33,7 @@ export function createDiagnosticWriter(
   storage: DiagnosticStorageArea,
   extensionVersion: string,
   warn: (message: string) => void,
+  isEnabled: () => boolean | Promise<boolean> = () => true,
 ) {
   let commandChain: Promise<void> = Promise.resolve()
   let cachedEnvelope: DiagnosticEnvelope | null = null
@@ -76,6 +78,16 @@ export function createDiagnosticWriter(
     return result
   }
 
+  const loadRetainedEnvelope = async (): Promise<DiagnosticEnvelope> => {
+    const envelope = await loadEnvelope()
+    const retained = pruneDiagnosticEnvelope(envelope)
+    if (retained.events.length !== envelope.events.length) {
+      await storage.set({ [DIAGNOSTIC_STORAGE_KEY]: retained })
+      cachedEnvelope = retained
+    }
+    return cachedEnvelope ?? retained
+  }
+
   const append = (value: unknown): Promise<{ ok: boolean }> => {
     const sanitized = sanitizeDiagnosticEventDraft(value)
     if (!sanitized) {
@@ -84,6 +96,7 @@ export function createDiagnosticWriter(
     }
     return enqueue(async () => {
       try {
+        if (!await isEnabled()) return { ok: true }
         const envelope = await loadEnvelope()
         const storageSequence = envelope.nextStorageSequence
         const next = appendDiagnosticEvents(envelope, [{
@@ -104,7 +117,7 @@ export function createDiagnosticWriter(
 
   const snapshot = (): Promise<DiagnosticEnvelope> => enqueue(async () => {
     try {
-      return structuredClone(await loadEnvelope())
+      return structuredClone(await loadRetainedEnvelope())
     } catch {
       markFailure('storageError')
       return createEmptyDiagnosticEnvelope()
@@ -113,7 +126,7 @@ export function createDiagnosticWriter(
 
   const summary = (): Promise<DiagnosticSummary> => enqueue(async () => {
     try {
-      const envelope = await loadEnvelope()
+      const envelope = await loadRetainedEnvelope()
       const eventCount = envelope.events.length
       const batchCount = new Set(envelope.events.map((event) => event.batchId)).size
       const runCount = new Set(envelope.events.map((event) => event.platformRunId)).size

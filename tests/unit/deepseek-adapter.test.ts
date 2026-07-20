@@ -53,6 +53,26 @@ describe('deepseek adapter', () => {
     expect(trace.emit.mock.calls.some(([event]) => event.operation === 'vision-mode')).toBe(false)
   })
 
+  it('does not report accepted when the button fallback has no acceptance evidence', async () => {
+    vi.useFakeTimers()
+    document.body.innerHTML = `
+      <div class="composer">
+        <textarea placeholder="给 DeepSeek 发送消息"></textarea>
+        <button aria-label="发送">发送</button>
+      </div>
+    `
+    const trace = diagnostics()
+    const sending = createDeepSeekAdapter().sendMessage('不会被接受', undefined, trace.value)
+    const rejection = expect(sending).rejects.toThrow('deepseek message not accepted')
+
+    await vi.runAllTimersAsync()
+    await rejection
+    expect(trace.emit).toHaveBeenLastCalledWith(expect.objectContaining({
+      operation: 'send-ack', stage: 'failed', runOutcome: 'failed', errorCode: 'message-not-accepted',
+    }))
+    vi.useRealTimers()
+  })
+
   it('captures the full latest assistant block instead of the last paragraph only', async () => {
     document.body.innerHTML = `
       <main>

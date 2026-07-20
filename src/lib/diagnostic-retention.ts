@@ -329,6 +329,14 @@ export function appendDiagnosticEvents(
   return pruned
 }
 
+export function pruneDiagnosticEnvelope(
+  envelope: DiagnosticEnvelope,
+  limits = DEFAULT_DIAGNOSTIC_LIMITS,
+  now = Date.now(),
+): DiagnosticEnvelope {
+  return appendDiagnosticEvents(envelope, [], limits, now)
+}
+
 function terminalAnalysis(events: DiagnosticEvent[]): {
   outcome?: DiagnosticRunOutcome
   terminalSequence?: number

@@ -102,8 +102,9 @@ import {
   createDiagnosticProducerId,
   createDiagnosticReporter,
 } from '../lib/diagnostic-client'
-import type { DiagnosticContext } from '../lib/diagnostic-types'
+import type { DiagnosticContext, DiagnosticErrorCode } from '../lib/diagnostic-types'
 import {
+  classifyResponseCaptureWait,
   createResponseDiagnosticTracker,
   type ResponseDiagnosticTracker,
 } from './response-diagnostic'
@@ -212,6 +213,7 @@ const RESPONSE_STABLE_REQUIRED_POLLS = 2
 let userSettings: UserSettings = DEFAULT_USER_SETTINGS
 let diagnosticEventCount = 0
 let preparedDiagnosticExport: PreparedDiagnosticExport | null = null
+let preparedDiagnosticExportScope: 'all' | 'latest-failure' | null = null
 let clearDiagnosticsWhenDisabled = false
 const DIAGNOSTIC_NOTICE_VERSION = 1
 let selectedPromptTemplateKey: UserPromptTemplateKey = 'transfer'
@@ -718,6 +720,7 @@ interface DiagnosticSummaryResponse {
 
 function clearPreparedDiagnosticExport() {
   preparedDiagnosticExport = null
+  preparedDiagnosticExportScope = null
   diagnosticExportPreview.value = ''
   diagnosticPreviewWrap.hidden = true
 }
@@ -758,8 +761,12 @@ async function loadDiagnosticPayload(latestFailureOnly = false): Promise<Diagnos
   })
 }
 
-function showDiagnosticPreview(payload: DiagnosticExportPayload): PreparedDiagnosticExport {
+function showDiagnosticPreview(
+  payload: DiagnosticExportPayload,
+  scope: 'all' | 'latest-failure',
+): PreparedDiagnosticExport {
   preparedDiagnosticExport = prepareDiagnosticExport(payload)
+  preparedDiagnosticExportScope = scope
   diagnosticExportPreview.value = preparedDiagnosticExport.previewText
   diagnosticPreviewWrap.hidden = false
   return preparedDiagnosticExport
@@ -802,7 +809,7 @@ async function viewDiagnostics() {
   clearPreparedDiagnosticExport()
   const payload = await loadDiagnosticPayload()
   renderDiagnosticBatches(payload)
-  showDiagnosticPreview(payload)
+  showDiagnosticPreview(payload, 'all')
 }
 
 async function copyLatestFailedDiagnostics() {
@@ -812,15 +819,15 @@ async function copyLatestFailedDiagnostics() {
     showToast(t(userSettings.language, 'diagnostic.noFailure'), 'info')
     return
   }
-  const prepared = showDiagnosticPreview(payload)
+  const prepared = showDiagnosticPreview(payload, 'latest-failure')
   await navigator.clipboard.writeText(prepared.clipboardText)
   showToast(t(userSettings.language, 'diagnostic.copiedFailure'), 'success', 1800)
 }
 
 async function downloadDiagnostics() {
-  clearPreparedDiagnosticExport()
-  const payload = await loadDiagnosticPayload()
-  const prepared = showDiagnosticPreview(payload)
+  const prepared = preparedDiagnosticExport && preparedDiagnosticExportScope === 'all'
+    ? preparedDiagnosticExport
+    : showDiagnosticPreview(await loadDiagnosticPayload(), 'all')
   const url = URL.createObjectURL(prepared.blob)
   try {
     const link = document.createElement('a')
@@ -855,12 +862,6 @@ function openSettings() {
   renderSettingsForm()
   settingsOverlay.hidden = false
   void loadDiagnosticSummary()
-  if (userSettings.diagnosticNoticeVersionSeen < DIAGNOSTIC_NOTICE_VERSION) {
-    showToast(t(userSettings.language, 'diagnostic.firstNotice'), 'info', 7000)
-    void saveUserSettings({ diagnosticNoticeVersionSeen: DIAGNOSTIC_NOTICE_VERSION })
-      .then((settings) => { userSettings = settings })
-      .catch((error) => console.error('[AIChatRoom chat] save diagnostic notice failed', error))
-  }
 }
 
 function closeSettings() {
@@ -894,6 +895,14 @@ async function initializeSettings() {
   } catch (e) {
     console.error('[AIChatRoom chat] load settings failed', e)
     applyUserSettings(DEFAULT_USER_SETTINGS)
+  }
+  if (userSettings.diagnosticNoticeVersionSeen < DIAGNOSTIC_NOTICE_VERSION) {
+    showToast(t(userSettings.language, 'diagnostic.firstNotice'), 'info', 7000)
+    try {
+      userSettings = await saveUserSettings({ diagnosticNoticeVersionSeen: DIAGNOSTIC_NOTICE_VERSION })
+    } catch (error) {
+      console.error('[AIChatRoom chat] save diagnostic notice failed', error)
+    }
   }
 }
 
@@ -1147,10 +1156,26 @@ function waitForIframeWriteResult(p: AIPlatform, payload: Record<string, unknown
   })
 }
 
-async function writeAndSendToPlatform(p: AIPlatform, payload: Record<string, unknown>): Promise<{ p: AIPlatform; ok: boolean; error?: string }> {
+interface PlatformSendResult {
+  p: AIPlatform
+  ok: boolean
+  error?: string
+  diagnosticErrorCode?: DiagnosticErrorCode
+}
+
+async function writeAndSendToPlatform(p: AIPlatform, payload: Record<string, unknown>): Promise<PlatformSendResult> {
   if (platformMessageRoute(p) === 'official-tab') {
-    const response = await sendOfficialTabCommand<{ ok?: boolean; error?: string }>(p, 'write-and-send', payload)
-    return { p, ok: !!response?.ok, error: response?.error }
+    const response = await sendOfficialTabCommand<{
+      ok?: boolean
+      error?: string
+      diagnosticErrorCode?: DiagnosticErrorCode
+    }>(p, 'write-and-send', payload)
+    return {
+      p,
+      ok: !!response?.ok,
+      error: response?.error,
+      diagnosticErrorCode: response?.diagnosticErrorCode,
+    }
   }
   return waitForIframeWriteResult(p, payload)
 }
@@ -1189,17 +1214,19 @@ function requestLastResponse(p: AIPlatform, timeoutMs = 3000): Promise<string> {
   })
 }
 
-function requestConversationState(p: AIPlatform, timeoutMs = 3000): Promise<ConversationState> {
+type ConversationStateResult = ConversationState & { requestTimedOut?: boolean }
+
+function requestConversationState(p: AIPlatform, timeoutMs = 3000): Promise<ConversationStateResult> {
   if (platformMessageRoute(p) === 'official-tab') {
     return sendOfficialTabCommand<{ type?: string; state?: ConversationState; ok?: boolean; error?: string }>(p, 'get-state')
       .then((response) => {
         if (response?.ok === false) return { status: 'error', errorMessage: response.error ?? '官方标签页不可用' }
-        return response?.state ?? { status: 'idle' }
+        return response?.state ?? { status: 'idle', requestTimedOut: true }
       })
   }
   const win = panelIframe(p).contentWindow
-  if (!win) return Promise.resolve({ status: 'idle' })
-  return new Promise<ConversationState>((resolve) => {
+  if (!win) return Promise.resolve({ status: 'idle', requestTimedOut: true })
+  return new Promise<ConversationStateResult>((resolve) => {
     const onMsg = (e: MessageEvent) => {
       const d = e.data as {
         source?: string
@@ -1227,7 +1254,7 @@ function requestConversationState(p: AIPlatform, timeoutMs = 3000): Promise<Conv
         event: 'request-conversation-state-timeout',
         timeoutMs,
       })
-      resolve({ status: 'idle' })
+      resolve({ status: 'idle', requestTimedOut: true })
     }, timeoutMs)
   })
 }
@@ -1311,6 +1338,7 @@ function scheduleSessionResponseBackfill(
   progress: Partial<Record<AIPlatform, ResponseCaptureProgress>> = {},
   attempt = 0,
   diagnosticTrackers: Partial<Record<AIPlatform, ResponseDiagnosticTracker>> = {},
+  diagnosticWaitErrors: Partial<Record<AIPlatform, DiagnosticErrorCode>> = {},
 ) {
   // 修改回答回填前先看 docs/RESPONSE_CAPTURE_MAINTENANCE.md，避免再次覆盖旧历史或无限等待。
   if (platforms.length === 0) return
@@ -1324,7 +1352,7 @@ function scheduleSessionResponseBackfill(
         if (response?.status !== 'pending') continue
         diagnosticTrackers[platform]?.finish({
           outcome: 'timed-out',
-          errorCode: 'response-capture-timeout',
+          errorCode: diagnosticWaitErrors[platform] ?? 'response-capture-timeout',
           now: Date.now(),
         })
         failures[platform] = 'response capture timed out'
@@ -1365,6 +1393,7 @@ function scheduleSessionResponseBackfill(
       progress,
       attempt,
       diagnosticTrackers,
+      diagnosticWaitErrors,
     )
   }, RESPONSE_BACKFILL_INTERVAL_MS)
 }
@@ -1376,6 +1405,7 @@ async function backfillSessionResponses(
   progress: Partial<Record<AIPlatform, ResponseCaptureProgress>>,
   attempt: number,
   diagnosticTrackers: Partial<Record<AIPlatform, ResponseDiagnosticTracker>>,
+  diagnosticWaitErrors: Partial<Record<AIPlatform, DiagnosticErrorCode>>,
 ) {
   try {
     const session = await getSession(sessionId)
@@ -1389,6 +1419,7 @@ async function backfillSessionResponses(
 
     const captured: Partial<Record<AIPlatform, string>> = {}
     const nextProgress = { ...progress }
+    const nextDiagnosticWaitErrors = { ...diagnosticWaitErrors }
     await Promise.all(trackedPlatforms.map(async (platform) => {
       const state = await requestConversationState(platform, 1500)
       if (state.status === 'streaming') {
@@ -1404,6 +1435,12 @@ async function backfillSessionResponses(
         baselineLength: baselineText.length,
         differsFromBaseline: trimmedText !== baselineText,
         stopButtonDetected: state.stopButtonDetected === true,
+      })
+      nextDiagnosticWaitErrors[platform] = classifyResponseCaptureWait({
+        stateRequestTimedOut: state.requestTimedOut === true,
+        status: state.status,
+        responseLength: trimmedText.length,
+        differsFromBaseline: trimmedText !== baselineText,
       })
       const decision = evaluateResponseCapture(
         { text, status: state.status },
@@ -1474,6 +1511,7 @@ async function backfillSessionResponses(
       nextProgress,
       attempt + 1,
       diagnosticTrackers,
+      nextDiagnosticWaitErrors,
     )
   } catch (e) {
     for (const platform of platforms) {
@@ -1612,7 +1650,7 @@ async function onSend() {
   const responseBaselines = await captureResponseBaselines(targets)
 
   // 2. 发文字 + 附件到官方页面。iframe 被 CSP 拦住的平台会走官方标签页兜底。
-  const results: Array<{ p: AIPlatform; ok: boolean; error?: string }> = []
+  const results: PlatformSendResult[] = []
   await Promise.all(
     targets.map(async (p) => {
       const shouldUploadFile = deliveryPlan.autoUploadTargets.includes(p)
@@ -1639,16 +1677,18 @@ async function onSend() {
       })
       if (!result.ok) {
         const timedOutWithoutReply = !result.error
+        const terminalErrorCode = result.diagnosticErrorCode
+          ?? (timedOutWithoutReply ? routeTimeoutErrorCode(route) : undefined)
         reporter?.emit({
           component: route === 'iframe' ? 'iframe-bridge' : 'official-tab',
           operation: 'result-return',
           stage: timedOutWithoutReply ? 'timed-out' : 'failed',
           eventStatus: timedOutWithoutReply ? 'timed-out' : 'failed',
           route,
-          ...(timedOutWithoutReply
+          ...(terminalErrorCode
             ? {
-                runOutcome: 'timed-out',
-                errorCode: routeTimeoutErrorCode(route),
+                runOutcome: timedOutWithoutReply ? 'timed-out' : 'failed',
+                errorCode: terminalErrorCode,
                 timeoutMs: route === 'iframe' ? iframeWriteResultTimeoutMs({
                   imageDataUrl: shouldUploadFile ? imageDataUrl : undefined,
                 }) : undefined,
@@ -1671,6 +1711,31 @@ async function onSend() {
     }
   }
 
+  const responseDiagnosticTrackers = Object.fromEntries(
+    results
+      .filter((result) => result.ok && diagnosticContexts[result.p])
+      .map((result) => {
+        const context = diagnosticContexts[result.p]!
+        return [
+          result.p,
+          createResponseDiagnosticTracker(
+            createDiagnosticReporter(
+              context,
+              result.p,
+              createDiagnosticProducerId('response-capture'),
+            ),
+            Date.now(),
+          ),
+        ]
+      }),
+  ) as Partial<Record<AIPlatform, ResponseDiagnosticTracker>>
+
+  const failResponseDiagnosticTrackers = () => {
+    for (const tracker of Object.values(responseDiagnosticTrackers)) {
+      tracker?.finish({ outcome: 'failed', errorCode: 'unexpected-error', now: Date.now() })
+    }
+  }
+
   if (currentSession) {
     try {
       currentSession = applySendResults(currentSession, results)
@@ -1681,28 +1746,14 @@ async function onSend() {
         responseBaselines,
         {},
         0,
-        Object.fromEntries(
-          results
-            .filter((result) => result.ok && diagnosticContexts[result.p])
-            .map((result) => {
-              const context = diagnosticContexts[result.p]!
-              return [
-                result.p,
-                createResponseDiagnosticTracker(
-                  createDiagnosticReporter(
-                    context,
-                    result.p,
-                    createDiagnosticProducerId('response-capture'),
-                  ),
-                  Date.now(),
-                ),
-              ]
-            }),
-        ),
+        responseDiagnosticTrackers,
       )
     } catch (e) {
+      failResponseDiagnosticTrackers()
       console.error('[AIChatRoom chat] failed to update session history', e)
     }
+  } else {
+    failResponseDiagnosticTrackers()
   }
   scheduleConversationSnapshot(text, results.filter((r) => r.ok).map((r) => r.p))
 

@@ -24,6 +24,23 @@ export interface ResponseDiagnosticTracker {
   finish(result: ResponseDiagnosticFinish): void
 }
 
+export interface ResponseCaptureWaitState {
+  stateRequestTimedOut: boolean
+  status: StreamStatus
+  responseLength: number
+  differsFromBaseline: boolean
+}
+
+export function classifyResponseCaptureWait(state: ResponseCaptureWaitState): DiagnosticErrorCode {
+  if (state.stateRequestTimedOut) return 'state-request-timeout'
+  if (state.responseLength === 0) return 'response-selector-empty'
+  if (!state.differsFromBaseline) return 'response-equals-baseline'
+  if (state.status === 'queued' || state.status === 'sending' || state.status === 'streaming') {
+    return 'response-still-streaming'
+  }
+  return 'response-capture-timeout'
+}
+
 function waitedMs(now: number, startedAt: number): number {
   return Math.max(0, Math.trunc(now - startedAt))
 }

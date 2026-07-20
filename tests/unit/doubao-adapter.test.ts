@@ -513,18 +513,41 @@ describe('doubao adapter', () => {
     `
     const input = document.querySelector<HTMLInputElement>('input[type="file"]')!
     const sendSpy = vi.fn()
-    document.querySelector('button')!.addEventListener('click', sendSpy)
+    document.querySelector('button')!.addEventListener('click', () => {
+      sendSpy()
+      document.querySelector<HTMLTextAreaElement>('textarea')!.value = ''
+    })
 
     const trace = diagnostics()
     const file = new File(['image'], 'kitty.png', { type: 'image/png' })
     await createDoubaoAdapter().sendMessage('这是什么?', file, trace.value)
 
-    expect(document.querySelector<HTMLTextAreaElement>('textarea')!.value).toBe('这是什么?')
+    expect(document.querySelector<HTMLTextAreaElement>('textarea')!.value).toBe('')
     expect(input.files?.[0]?.name).toBe('kitty.png')
     expect(sendSpy).toHaveBeenCalledTimes(1)
     expect(trace.emit).toHaveBeenLastCalledWith(expect.objectContaining({
       operation: 'send-ack', stage: 'accepted', retryCount: 1,
     }))
     expect(JSON.stringify(trace.emit.mock.calls)).not.toContain('kitty.png')
+  })
+
+  it('does not report accepted when the composer stays unchanged after clicking send', async () => {
+    vi.useFakeTimers()
+    document.body.innerHTML = `
+      <div class="composer">
+        <textarea placeholder="发消息或按住空格说话..."></textarea>
+        <button aria-label="发送">发送</button>
+      </div>
+    `
+    const trace = diagnostics()
+    const sending = createDoubaoAdapter().sendMessage('不会被接受', undefined, trace.value)
+    const rejection = expect(sending).rejects.toThrow('doubao message not accepted')
+
+    await vi.runAllTimersAsync()
+    await rejection
+    expect(trace.emit).toHaveBeenLastCalledWith(expect.objectContaining({
+      operation: 'send-ack', stage: 'failed', runOutcome: 'failed', errorCode: 'message-not-accepted',
+    }))
+    vi.useRealTimers()
   })
 })
