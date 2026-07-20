@@ -9,6 +9,9 @@ export interface ResponseProbe {
 export interface ResponseCaptureProgress {
   lastText: string
   stableCount: number
+  firstObservedAt: number
+  lastActivityAt?: number
+  lastActivityText?: string
 }
 
 export interface ResponseCaptureDecision {
@@ -18,12 +21,32 @@ export interface ResponseCaptureDecision {
 }
 
 const ACTIVE_STATUSES: StreamStatus[] = ['queued', 'sending', 'streaming']
+export const RESPONSE_NO_PROGRESS_TIMEOUT_MS = 60_000
+export const RESPONSE_ABSOLUTE_TIMEOUT_MS = 10 * 60_000
+
+function nextProgress(
+  text: string,
+  baselineText: string,
+  stableCount: number,
+  previous: ResponseCaptureProgress | undefined,
+  observedAt: number,
+): ResponseCaptureProgress {
+  const hasNewActivity = !!text && text !== baselineText && text !== previous?.lastActivityText
+  return {
+    lastText: text,
+    stableCount,
+    firstObservedAt: previous?.firstObservedAt ?? observedAt,
+    lastActivityAt: hasNewActivity ? observedAt : previous?.lastActivityAt,
+    lastActivityText: hasNewActivity ? text : previous?.lastActivityText,
+  }
+}
 
 export function evaluateResponseCapture(
   probe: ResponseProbe,
   baseline: string | undefined,
   previous: ResponseCaptureProgress | undefined,
   requiredStableCount = 2,
+  observedAt = Date.now(),
 ): ResponseCaptureDecision {
   const text = probe.text?.trim() ?? ''
   const baselineText = baseline?.trim() ?? ''
@@ -42,7 +65,7 @@ export function evaluateResponseCapture(
     return {
       shouldCapture: false,
       text,
-      progress: { lastText: text, stableCount: 0 },
+      progress: nextProgress(text, baselineText, 0, previous, observedAt),
     }
   }
 
@@ -58,7 +81,7 @@ export function evaluateResponseCapture(
     return {
       shouldCapture: false,
       text,
-      progress: { lastText: text, stableCount: 0 },
+      progress: nextProgress(text, baselineText, 0, previous, observedAt),
     }
   }
 
@@ -76,8 +99,32 @@ export function evaluateResponseCapture(
   return {
     shouldCapture,
     text,
-    progress: { lastText: text, stableCount },
+    progress: nextProgress(text, baselineText, stableCount, previous, observedAt),
   }
+}
+
+export function shouldResponseCaptureTimeout(
+  progress: ResponseCaptureProgress | undefined,
+  now: number,
+): boolean {
+  if (!progress) return false
+  if (now - progress.firstObservedAt >= RESPONSE_ABSOLUTE_TIMEOUT_MS) return true
+  const lastProgressAt = progress.lastActivityAt ?? progress.firstObservedAt
+  return now - lastProgressAt >= RESPONSE_NO_PROGRESS_TIMEOUT_MS
+}
+
+export function partitionResponseCapturePlatforms<T extends string>(
+  platforms: T[],
+  progress: Partial<Record<T, ResponseCaptureProgress>>,
+  now: number,
+): { waiting: T[]; timedOut: T[] } {
+  const waiting: T[] = []
+  const timedOut: T[] = []
+  for (const platform of platforms) {
+    if (shouldResponseCaptureTimeout(progress[platform], now)) timedOut.push(platform)
+    else waiting.push(platform)
+  }
+  return { waiting, timedOut }
 }
 
 export function isResponseCompleteForUnlock(probe: ResponseProbe, baseline: string | undefined): boolean {

@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 
 const html = readFileSync(resolve(__dirname, '../../src/chat/chat.html'), 'utf8')
 const css = readFileSync(resolve(__dirname, '../../src/chat/chat.css'), 'utf8')
+const chatSource = readFileSync(resolve(__dirname, '../../src/chat/chat.ts'), 'utf8')
 
 describe('chat.html', () => {
   it('allows clipboard access inside AI iframes', () => {
@@ -92,6 +93,13 @@ describe('chat.html', () => {
     expect(document.querySelector('#btn-diagnostic-clear')).toBeTruthy()
     expect(document.querySelector('#diagnostic-export-preview')).toBeInstanceOf(HTMLTextAreaElement)
     expect(document.querySelector('#diagnostic-local-disclosure')?.textContent).toContain('只保存在本机')
+  })
+
+  it('uses per-platform response progress instead of a fixed polling attempt limit', () => {
+    expect(chatSource).toContain('partitionResponseCapturePlatforms')
+    expect(chatSource).not.toContain('RESPONSE_BACKFILL_MAX_ATTEMPTS')
+    expect(chatSource).toMatch(/const observedAt = Date\.now\(\)/)
+    expect(chatSource).toContain('now: observedAt')
   })
 
   it('edits one prompt template at a time in settings', () => {

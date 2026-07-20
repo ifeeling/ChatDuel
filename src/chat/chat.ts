@@ -84,7 +84,12 @@ import {
 } from '../lib/send-lock'
 import { buildSessionMarkdownExport, formatBytes, formatCapturedMarkdownText, formatSessionMarkdown } from '../lib/history-format'
 import { buildSummaryPrompt } from '../lib/summary-builder'
-import { evaluateResponseCapture, isResponseCompleteForUnlock, type ResponseCaptureProgress } from '../lib/response-capture'
+import {
+  evaluateResponseCapture,
+  isResponseCompleteForUnlock,
+  partitionResponseCapturePlatforms,
+  type ResponseCaptureProgress,
+} from '../lib/response-capture'
 import { buildTransferContent, buildTransferSourceOptions, type TransferSourceOption } from '../lib/transfer-source'
 import { bindComposerFocusRestorer } from '../lib/focus-restore'
 import { filterSessionsByTitle } from '../lib/history-search'
@@ -208,7 +213,6 @@ const readyWaiters = SUPPORTED_PLATFORMS.reduce((acc, platform) => {
   return acc
 }, {} as Record<AIPlatform, Array<(ok: boolean) => void>>)
 const RESPONSE_BACKFILL_INTERVAL_MS = 3000
-const RESPONSE_BACKFILL_MAX_ATTEMPTS = 20
 const RESPONSE_STABLE_REQUIRED_POLLS = 2
 let userSettings: UserSettings = DEFAULT_USER_SETTINGS
 let diagnosticEventCount = 0
@@ -1375,60 +1379,33 @@ function scheduleSessionResponseBackfill(
 ) {
   // 修改回答回填前先看 docs/RESPONSE_CAPTURE_MAINTENANCE.md，避免再次覆盖旧历史或无限等待。
   if (platforms.length === 0) return
-  if (attempt >= RESPONSE_BACKFILL_MAX_ATTEMPTS) {
-    void (async () => {
-      const session = await getSession(sessionId)
-      if (!session) {
-        for (const platform of platforms) {
-          diagnosticTrackers[platform]?.finish({
-            outcome: 'failed', errorCode: 'unexpected-error', now: Date.now(),
-          })
-        }
-        return
-      }
-      const failures: Partial<Record<AIPlatform, string>> = {}
-      for (const platform of platforms) {
-        const response = session.responses[platform]
-        if (response?.status !== 'pending') continue
-        diagnosticTrackers[platform]?.finish({
-          outcome: 'timed-out',
-          errorCode: diagnosticWaitErrors[platform] ?? 'response-capture-timeout',
-          now: Date.now(),
-        })
-        failures[platform] = 'response capture timed out'
-        setStatus(platform, 'err', t(userSettings.language, 'send.statusFailed'))
-        finishSendLockPlatform(platform)
-        logCaptureDebug({
-          platform,
-          event: 'backfill-timeout',
-          sessionId,
-          attempt,
-          lastTextPreview: textPreview(progress[platform]?.lastText ?? ''),
-          lastStableCount: progress[platform]?.stableCount ?? 0,
-          requiredStableCount: RESPONSE_STABLE_REQUIRED_POLLS,
-        })
-      }
-      const updated = applyCaptureFailures(session, failures)
-      if (updated !== session) await updateSession(updated)
-    })().catch((e) => {
-      for (const platform of platforms) {
+  const { waiting, timedOut } = partitionResponseCapturePlatforms(platforms, progress, Date.now())
+  if (timedOut.length > 0) {
+    void finalizeResponseCaptureTimeouts(
+      sessionId,
+      timedOut,
+      progress,
+      attempt,
+      diagnosticTrackers,
+      diagnosticWaitErrors,
+    ).catch((e) => {
+      for (const platform of timedOut) {
         diagnosticTrackers[platform]?.finish({
           outcome: 'failed', errorCode: 'unexpected-error', now: Date.now(),
         })
       }
       console.error('[AIChatRoom chat] response backfill timeout failed', e)
-    })
-    for (const platform of platforms) {
-      logCaptureDebug({
-        platform,
-        event: 'backfill-timeout-scheduled',
+    }).finally(() => {
+      scheduleSessionResponseBackfill(
         sessionId,
+        waiting,
+        baselines,
+        progress,
         attempt,
-        lastTextPreview: textPreview(progress[platform]?.lastText ?? ''),
-        lastStableCount: progress[platform]?.stableCount ?? 0,
-        requiredStableCount: RESPONSE_STABLE_REQUIRED_POLLS,
-      })
-    }
+        diagnosticTrackers,
+        diagnosticWaitErrors,
+      )
+    })
     return
   }
 
@@ -1443,6 +1420,50 @@ function scheduleSessionResponseBackfill(
       diagnosticWaitErrors,
     )
   }, RESPONSE_BACKFILL_INTERVAL_MS)
+}
+
+async function finalizeResponseCaptureTimeouts(
+  sessionId: string,
+  platforms: AIPlatform[],
+  progress: Partial<Record<AIPlatform, ResponseCaptureProgress>>,
+  attempt: number,
+  diagnosticTrackers: Partial<Record<AIPlatform, ResponseDiagnosticTracker>>,
+  diagnosticWaitErrors: Partial<Record<AIPlatform, DiagnosticErrorCode>>,
+) {
+  const session = await getSession(sessionId)
+  if (!session) {
+    for (const platform of platforms) {
+      diagnosticTrackers[platform]?.finish({
+        outcome: 'failed', errorCode: 'unexpected-error', now: Date.now(),
+      })
+    }
+    return
+  }
+
+  const failures: Partial<Record<AIPlatform, string>> = {}
+  for (const platform of platforms) {
+    const response = session.responses[platform]
+    if (response?.status !== 'pending') continue
+    diagnosticTrackers[platform]?.finish({
+      outcome: 'timed-out',
+      errorCode: diagnosticWaitErrors[platform] ?? 'response-capture-timeout',
+      now: Date.now(),
+    })
+    failures[platform] = 'response capture timed out'
+    setStatus(platform, 'err', t(userSettings.language, 'send.statusFailed'))
+    finishSendLockPlatform(platform)
+    logCaptureDebug({
+      platform,
+      event: 'backfill-timeout',
+      sessionId,
+      attempt,
+      lastTextPreview: textPreview(progress[platform]?.lastText ?? ''),
+      lastStableCount: progress[platform]?.stableCount ?? 0,
+      requiredStableCount: RESPONSE_STABLE_REQUIRED_POLLS,
+    })
+  }
+  const updated = applyCaptureFailures(session, failures)
+  if (updated !== session) await updateSession(updated)
 }
 
 async function backfillSessionResponses(
@@ -1491,8 +1512,9 @@ async function backfillSessionResponses(
       }
       const trimmedText = text.trim()
       const baselineText = (baselines[platform] ?? '').trim()
+      const observedAt = Date.now()
       diagnosticTrackers[platform]?.observe({
-        now: Date.now(),
+        now: observedAt,
         status: state.status,
         responseLength: trimmedText.length,
         baselineLength: baselineText.length,
@@ -1510,6 +1532,7 @@ async function backfillSessionResponses(
         baselines[platform],
         progress[platform],
         RESPONSE_STABLE_REQUIRED_POLLS,
+        observedAt,
       )
       nextProgress[platform] = decision.progress
       const completeForUnlock = isResponseCompleteForUnlock({ text, status: state.status }, baselines[platform])
