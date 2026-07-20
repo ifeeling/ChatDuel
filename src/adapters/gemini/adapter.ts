@@ -1,4 +1,4 @@
-import type { AIAdapter } from '../base'
+import type { AIAdapter, AdapterDiagnostics } from '../base'
 import type { ConversationState, StreamEvent } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 import { elementToMarkdownText } from '../../lib/dom-response-text'
@@ -6,6 +6,7 @@ import selectorsJson from './selectors.json'
 
 type GeminiSelectors = typeof selectorsJson.selectors
 const DEFAULT_SELECTORS = selectorsJson.selectors
+export const GEMINI_SELECTOR_VERSION = selectorsJson.version
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // gemini.google.com 的输入框是 div.ql-editor(Quill 富文本)。
@@ -208,6 +209,10 @@ export function createGeminiAdapter(selectorOverrides?: SelectorOverrideMap): AI
     return nodes.length > 0 ? nodes[nodes.length - 1] : null
   }
 
+  function emit(diagnostics: AdapterDiagnostics | undefined, event: Parameters<AdapterDiagnostics['reporter']['emit']>[0]) {
+    diagnostics?.reporter.emit({ ...event, selectorConfigVersion: diagnostics.selectorConfigVersion })
+  }
+
   function startObserver() {
     observer = new MutationObserver(() => { dirty = true })
     observer.observe(document.body, { childList: true, subtree: true, characterData: true })
@@ -261,19 +266,78 @@ export function createGeminiAdapter(selectorOverrides?: SelectorOverrideMap): AI
       btn.click()
     },
 
-    async sendMessage(text: string, image?: File) {
-      await this.writeText(text)
+    async sendMessage(text: string, image?: File, diagnostics?: AdapterDiagnostics) {
+      const box = q<HTMLElement>(S.inputBox)
+      if (!box) {
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'input-locate', stage: 'failed', eventStatus: 'failed',
+          runOutcome: 'failed', errorCode: 'input-box-not-found', inputCharacterCount: text.length,
+        })
+        throw new Error('input box not found')
+      }
+      emit(diagnostics, {
+        component: 'platform-adapter', operation: 'input-locate', stage: 'located', eventStatus: 'succeeded', inputCharacterCount: text.length,
+      })
+      try {
+        writeQuillValue(box, text)
+      } catch {
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'input-write', stage: 'failed', eventStatus: 'failed',
+          runOutcome: 'failed', errorCode: 'input-write-failed', inputCharacterCount: text.length,
+        })
+        throw new Error('input write failed')
+      }
+      emit(diagnostics, {
+        component: 'platform-adapter', operation: 'input-write', stage: 'written', eventStatus: 'succeeded', inputCharacterCount: text.length,
+      })
       // 写完文字再附加图片(等 React/Quill 状态稳定)
       await sleep(50)
       if (image) {
-        await this.attachImage(image)
-        // 等上传组件把缩略图渲染进 input,并等 AI 网站自己的图片处理流水线跑完
-        // (ChatGPT/Gemini 在收到文件后还要走内部转码/特征抽取)
-        await waitForUploadReady()
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'attachment-prepare', stage: 'preparing', eventStatus: 'observed', hasAttachment: true,
+        })
+        try {
+          await this.attachImage(image)
+          await waitForUploadReady()
+        } catch {
+          emit(diagnostics, {
+            component: 'platform-adapter', operation: 'attachment-prepare', stage: 'failed', eventStatus: 'failed',
+            runOutcome: 'failed', errorCode: 'attachment-preparation-timeout', hasAttachment: true,
+          })
+          throw new Error('attachment preparation failed')
+        }
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'attachment-prepare', stage: 'prepared', eventStatus: 'succeeded', hasAttachment: true,
+        })
+      } else {
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'attachment-prepare', stage: 'skipped', eventStatus: 'skipped', hasAttachment: false,
+        })
       }
       // Quill 同步需要时间
       await sleep(200)
-      await this.triggerSend()
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        dispatchEnterKey(box)
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber: attempt,
+        })
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'send-ack', stage: 'waiting', eventStatus: 'observed', retryNumber: attempt,
+        })
+        if (await waitForSendAccepted(box, S)) {
+          emit(diagnostics, {
+            component: 'platform-adapter', operation: 'send-ack', stage: 'accepted', eventStatus: 'succeeded',
+            retryNumber: attempt, retryCount: attempt,
+          })
+          return
+        }
+        await sleep(250)
+      }
+      emit(diagnostics, {
+        component: 'platform-adapter', operation: 'send-ack', stage: 'failed', eventStatus: 'failed',
+        runOutcome: 'failed', errorCode: 'message-not-accepted', retryCount: 3,
+      })
+      throw new Error('message was not accepted by Gemini editor')
     },
 
     async attachImage(file: File) {
@@ -293,10 +357,10 @@ export function createGeminiAdapter(selectorOverrides?: SelectorOverrideMap): AI
     getConversationState(): Promise<ConversationState> {
       const responseEl = last<HTMLElement>(S.lastResponse)
       const lastText = responseEl ? elementToMarkdownText(responseEl) : ''
-      if (hasStopGeneratingButton(S)) return Promise.resolve({ status: 'streaming', lastResponse: lastText })
-      if (q(S.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText })
-      if (!lastText) return Promise.resolve({ status: 'idle' })
-      return Promise.resolve({ status: 'finished', lastResponse: lastText })
+      if (hasStopGeneratingButton(S)) return Promise.resolve({ status: 'streaming', lastResponse: lastText, stopButtonDetected: true })
+      if (q(S.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText, stopButtonDetected: false })
+      if (!lastText) return Promise.resolve({ status: 'idle', stopButtonDetected: false })
+      return Promise.resolve({ status: 'finished', lastResponse: lastText, stopButtonDetected: false })
     },
 
     onStreamEvent(handler) {

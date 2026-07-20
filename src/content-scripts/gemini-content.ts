@@ -1,10 +1,12 @@
-import { createGeminiAdapter } from '../adapters/gemini/adapter'
+import { GEMINI_SELECTOR_VERSION, createGeminiAdapter } from '../adapters/gemini/adapter'
 import type { SwToContent, ContentToSw } from '../shared/messages'
 import type { AIPlatform } from '../types'
-import { loadSelectorOverrides } from './selector-overrides'
+import { createAdapterDiagnostics } from '../lib/diagnostic-client'
+import { loadSelectorConfig } from './selector-overrides'
 
 async function boot() {
-  const adapter = createGeminiAdapter(await loadSelectorOverrides('gemini'))
+  const selectorConfig = await loadSelectorConfig('gemini', GEMINI_SELECTOR_VERSION)
+  const adapter = createGeminiAdapter(selectorConfig.selectors)
 
   adapter.onStreamEvent((event) => {
     const msg: ContentToSw = { type: 'stream-event', event }
@@ -24,7 +26,7 @@ async function boot() {
 
   window.addEventListener('message', (e: MessageEvent) => {
     const data = e.data as
-      | { source?: string; action?: string; text?: string; imageDataUrl?: string; imageMime?: string; imageName?: string }
+      | { source?: string; action?: string; text?: string; imageDataUrl?: string; imageMime?: string; imageName?: string; diagnostics?: unknown }
       | undefined
     if (!data || data.source !== 'aichatroom-parent') return
     if (data.action !== 'write-and-send') {
@@ -63,7 +65,7 @@ async function boot() {
       : undefined
 
     void Promise.resolve()
-      .then(() => adapter.sendMessage(text, file))
+      .then(() => adapter.sendMessage(text, file, createAdapterDiagnostics('gemini', data.diagnostics, selectorConfig.version)))
       .then(() => {
         e.source?.postMessage(
           { source: 'aichatroom-content', event: 'result', action: 'write-and-send', platform: 'gemini', ok: true },
@@ -87,8 +89,11 @@ async function boot() {
 
   chrome.runtime.onMessage.addListener((msg: SwToContent, _sender, sendResponse) => {
     if (msg.type === 'write-and-send') {
+      const file = msg.imageDataUrl
+        ? dataUrlToFile(msg.imageDataUrl, msg.imageMime || 'image/png', msg.imageName || 'image.png')
+        : undefined
       adapter
-        .sendMessage(msg.text)
+        .sendMessage(msg.text, file, createAdapterDiagnostics('gemini', msg.diagnostics, selectorConfig.version))
         .then(() => sendResponse({ ok: true }))
         .catch((e: unknown) => sendResponse({ ok: false, error: String(e) }))
       return true
