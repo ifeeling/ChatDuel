@@ -85,6 +85,7 @@ const ERROR_CODES = [
   'input-write-failed',
   'send-click-failed',
   'attachment-preparation-timeout',
+  'adapter-unsupported-page',
   'unexpected-error',
 ] as const
 

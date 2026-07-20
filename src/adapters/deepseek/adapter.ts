@@ -1,4 +1,4 @@
-import type { AIAdapter } from '../base'
+import type { AIAdapter, AdapterDiagnostics } from '../base'
 import type { ConversationState, StreamEvent } from '../../types'
 import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
 import { elementToMarkdownText } from '../../lib/dom-response-text'
@@ -105,6 +105,7 @@ const DEFAULT_SELECTORS: DeepSeekSelectors = {
   stopButton: DEFAULT_STOP_BUTTON_SELECTORS,
   response: DEFAULT_RESPONSE_SELECTORS,
 }
+export const DEEPSEEK_SELECTOR_VERSION = 'builtin-1'
 
 const PASTE_ATTACHMENT_EVIDENCE_TIMEOUT_MS = 700
 const DROP_ATTACHMENT_EVIDENCE_TIMEOUT_MS = 2300
@@ -819,6 +820,10 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
   const selectors = mergeSelectorOverrides(DEFAULT_SELECTORS, selectorOverrides) as DeepSeekSelectors
   let lastEventHandler: ((e: StreamEvent) => void) | null = null
 
+  function emit(diagnostics: AdapterDiagnostics | undefined, event: Parameters<AdapterDiagnostics['reporter']['emit']>[0]) {
+    diagnostics?.reporter.emit({ ...event, selectorConfigVersion: diagnostics.selectorConfigVersion })
+  }
+
   return {
     async isLoggedIn() {
       return !!queryFirst(selectors.inputBox)
@@ -856,15 +861,99 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
       throw new Error('deepseek send button not found')
     },
 
-    async sendMessage(text: string, image?: File) {
-      if (image) assertCanSendImageInCurrentMode()
-      await this.writeText(text)
+    async sendMessage(text: string, image?: File, diagnostics?: AdapterDiagnostics) {
+      if (image) {
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'attachment-prepare', stage: 'preparing', eventStatus: 'observed', hasAttachment: true,
+        })
+        try {
+          assertCanSendImageInCurrentMode()
+        } catch {
+          emit(diagnostics, {
+            component: 'platform-adapter', operation: 'attachment-prepare', stage: 'failed', eventStatus: 'failed',
+            runOutcome: 'failed', errorCode: 'adapter-unsupported-page', hasAttachment: true,
+          })
+          throw new Error(IMAGE_MODE_REQUIRED_ERROR)
+        }
+      }
+      const box = queryFirst<HTMLElement>(selectors.inputBox)
+      if (!box) {
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'input-locate', stage: 'failed', eventStatus: 'failed',
+          runOutcome: 'failed', errorCode: 'input-box-not-found', inputCharacterCount: text.length,
+        })
+        throw new Error('deepseek input box not found')
+      }
+      emit(diagnostics, {
+        component: 'platform-adapter', operation: 'input-locate', stage: 'located', eventStatus: 'succeeded', inputCharacterCount: text.length,
+      })
+      try {
+        if (box instanceof HTMLTextAreaElement) writeNativeTextareaValue(box, text)
+        else writeEditableValue(box, text)
+      } catch {
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'input-write', stage: 'failed', eventStatus: 'failed',
+          runOutcome: 'failed', errorCode: 'input-write-failed', inputCharacterCount: text.length,
+        })
+        throw new Error('input write failed')
+      }
+      emit(diagnostics, {
+        component: 'platform-adapter', operation: 'input-write', stage: 'written', eventStatus: 'succeeded', inputCharacterCount: text.length,
+      })
       await new Promise((resolve) => setTimeout(resolve, 80))
-      if (image) await this.attachImage(image)
+      if (image) {
+        try {
+          await this.attachImage(image)
+        } catch {
+          emit(diagnostics, {
+            component: 'platform-adapter', operation: 'attachment-prepare', stage: 'failed', eventStatus: 'failed',
+            runOutcome: 'failed', errorCode: 'attachment-preparation-timeout', hasAttachment: true,
+          })
+          throw new Error('deepseek image upload failed')
+        }
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'attachment-prepare', stage: 'prepared', eventStatus: 'succeeded', hasAttachment: true,
+        })
+      } else {
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'attachment-prepare', stage: 'skipped', eventStatus: 'skipped', hasAttachment: false,
+        })
+      }
       // DeepSeek 的 paste 上传是异步的：先创建预览，再实际上传文件。
       // 需要足够等待让文件上传完成，否则发送时只发文字不发图片。
       await new Promise((resolve) => setTimeout(resolve, image ? 3000 : 200))
-      await this.triggerSend()
+      box.focus()
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        dispatchEnter(box)
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber: attempt,
+        })
+        if (await waitForSendAccepted(selectors)) {
+          emit(diagnostics, {
+            component: 'platform-adapter', operation: 'send-ack', stage: 'accepted', eventStatus: 'succeeded',
+            retryNumber: attempt, retryCount: attempt,
+          })
+          return
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250))
+      }
+      const btn = findSendControl(selectors)
+      if (btn) {
+        activateControl(btn)
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber: 4,
+        })
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'send-ack', stage: 'accepted', eventStatus: 'succeeded', retryNumber: 4, retryCount: 4,
+        })
+        return
+      }
+      emit(diagnostics, {
+        component: 'platform-adapter', operation: 'send-click', stage: 'failed', eventStatus: 'failed',
+        runOutcome: 'failed', errorCode: 'send-button-not-found', retryCount: 3,
+      })
+      throw new Error('deepseek send button not found')
     },
 
     async attachImage(file: File) {
@@ -884,14 +973,14 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
         event: 'conversation-state-check',
         hasInputBox,
       })
-      if (!hasInputBox) return { status: 'error', errorMessage: 'DeepSeek 输入框未识别' }
+      if (!hasInputBox) return { status: 'error', errorMessage: 'DeepSeek 输入框未识别', stopButtonDetected: false }
       const lastResponse = getResponseTextWithFallback(selectors)
       const hasStopButton = hasStopGeneratingButton(selectors)
       const state: ConversationState = hasStopButton
-        ? { status: 'streaming', lastResponse }
+        ? { status: 'streaming', lastResponse, stopButtonDetected: true }
         : lastResponse
-          ? { status: 'finished', lastResponse }
-          : { status: 'idle' }
+          ? { status: 'finished', lastResponse, stopButtonDetected: false }
+          : { status: 'idle', stopButtonDetected: false }
       logCaptureDebug({
         platform: 'deepseek',
         event: 'conversation-state-result',
