@@ -347,9 +347,15 @@ function terminalAnalysis(events: DiagnosticEvent[]): {
   const acceptancePending = events.find((event) => event.operation === 'send-ack' && event.stage === 'waiting')
   const responseOwnerStart = accepted ?? acceptancePending
   const terminals = events.filter((event) => event.runOutcome !== undefined)
+  const hasAdapterTerminalAfterPending = !accepted && acceptancePending
+    && terminals.some((event) => event.storageSequence > acceptancePending.storageSequence
+      && event.component !== 'response-capture')
   const valid: DiagnosticEvent[] = []
   for (const terminal of terminals) {
-    const validOwner = responseOwnerStart
+    const validOwner = hasAdapterTerminalAfterPending
+      ? terminal.storageSequence > acceptancePending!.storageSequence
+        && terminal.component !== 'response-capture'
+      : responseOwnerStart
       ? terminal.storageSequence > responseOwnerStart.storageSequence && terminal.component === 'response-capture'
       : terminal.component !== 'response-capture'
         && terminal.runOutcome !== 'completed'

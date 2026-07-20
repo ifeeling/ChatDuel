@@ -132,6 +132,23 @@ describe('diagnostic retention', () => {
     expect(run.structuralWarnings).toEqual([])
   })
 
+  it('keeps a later adapter failure terminal after an unconfirmed acknowledgement', () => {
+    const envelope = createEmptyDiagnosticEnvelope()
+    envelope.events = [
+      event('batch_1', 'run_1', 1, {
+        component: 'platform-adapter', operation: 'send-ack', stage: 'waiting', eventStatus: 'observed',
+      }),
+      event('batch_1', 'run_1', 2, {
+        component: 'platform-adapter', operation: 'send-ack', stage: 'failed', eventStatus: 'failed',
+        runOutcome: 'failed', errorCode: 'message-not-accepted',
+      }),
+    ]
+
+    const run = deriveDiagnosticExport(envelope, { now: NOW, activePlatformRunIds: new Set() }).batches[0].runs[0]
+    expect(run.finalOutcome).toBe('failed')
+    expect(run.structuralWarnings).toEqual([])
+  })
+
   it('does not pick a winner when a run has multiple valid terminal events', () => {
     const envelope = createEmptyDiagnosticEnvelope()
     envelope.events = [
