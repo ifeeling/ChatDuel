@@ -13,7 +13,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 // 因为 Claude 官网(Figma/ProseMirror)没有稳定的语义标记。真实页面请以
 // 扩展文档里的「Claude 接入验证清单」为准，在浏览器里实测后回填选择器。
 //
-// 已知历史坑(见 docs/postmortems/2026-06-19-claude-integration-notes.md)：
+// 已知历史坑(见 docs/research/2026-06-19-claude-integration-notes.md)：
 //   - Claude 在扩展 iframe 里曾经卡在不可用旧模型、模型菜单不生成选项。
 //     这是 Claude 官网在 iframe 环境的行为，适配器层无法修复，需实页验证。
 //   - 发送按钮可能没有稳定 aria-label，所以 findSendButton 内置 composer 兜底。
@@ -286,34 +286,49 @@ function stripMessagePrefix(text: string): string {
 
 // 用 Claude 官方支持的 data-last-message 标记取「最新一条消息」；
 // 若最新消息是用户提问（AI 还没回答），则倒序遍历所有消息，
-// 取最新一条 AI 回复。返回去除前缀后的干净文本。
-function findLatestAiResponse(): string | null {
+// 取最新一条 AI 回复。
+function findLatestAiResponseArticle(): HTMLElement | null {
   // 路径 1：data-last-message 直接命中「最新一条消息」
   const lastMsg = document.querySelector<HTMLElement>("[data-last-message='true']")
   if (lastMsg) {
     const article = lastMsg.querySelector<HTMLElement>("[role='article']") ?? lastMsg
-    if (isAiResponseArticle(article)) {
-      const cleaned = cleanClaudeText(stripMessagePrefix(article.textContent ?? ''))
-      if (cleaned.length > 0) return cleaned
-    }
+    if (isAiResponseArticle(article)) return article
   }
-  // 路径 2：倒序遍历所有消息，取最新一条 AI 回复
-  // （覆盖「用户刚提问、AI 还没答」导致 data-last-message 标在用户消息上的情况）
+  // 路径 2：当前 Claude DOM 已不再提供 main / data-rs-index / data-last-message，
+  // 消息直接使用 <div role="article" aria-label="Message N of M">。
+  const articles = Array.from(
+    document.querySelectorAll<HTMLElement>("[role='article'][aria-label^='Message ']"),
+  )
+  for (let i = articles.length - 1; i >= 0; i -= 1) {
+    const article = articles[i]
+    if (isAiResponseArticle(article)) return article
+  }
+  // 路径 3：兼容旧版 data-rs-index DOM，倒序取最新一条 AI 回复。
   const messages = Array.from(document.querySelectorAll<HTMLElement>("[data-rs-index]"))
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const article = messages[i].querySelector<HTMLElement>("[role='article']") ?? messages[i]
-    if (isAiResponseArticle(article)) {
-      const cleaned = cleanClaudeText(stripMessagePrefix(article.textContent ?? ''))
-      if (cleaned.length > 0) return cleaned
-    }
+    if (isAiResponseArticle(article)) return article
   }
   return null
+}
+
+// 返回最新 Claude 回复去除 accessibility 前缀后的干净文本。
+function findLatestAiResponse(): string | null {
+  const article = findLatestAiResponseArticle()
+  if (!article) return null
+  const content = article.cloneNode(true) as HTMLElement
+  content.querySelectorAll("[role='toolbar'], [data-testid^='action-bar-']").forEach((node) => node.remove())
+  const cleaned = cleanClaudeText(stripMessagePrefix(content.textContent ?? ''))
+  return cleaned.length > 0 ? cleaned : null
 }
 
 function getLatestResponseText(): string {
   // 优先级 1：Claude 官方 data-last-message 标记 + AI/用户前缀区分（当前实页最准确）
   const viaLastMessage = findLatestAiResponse()
   if (viaLastMessage) return viaLastMessage
+  // 已存在 Claude 的语义消息节点但还没有 AI 回复时，保持为空。
+  // 不能再进入宽泛 DOM 兜底，否则会把用户问题或附件全文当成回答。
+  if (document.querySelector("[role='article'][aria-label^='Message ']")) return ''
   // 其余路径统一收口降噪（cleanClaudeText 幂等，重复调用无害）
   const marked = findClaudeRespondedBlock()
   if (marked) {
@@ -333,8 +348,29 @@ function getLatestResponseText(): string {
   return ''
 }
 
+function isVisibleElement(el: HTMLElement): boolean {
+  let current: HTMLElement | null = el
+  while (current) {
+    if (current.hidden || current.getAttribute('aria-hidden') === 'true') return false
+    const style = getComputedStyle(current)
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false
+    current = current.parentElement
+  }
+  return true
+}
+
 function hasStopGeneratingButton(selectors = DEFAULT_SELECTORS): boolean {
-  return !!document.querySelector(selectors.stopButton)
+  return Array.from(document.querySelectorAll<HTMLElement>(selectors.stopButton)).some(isVisibleElement)
+}
+
+function hasCompletionActionBar(): boolean {
+  const latestArticle = findLatestAiResponseArticle()
+  if (!latestArticle) return false
+  return Array.from(
+    latestArticle.querySelectorAll<HTMLElement>(
+      "[data-testid='action-bar-retry'], [data-testid='action-bar-read-aloud']",
+    ),
+  ).some(isVisibleElement)
 }
 
 // ── 基于 MutationObserver 的流式状态检测（选择器无关兜底） ─────────
@@ -541,6 +577,15 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
       // 优先用选择器检测（最准确）
       if (hasStopGeneratingButton(S)) return Promise.resolve({ status: 'streaming', lastResponse: lastText, stopButtonDetected: true })
       if (q(S.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText, stopButtonDetected: false })
+      // Claude 完成后会在最新回答内部提供可见操作栏；优先于 DOM 变化兜底。
+      if (lastText && hasCompletionActionBar()) {
+        return Promise.resolve({
+          status: 'finished',
+          lastResponse: lastText,
+          stopButtonDetected: false,
+          completionActionBarDetected: hasCompletionActionBar(),
+        })
+      }
       // 选择器无关的兜底：基于 DOM 变化时间戳
       const timeSinceMutation = Date.now() - lastMutationTimestamp
       if (isStreaming || timeSinceMutation < 2000) {

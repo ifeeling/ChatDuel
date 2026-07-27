@@ -1551,7 +1551,7 @@ async function backfillSessionResponses(
         differsFromBaseline: trimmedText !== baselineText,
       })
       const decision = evaluateResponseCapture(
-        { text, status: state.status },
+        { text, status: state.status, stopButtonDetected: state.stopButtonDetected },
         baselines[platform],
         progress[platform],
         RESPONSE_STABLE_REQUIRED_POLLS,

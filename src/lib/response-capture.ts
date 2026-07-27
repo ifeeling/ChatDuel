@@ -4,6 +4,7 @@ import { logCaptureDebug } from './capture-debug'
 export interface ResponseProbe {
   text?: string
   status?: StreamStatus
+  stopButtonDetected?: boolean
 }
 
 export interface ResponseCaptureProgress {
@@ -30,14 +31,16 @@ function nextProgress(
   stableCount: number,
   previous: ResponseCaptureProgress | undefined,
   observedAt: number,
+  activeGenerationObserved: boolean,
 ): ResponseCaptureProgress {
-  const hasNewActivity = !!text && text !== baselineText && text !== previous?.lastActivityText
+  const hasNewTextActivity = !!text && text !== baselineText && text !== previous?.lastActivityText
+  const hasNewActivity = hasNewTextActivity || activeGenerationObserved
   return {
     lastText: text,
     stableCount,
     firstObservedAt: previous?.firstObservedAt ?? observedAt,
     lastActivityAt: hasNewActivity ? observedAt : previous?.lastActivityAt,
-    lastActivityText: hasNewActivity ? text : previous?.lastActivityText,
+    lastActivityText: hasNewTextActivity ? text : previous?.lastActivityText,
   }
 }
 
@@ -51,6 +54,7 @@ export function evaluateResponseCapture(
   const text = probe.text?.trim() ?? ''
   const baselineText = baseline?.trim() ?? ''
   const isActive = probe.status ? ACTIVE_STATUSES.includes(probe.status) : false
+  const activeGenerationObserved = isActive && probe.stopButtonDetected === true
 
   if (!text || text === baselineText) {
     logCaptureDebug({
@@ -65,7 +69,7 @@ export function evaluateResponseCapture(
     return {
       shouldCapture: false,
       text,
-      progress: nextProgress(text, baselineText, 0, previous, observedAt),
+      progress: nextProgress(text, baselineText, 0, previous, observedAt, activeGenerationObserved),
     }
   }
 
@@ -81,7 +85,7 @@ export function evaluateResponseCapture(
     return {
       shouldCapture: false,
       text,
-      progress: nextProgress(text, baselineText, 0, previous, observedAt),
+      progress: nextProgress(text, baselineText, 0, previous, observedAt, activeGenerationObserved),
     }
   }
 
@@ -99,7 +103,7 @@ export function evaluateResponseCapture(
   return {
     shouldCapture,
     text,
-    progress: nextProgress(text, baselineText, stableCount, previous, observedAt),
+    progress: nextProgress(text, baselineText, stableCount, previous, observedAt, activeGenerationObserved),
   }
 }
 
