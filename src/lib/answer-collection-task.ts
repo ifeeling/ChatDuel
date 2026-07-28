@@ -73,6 +73,7 @@ export interface AnswerCollectionTaskDependencies {
 export interface AnswerCollectionTaskInput {
   id: string
   session: Session
+  signal?: AbortSignal
 }
 
 export type AnswerCollectionPlatformResult =
@@ -81,6 +82,7 @@ export type AnswerCollectionPlatformResult =
   | { status: 'send-failed'; error: string }
   | { status: 'capture-timeout'; error: string }
   | { status: 'capture-interrupted'; error: string }
+  | { status: 'user-stopped'; error: string }
 
 export interface AnswerCollectionTaskResult {
   id: string
@@ -226,9 +228,29 @@ export async function runAnswerCollectionTask(
     }
   }
 
+  const settleUserStoppedPlatforms = (): boolean => {
+    if (!input.signal?.aborted) return false
+    for (const platform of [...pending]) {
+      const platformResult: AnswerCollectionPlatformResult = {
+        status: 'user-stopped',
+        error: 'answer collection stopped by user',
+      }
+      platforms[platform] = platformResult
+      pending.delete(platform)
+      invokeObserverSafely(() => dependencies.onPlatformSettled?.(platform, platformResult))
+      finishDiagnostic(platform, {
+        outcome: 'paused',
+        now: dependencies.now(),
+      })
+    }
+    return true
+  }
+
   const progress: Partial<Record<AIPlatform, ResponseCaptureProgress>> = {}
   while (pending.size > 0) {
+    if (settleUserStoppedPlatforms()) break
     await dependencies.wait(POLL_INTERVAL_MS)
+    if (settleUserStoppedPlatforms()) break
     const captured: Partial<Record<AIPlatform, string>> = {}
     const failures: Partial<Record<AIPlatform, string>> = {}
 

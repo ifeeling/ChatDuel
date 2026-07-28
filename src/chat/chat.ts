@@ -61,6 +61,10 @@ import {
 } from '../lib/user-settings'
 import { t, type UserLanguage } from '../lib/i18n'
 import { getSendButtonState } from '../lib/send-button-state'
+import {
+  PendingQuestionQueue,
+  type PendingQuestion,
+} from '../lib/pending-question-queue'
 import { addSession, deleteSession, getSession, loadSessions, updateSession } from '../lib/session-store'
 import {
   createSessionRecord,
@@ -68,14 +72,9 @@ import {
   normalizeCapturedResponse,
 } from '../lib/session-record'
 import {
-  SEND_LOCK_TIMEOUT_MS,
   createSendLock,
   markSendLockSubmitted,
   markSendLockPlatformDone,
-  markSendLockTimedOut,
-  markSendLockUnlocked,
-  shouldUnlockInsteadOfSend,
-  shouldSendLockTimeout,
   type SendLockState,
 } from '../lib/send-lock'
 import { buildSessionMarkdownExport, formatBytes, formatCapturedMarkdownText, formatSessionMarkdown } from '../lib/history-format'
@@ -107,6 +106,11 @@ import {
   createResponseDiagnosticTracker,
 } from './response-diagnostic'
 import {
+  enqueuePendingQuestionFromComposer,
+  stopPendingQuestionWaiting,
+} from './pending-question-composer'
+import { renderPendingQuestionQueue } from './pending-question-queue-view'
+import {
   choosePlatformMessageRoute,
   iframeWriteResultTimeoutMs,
   routeTimeoutErrorCode,
@@ -124,6 +128,9 @@ const panelIframe = (p: AIPlatform): HTMLIFrameElement =>
 
 const inputEl = $<HTMLTextAreaElement>('#input')
 const sendBtn = $<HTMLButtonElement>('#btn-send')
+const sendButtonLabel = $<HTMLSpanElement>('#send-button-label')
+const pendingQuestionQueueEl = $<HTMLElement>('#pending-question-queue')
+const btnStopWaiting = $<HTMLButtonElement>('#btn-stop-waiting')
 const panelsContainer = $<HTMLElement>('.panels')
 const composer = $<HTMLElement>('.composer')
 const composerTextbox = $<HTMLDivElement>('#composer-textbox')
@@ -224,7 +231,8 @@ const selectedSummaryPlatforms: Set<AIPlatform> = new Set()
 let transferSourcePlatform: AIPlatform | null = null
 let transferSourceOptions: TransferSourceOption[] = []
 let currentSendLock: SendLockState | null = null
-let sendLockTimer: ReturnType<typeof setTimeout> | null = null
+const pendingQuestionQueue = new PendingQuestionQueue()
+let activeAnswerCollectionAbortController: AbortController | null = null
 let originalInputPlaceholder = inputEl.placeholder
 
 // 待发送的附件(仅支持 1 个,后续 attach 会替换)
@@ -278,7 +286,7 @@ function applyStaticUiLanguage(language: UserLanguage) {
   setElementTitle('#btn-send', t(language, 'toolbar.send'))
   inputEl.placeholder = t(language, 'input.placeholder')
   originalInputPlaceholder = inputEl.placeholder
-  updateSendButtonState()
+  renderQueue()
   setElementText('#settings-title', t(language, 'app.settings'))
   setElementText('[data-settings-tab="sites"]', t(language, 'settings.sitesTab'))
   setElementText('[data-settings-tab="prompts"]', t(language, 'settings.promptsTab'))
@@ -419,23 +427,53 @@ function setStatus(p: AIPlatform, state: 'ok' | 'err' | 'warn', text: string) {
 
 function sendButtonTitle(kind: ReturnType<typeof getSendButtonState>['kind']): string {
   if (kind === 'empty') return t(userSettings.language, 'send.emptyTitle')
-  if (kind === 'waiting-response') return t(userSettings.language, 'send.lockResponseTitle')
+  if (kind === 'queue') {
+    const reason = pendingQuestionQueue.snapshot().pauseReason
+    return reason
+      ? t(userSettings.language, `queue.paused.${reason}`)
+      : t(userSettings.language, 'queue.enqueue')
+  }
   if (kind === 'submitting') return t(userSettings.language, 'send.lockStillSubmitting')
   return t(userSettings.language, 'toolbar.send')
 }
 
 function updateSendButtonState() {
+  const queueSnapshot = pendingQuestionQueue.snapshot()
+  let lockPhase = currentSendLock?.status === 'waiting' ? currentSendLock.phase : null
+  if (!lockPhase && (queueSnapshot.activeTaskId || queueSnapshot.status === 'paused')) {
+    lockPhase = 'waiting-response'
+  }
   const state = getSendButtonState({
     hasContent: inputEl.value.trim().length > 0 || !!pendingAttachment,
-    lockPhase: currentSendLock?.status === 'waiting' ? currentSendLock.phase : null,
+    lockPhase,
   })
   sendBtn.dataset.icon = state.icon
+  sendBtn.dataset.kind = state.kind
   sendBtn.disabled = state.disabled
-  sendBtn.classList.toggle('waiting-response', state.kind === 'waiting-response')
+  sendBtn.classList.toggle('waiting-response', state.kind === 'queue')
   sendBtn.classList.toggle('empty', state.kind === 'empty')
+  sendButtonLabel.textContent = state.kind === 'queue'
+    ? t(userSettings.language, 'queue.enqueue')
+    : ''
   const title = sendButtonTitle(state.kind)
   sendBtn.title = title
   sendBtn.setAttribute('aria-label', title)
+}
+
+function renderQueue() {
+  renderPendingQuestionQueue(pendingQuestionQueueEl, pendingQuestionQueue.snapshot(), {
+    text: {
+      title: (count, max) => uiText('queue.title', { count, max }),
+      lifecycleNote: t(userSettings.language, 'queue.lifecycleNote'),
+      waitingFor: (labels) => uiText('queue.waitingFor', { labels }),
+      paused: (reason) => t(userSettings.language, `queue.paused.${reason}`),
+      stopWaiting: t(userSettings.language, 'queue.stopWaiting'),
+    },
+    platformLabel: (platform) => getPlatformMeta(platform)?.label ?? platform,
+    canStop: currentSendLock?.status === 'waiting'
+      && currentSendLock.phase === 'waiting-response',
+  })
+  updateSendButtonState()
 }
 
 function setSubmittingLockUi() {
@@ -459,24 +497,9 @@ function hideSendLockUi() {
   updateSendButtonState()
 }
 
-function clearSendLockTimer() {
-  if (!sendLockTimer) return
-  clearTimeout(sendLockTimer)
-  sendLockTimer = null
-}
-
 function beginSendLock(targets: AIPlatform[]) {
-  clearSendLockTimer()
   currentSendLock = createSendLock(targets)
   setSubmittingLockUi()
-  sendLockTimer = setTimeout(() => {
-    if (!currentSendLock || !shouldSendLockTimeout(currentSendLock)) return
-    const timedOutLock = markSendLockTimedOut(currentSendLock)
-    currentSendLock = markSendLockUnlocked(timedOutLock)
-    hideSendLockUi()
-    const labels = timedOutLock.pendingPlatforms.map((p) => getPlatformMeta(p)?.label ?? p).join(' / ')
-    showToast(uiText('send.lockTimeout', { labels }), 'warn', 8000)
-  }, SEND_LOCK_TIMEOUT_MS)
 }
 
 function markCurrentSendSubmitted() {
@@ -489,16 +512,12 @@ function finishSendLockPlatform(platform: AIPlatform) {
   if (!currentSendLock || currentSendLock.status !== 'waiting') return
   currentSendLock = markSendLockPlatformDone(currentSendLock, platform)
   if (currentSendLock.status !== 'done') return
-  clearSendLockTimer()
   hideSendLockUi()
 }
 
-function forceUnlockComposer() {
-  if (!currentSendLock || currentSendLock.status !== 'waiting') return
-  currentSendLock = markSendLockUnlocked(currentSendLock)
-  clearSendLockTimer()
+function resetSendLockUi() {
+  currentSendLock = null
   hideSendLockUi()
-  showToast(t(userSettings.language, 'send.manualUnlocked'), 'warn', 5000)
 }
 
 function waitForIframeReady(p: AIPlatform, timeoutMs = 5000): Promise<boolean> {
@@ -1427,42 +1446,105 @@ window.addEventListener('message', (e: MessageEvent) => {
 })
 
 // ---------- 发送 ----------
+function resolveComposerTargets(text: string): AIPlatform[] {
+  if (atSelected.size > 0) {
+    return platformsWithCapability('supportsText', [...atSelected])
+  }
+  const textPlatforms = platformsWithCapability('supportsText')
+  const validKeys = new Set(textPlatforms)
+  const mentioned = parseAtMentions(text, validKeys)
+  return mentioned.length > 0 ? mentioned : textPlatforms
+}
+
+function queuedQuestionId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `queued-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function enqueueComposerText() {
+  const text = inputEl.value
+  const targets = resolveComposerTargets(text.trim())
+  const id = queuedQuestionId()
+  const enqueueResult = enqueuePendingQuestionFromComposer(pendingQuestionQueue, inputEl, {
+    id,
+    taskId: `answer-collection-${id}`,
+    targetPlatforms: targets,
+    hasAttachment: !!pendingAttachment,
+  })
+  if (!enqueueResult.ok) {
+    const key = enqueueResult.reason === 'full'
+      ? 'queue.full'
+      : enqueueResult.reason === 'attachment-unsupported'
+        ? 'queue.attachmentUnsupported'
+        : enqueueResult.reason === 'no-targets'
+          ? 'send.noTextTarget'
+          : 'send.needTextOrAttachment'
+    showToast(
+      t(userSettings.language, key),
+      'warn',
+      enqueueResult.reason === 'attachment-unsupported' ? 5000 : 4000,
+    )
+    return
+  }
+
+  renderQueue()
+  showToast(t(userSettings.language, 'queue.added'), 'success', 1800)
+}
+
 async function onSend() {
-  if (shouldUnlockInsteadOfSend(currentSendLock)) {
-    forceUnlockComposer()
+  const queueSnapshot = pendingQuestionQueue.snapshot()
+  if (queueSnapshot.status === 'paused' && queueSnapshot.pauseReason) {
+    showToast(t(userSettings.language, `queue.paused.${queueSnapshot.pauseReason}`), 'warn', 5000)
     return
   }
-  if (currentSendLock?.status === 'waiting') {
-    showToast(t(userSettings.language, 'send.lockStillSubmitting'), 'warn', 3000)
+  if (queueSnapshot.activeTaskId) {
+    enqueueComposerText()
     return
   }
+
   const text = inputEl.value.trim()
   if (!text && !pendingAttachment) {
     showToast(t(userSettings.language, 'send.needTextOrAttachment'), 'warn')
     return
   }
-  // 目标优先级:atSelected(UI 选) > 文本里手打 @xxx(向后兼容) > 全发
-  let targets: AIPlatform[]
-  if (atSelected.size > 0) {
-    targets = platformsWithCapability('supportsText', [...atSelected])
-  } else {
-    const textPlatforms = platformsWithCapability('supportsText')
-    const validKeys = new Set(textPlatforms)
-    const mentioned = parseAtMentions(text, validKeys)
-    targets = mentioned.length > 0 ? mentioned : textPlatforms
-  }
+  const targets = resolveComposerTargets(text)
   if (targets.length === 0) {
     showToast(t(userSettings.language, 'send.noTextTarget'), 'warn')
     return
   }
+  await dispatchQuestion({
+    text,
+    targets,
+    attachment: pendingAttachment,
+    clearComposerOnSendComplete: true,
+    taskAlreadyStarted: false,
+  })
+}
+
+interface DispatchQuestionInput {
+  text: string
+  targets: AIPlatform[]
+  attachment: PendingAttachment | null
+  clearComposerOnSendComplete: boolean
+  taskAlreadyStarted: boolean
+  sessionId?: string
+  taskId?: string
+}
+
+async function dispatchQuestion(input: DispatchQuestionInput) {
+  const text = input.text
+  let targets = [...input.targets]
+  const attachment = input.attachment
 
   const deliveryPlan = buildAttachmentDeliveryPlan(
     targets,
-    pendingAttachment?.classification ?? null,
+    attachment?.classification ?? null,
     text.length > 0,
   )
   targets = deliveryPlan.sendTargets
-  if (pendingAttachment?.classification.handling === 'file-upload') {
+  if (attachment?.classification.handling === 'file-upload') {
     if (deliveryPlan.manualUploadTargets.length > 0) {
       const labels = deliveryPlan.manualUploadTargets.map((p) => getPlatformMeta(p)?.label ?? p).join(' / ')
       const message = text.length > 0
@@ -1490,44 +1572,54 @@ async function onSend() {
   let imageMime: string | undefined
   let imageName: string | undefined
   let textToSend = text
-  if (pendingAttachment?.classification.handling === 'inline-text') {
-    textToSend = buildInlineTextPrompt(pendingAttachment.file.name, pendingAttachment.textContent ?? '', text)
+  if (attachment?.classification.handling === 'inline-text') {
+    textToSend = buildInlineTextPrompt(attachment.file.name, attachment.textContent ?? '', text)
   }
-  if (pendingAttachment?.classification.handling === 'file-upload') {
+  if (attachment?.classification.handling === 'file-upload') {
     try {
-      imageDataUrl = await fileToDataUrl(pendingAttachment.file)
-      imageMime = pendingAttachment.file.type
-      imageName = pendingAttachment.file.name
+      imageDataUrl = await fileToDataUrl(attachment.file)
+      imageMime = attachment.file.type
+      imageName = attachment.file.name
     } catch (e) {
       console.error('[AIChatRoom chat] failed to read file as data URL', e)
     }
   }
 
-  const attachments: SessionAttachment[] = pendingAttachment
+  const attachments: SessionAttachment[] = attachment
     ? [{
       id: `attachment-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      name: pendingAttachment.file.name,
-      mime: pendingAttachment.file.type,
-      size: pendingAttachment.file.size,
-      kind: pendingAttachment.classification.kind,
-      handling: pendingAttachment.classification.handling,
-      inlinedText: pendingAttachment.classification.handling === 'inline-text' ? pendingAttachment.textContent : undefined,
-      uploadStatus: pendingAttachment.classification.handling === 'file-upload' ? 'pending' : undefined,
+      name: attachment.file.name,
+      mime: attachment.file.type,
+      size: attachment.file.size,
+      kind: attachment.classification.kind,
+      handling: attachment.classification.handling,
+      inlinedText: attachment.classification.handling === 'inline-text' ? attachment.textContent : undefined,
+      uploadStatus: attachment.classification.handling === 'file-upload' ? 'pending' : undefined,
     }]
     : []
 
   const currentSession = createSessionRecord({
+    id: input.sessionId,
     prompt: text,
     sentPrompt: textToSend,
     targetPlatforms: targets,
     attachments,
   })
-  const sentAttachmentHandling = pendingAttachment?.classification.handling
+  const taskId = input.taskId ?? `answer-collection-${currentSession.id}`
+  if (!input.taskAlreadyStarted && !pendingQuestionQueue.startTask(taskId, targets)) {
+    resetSendLockUi()
+    return
+  }
+  const abortController = new AbortController()
+  activeAnswerCollectionAbortController = abortController
+  renderQueue()
+  const sentAttachmentHandling = attachment?.classification.handling
 
   void runAnswerCollectionTask(
     {
-      id: `answer-collection-${currentSession.id}`,
+      id: taskId,
       session: currentSession,
+      signal: abortController.signal,
     },
     {
       ...createAnswerCollectionBaseDependencies(),
@@ -1608,6 +1700,7 @@ async function onSend() {
       },
       onSendComplete: (results) => {
         markCurrentSendSubmitted()
+        renderQueue()
         for (const result of results) {
           if (result.ok) {
             setStatus(result.platform, 'warn', t(userSettings.language, 'send.statusWaiting'))
@@ -1637,29 +1730,75 @@ async function onSend() {
           showToast(t(userSettings.language, 'send.success'), 'success', 1200)
         }
 
-        inputEl.value = ''
-        clearAttachment()
+        if (input.clearComposerOnSendComplete) {
+          inputEl.value = ''
+          clearAttachment()
+        }
       },
       onPlatformSettled: (platform, result) => {
         if (result.status === 'captured') {
           setStatus(platform, 'ok', t(userSettings.language, 'send.statusDone'))
           finishSendLockPlatform(platform)
-        } else if (result.status === 'capture-timeout' || result.status === 'capture-interrupted') {
+        } else if (
+          result.status === 'capture-timeout'
+          || result.status === 'capture-interrupted'
+          || result.status === 'user-stopped'
+        ) {
           setStatus(platform, 'err', t(userSettings.language, 'send.statusFailed'))
           finishSendLockPlatform(platform)
         }
       },
     },
   ).then((result) => {
+    if (activeAnswerCollectionAbortController === abortController) {
+      activeAnswerCollectionAbortController = null
+    }
     if (result.historyStatus === 'unsaved') {
       console.error('[AIChatRoom chat] answer collection completed but history save failed', {
         taskId: result.id,
         sessionId: result.session.id,
       })
     }
+    const transition = pendingQuestionQueue.finishTask(taskId, result)
+    renderQueue()
+    if (transition.kind === 'dispatch') {
+      void dispatchQueuedQuestion(transition.next).catch((error) => {
+        pendingQuestionQueue.pauseForDispatchFailure(transition.next.taskId)
+        resetSendLockUi()
+        renderQueue()
+        console.error('[AIChatRoom chat] queued question failed to start', error)
+      })
+    }
   }).catch((error) => {
+    if (activeAnswerCollectionAbortController === abortController) {
+      activeAnswerCollectionAbortController = null
+    }
+    pendingQuestionQueue.pauseForTaskFailure(taskId)
+    resetSendLockUi()
+    renderQueue()
     console.error('[AIChatRoom chat] answer collection task failed', error)
   })
+}
+
+async function dispatchQueuedQuestion(question: PendingQuestion) {
+  await dispatchQuestion({
+    text: question.text,
+    targets: [...question.targetPlatforms],
+    attachment: null,
+    clearComposerOnSendComplete: false,
+    taskAlreadyStarted: true,
+    sessionId: question.id,
+    taskId: question.taskId,
+  })
+}
+
+function stopWaiting() {
+  if (!stopPendingQuestionWaiting(
+    pendingQuestionQueue,
+    activeAnswerCollectionAbortController,
+  )) return
+  renderQueue()
+  showToast(t(userSettings.language, 'queue.paused.user-stopped'), 'warn', 5000)
 }
 
 // ---------- @ 弹层 / Chips ----------
@@ -3303,6 +3442,7 @@ function bindEvents() {
   })
 
   sendBtn.addEventListener('click', () => void onSend())
+  btnStopWaiting.addEventListener('click', stopWaiting)
   inputEl.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !atPopupOpen) {
       e.preventDefault()

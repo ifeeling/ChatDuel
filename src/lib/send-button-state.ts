@@ -1,6 +1,6 @@
 import type { SendLockPhase } from './send-lock'
 
-export type SendButtonKind = 'empty' | 'ready' | 'waiting-response' | 'submitting'
+export type SendButtonKind = 'empty' | 'ready' | 'queue' | 'submitting'
 
 export interface SendButtonStateInput {
   hasContent: boolean
@@ -19,7 +19,7 @@ export function getSendButtonState(input: SendButtonStateInput): SendButtonState
     return { kind: 'submitting', icon: 'stop', disabled: true, waiting: false }
   }
   if (input.lockPhase === 'waiting-response') {
-    return { kind: 'waiting-response', icon: 'stop', disabled: false, waiting: true }
+    return { kind: 'queue', icon: 'send', disabled: false, waiting: true }
   }
   if (!input.hasContent) {
     return { kind: 'empty', icon: 'send', disabled: true, waiting: false }

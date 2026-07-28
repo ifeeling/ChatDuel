@@ -154,6 +154,77 @@ body { overflow: hidden; }
   box-shadow: 0 -18px 60px rgba(0, 0, 0, 0.5);
 }
 
+.pending-question-queue {
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(80, 140, 255, 0.06);
+}
+.pending-question-queue[hidden] { display: none; }
+.pending-question-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+#pending-question-title {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+#pending-question-lifecycle-note {
+  min-width: 0;
+  flex: 1;
+  color: var(--muted);
+  font-size: 11px;
+}
+.pending-question-stop {
+  flex-shrink: 0;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-3);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.pending-question-stop:hover {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+.pending-question-status {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.pending-question-list {
+  display: grid;
+  gap: 5px;
+  margin: 7px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.pending-question-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-3);
+}
+.pending-question-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pending-question-targets {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .composer-toolbar {
   display: none;
   align-items: center;
@@ -267,6 +338,19 @@ body { overflow: hidden; }
   opacity: 0.9;
 }
 #btn-send.waiting-response:hover { background: #666; }
+#btn-send[data-kind="queue"] {
+  width: auto;
+  min-width: 124px;
+  padding: 0 12px;
+}
+#btn-send[data-kind="queue"] .send-icon { display: none; }
+.send-button-label { display: none; }
+#btn-send[data-kind="queue"] .send-button-label {
+  display: inline;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
 /* 输入框左边的工具按钮,参考 Gemini/ChatGPT */
 .input-add-btn,
 .input-tool-btn {
