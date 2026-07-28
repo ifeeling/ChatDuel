@@ -111,6 +111,22 @@ const PASTE_ATTACHMENT_EVIDENCE_TIMEOUT_MS = 700
 const DROP_ATTACHMENT_EVIDENCE_TIMEOUT_MS = 2300
 const ATTACHMENT_FAILURE_SETTLE_MS = 900
 const ATTACHMENT_FAILURE_PATTERN = /异常文件|删除异常文件|未提取到文字|failed|error/i
+const ATTACHMENT_EVIDENCE_SELECTOR = [
+  'img',
+  'canvas',
+  '[class*="upload" i]',
+  '[class*="attach" i]',
+  '[class*="file" i]',
+  '[class*="image" i]',
+  '[data-testid*="upload" i]',
+  '[data-testid*="attach" i]',
+  '[data-testid*="file" i]',
+].join(',')
+const ATTACHMENT_FAILURE_CONTEXT_SELECTOR = [
+  ATTACHMENT_EVIDENCE_SELECTOR,
+  '[role="alert"]',
+  '[aria-live="assertive"]',
+].join(',')
 const IMAGE_MODE_REQUIRED_ERROR = 'DeepSeek 仅识图模式支持图片，请新建或切换到识图模式后重试'
 
 function queryFirst<T extends Element = Element>(selectors: string[]): T | null {
@@ -213,6 +229,7 @@ async function attachFileToInput(file: File): Promise<boolean> {
   }
   const scope = findAttachmentScope(input)
   const baseline = attachmentEvidenceCount(file, scope)
+  const failureBaseline = attachmentFailureSnapshot(file, scope)
   const dt = buildDataTransferFromFile(file)
   try {
     input.files = dt.files
@@ -222,7 +239,7 @@ async function attachFileToInput(file: File): Promise<boolean> {
   input.dispatchEvent(new Event('input', { bubbles: true }))
   input.dispatchEvent(new Event('change', { bubbles: true }))
   const ok = await waitForAttachmentEvidence(file, baseline, scope)
-  const failure = ok ? await waitForAttachmentFailure(scope) : null
+  const failure = ok ? await waitForAttachmentFailure(file, scope, failureBaseline) : null
   logUploadAttempt('file-input', file, {
     ok: ok && !failure,
     scope: attachmentDebugScope(scope),
@@ -244,6 +261,7 @@ async function pasteFileIntoComposer(file: File, selectors: DeepSeekSelectors): 
   }
   const scope = findAttachmentScope(box)
   const baseline = attachmentEvidenceCount(file, scope)
+  const failureBaseline = attachmentFailureSnapshot(file, scope)
   try {
     box.focus()
   } catch {
@@ -253,7 +271,7 @@ async function pasteFileIntoComposer(file: File, selectors: DeepSeekSelectors): 
   dispatchPaste(box, dt)
   const pasteOk = await waitForAttachmentEvidence(file, baseline, scope, PASTE_ATTACHMENT_EVIDENCE_TIMEOUT_MS)
   if (pasteOk) {
-    const failure = await waitForAttachmentFailure(scope)
+    const failure = await waitForAttachmentFailure(file, scope, failureBaseline)
     logUploadAttempt('paste-drop', file, {
       ok: !failure,
       method: 'paste',
@@ -272,7 +290,7 @@ async function pasteFileIntoComposer(file: File, selectors: DeepSeekSelectors): 
   const dropBaseline = attachmentEvidenceCount(file, scope)
   dispatchPaste(box, dt, 'drop')
   const ok = await waitForAttachmentEvidence(file, dropBaseline, scope, DROP_ATTACHMENT_EVIDENCE_TIMEOUT_MS)
-  const failure = ok ? await waitForAttachmentFailure(scope) : null
+  const failure = ok ? await waitForAttachmentFailure(file, scope, failureBaseline) : null
   logUploadAttempt('paste-drop', file, {
     ok: ok && !failure,
     method: 'drop',
@@ -313,17 +331,7 @@ function attachmentEvidenceCount(file: File, scope: ParentNode = document.body):
       ].join(' ').toLowerCase()
       return text.includes(fileName) || label.includes(fileName)
     }).length
-  const uploadMarks = scope.querySelectorAll([
-    'img',
-    'canvas',
-    '[class*="upload" i]',
-    '[class*="attach" i]',
-    '[class*="file" i]',
-    '[class*="image" i]',
-    '[data-testid*="upload" i]',
-    '[data-testid*="attach" i]',
-    '[data-testid*="file" i]',
-  ].join(',')).length
+  const uploadMarks = scope.querySelectorAll(ATTACHMENT_EVIDENCE_SELECTOR).length
   return textHits + uploadMarks
 }
 
@@ -336,19 +344,66 @@ async function waitForAttachmentEvidence(file: File, baseline: number, scope: Pa
   return false
 }
 
-function attachmentFailureDetails(scope: ParentNode): { text: string } | null {
-  const text = normalizeText(scope instanceof HTMLElement ? scope.innerText || scope.textContent || '' : document.body.innerText || document.body.textContent || '')
-  const match = text.match(ATTACHMENT_FAILURE_PATTERN)
-  if (!match) return null
-  const start = Math.max(0, match.index ? match.index - 40 : 0)
-  const end = Math.min(text.length, (match.index ?? 0) + match[0].length + 60)
-  return { text: text.slice(start, end) }
+function attachmentElementMarker(element: Element): string {
+  return [
+    element.textContent ?? '',
+    element.getAttribute('alt') ?? '',
+    element.getAttribute('title') ?? '',
+    element.getAttribute('aria-label') ?? '',
+  ].join(' ').toLowerCase()
 }
 
-async function waitForAttachmentFailure(scope: ParentNode, maxMs = ATTACHMENT_FAILURE_SETTLE_MS): Promise<{ text: string } | null> {
+function containsComposerInput(element: HTMLElement): boolean {
+  return element.matches('textarea, [contenteditable="true"], [role="textbox"]')
+    || !!element.querySelector('textarea, [contenteditable="true"], [role="textbox"]')
+}
+
+function attachmentFailureContexts(file: File, scope: ParentNode): HTMLElement[] {
+  const fileName = file.name.toLowerCase()
+  const seeds = [...scope.querySelectorAll<HTMLElement>(ATTACHMENT_FAILURE_CONTEXT_SELECTOR)]
+  for (const element of scope.querySelectorAll<HTMLElement>('*')) {
+    if (!attachmentElementMarker(element).includes(fileName)) continue
+    const childMentionsFile = [...element.children]
+      .some((child) => attachmentElementMarker(child).includes(fileName))
+    if (!childMentionsFile) seeds.push(element)
+  }
+
+  const contexts = new Set<HTMLElement>()
+  for (const seed of seeds) {
+    contexts.add(seed)
+    if (seed.parentElement && seed.parentElement !== scope && !containsComposerInput(seed.parentElement)) {
+      contexts.add(seed.parentElement)
+    }
+  }
+  return [...contexts]
+}
+
+type AttachmentFailureSnapshot = Map<HTMLElement, string>
+
+function attachmentFailureSnapshot(file: File, scope: ParentNode): AttachmentFailureSnapshot {
+  return new Map(attachmentFailureContexts(file, scope).map((element) => [
+    element,
+    normalizeText(element.innerText || element.textContent || ''),
+  ]))
+}
+
+function attachmentFailureDetails(file: File, scope: ParentNode, baseline: AttachmentFailureSnapshot): { text: string } | null {
+  for (const element of attachmentFailureContexts(file, scope)) {
+    const text = normalizeText(element.innerText || element.textContent || '')
+    if (baseline.get(element) === text) continue
+    const match = text.match(ATTACHMENT_FAILURE_PATTERN)
+    if (!match) continue
+    const start = Math.max(0, match.index ? match.index - 40 : 0)
+    const end = Math.min(text.length, (match.index ?? 0) + match[0].length + 60)
+    return { text: text.slice(start, end) }
+  }
+  return null
+}
+
+async function waitForAttachmentFailure(file: File, scope: ParentNode, baseline: AttachmentFailureSnapshot, maxMs = ATTACHMENT_FAILURE_SETTLE_MS): Promise<{ text: string } | null> {
   const start = Date.now()
   while (Date.now() - start < maxMs) {
-    const failure = attachmentFailureDetails(scope)
+    const failure = attachmentFailureDetails(file, scope, baseline)
     if (failure) return failure
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
