@@ -83,6 +83,7 @@ import { buildSummaryPrompt } from '../lib/summary-builder'
 import {
   runAnswerCollectionTask,
   type AnswerCollectionRead,
+  type AnswerCollectionTaskDependencies,
 } from '../lib/answer-collection-task'
 import { buildTransferContent, buildTransferSourceOptions, type TransferSourceOption } from '../lib/transfer-source'
 import { bindComposerFocusRestorer } from '../lib/focus-restore'
@@ -1323,6 +1324,23 @@ async function readAnswerCollectionPlatform(platform: AIPlatform): Promise<Answe
   }
 }
 
+function createAnswerCollectionBaseDependencies(): Pick<
+  AnswerCollectionTaskDependencies,
+  'now' | 'wait' | 'captureBaseline' | 'read' | 'history'
+> {
+  return {
+    now: () => Date.now(),
+    wait: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+    captureBaseline: (platform) => requestLastResponse(platform, 1500),
+    read: readAnswerCollectionPlatform,
+    history: {
+      add: addSession,
+      get: getSession,
+      update: updateSession,
+    },
+  }
+}
+
 function requestPlatformLocation(p: AIPlatform, timeoutMs = 1500): Promise<string> {
   const win = panelIframe(p).contentWindow
   if (!win) return Promise.resolve('')
@@ -1512,9 +1530,7 @@ async function onSend() {
       session: currentSession,
     },
     {
-      now: () => Date.now(),
-      wait: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-      captureBaseline: (platform) => requestLastResponse(platform, 1500),
+      ...createAnswerCollectionBaseDependencies(),
       send: async (platform) => {
         const shouldUploadFile = deliveryPlan.autoUploadTargets.includes(platform)
         const diagnosticContext = diagnosticContexts[platform]
@@ -1577,11 +1593,6 @@ async function onSend() {
           setStatus(platform, 'warn', t(userSettings.language, 'send.statusResponding'))
         }
         return read
-      },
-      history: {
-        add: addSession,
-        get: getSession,
-        update: updateSession,
       },
       createDiagnosticTracker: (platform, startedAt) => {
         const context = diagnosticContexts[platform]
@@ -2933,18 +2944,10 @@ async function onGenerateSummary() {
         session: summarySession,
       },
       {
-        now: () => Date.now(),
-        wait: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-        captureBaseline: (platform) => requestLastResponse(platform, 1500),
+        ...createAnswerCollectionBaseDependencies(),
         send: async (platform) => {
           postToIframe(platform, 'write-and-send', { text: prompt })
           return { platform, ok: true }
-        },
-        read: readAnswerCollectionPlatform,
-        history: {
-          add: addSession,
-          get: getSession,
-          update: updateSession,
         },
         onSendComplete: () => {
           closeSummaryDialog()

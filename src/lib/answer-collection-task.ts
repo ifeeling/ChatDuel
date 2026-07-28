@@ -144,7 +144,7 @@ async function addHistoryWithRetry(
   }
 }
 
-function notify(callback: (() => void) | undefined): void {
+function invokeObserverSafely(callback: (() => void) | undefined): void {
   try {
     callback?.()
   } catch {
@@ -178,7 +178,7 @@ export async function runAnswerCollectionTask(
       return { platform, ok: false, error: 'send failed' }
     }
   }))
-  notify(() => dependencies.onSendComplete?.(sendResults))
+  invokeObserverSafely(() => dependencies.onSendComplete?.(sendResults))
   session = applySendResults(
     session,
     sendResults.map((result) => ({
@@ -222,7 +222,7 @@ export async function runAnswerCollectionTask(
         error: result.error || 'send failed',
       }
       platforms[result.platform] = platformResult
-      notify(() => dependencies.onPlatformSettled?.(result.platform, platformResult))
+      invokeObserverSafely(() => dependencies.onPlatformSettled?.(result.platform, platformResult))
     }
   }
 
@@ -242,7 +242,7 @@ export async function runAnswerCollectionTask(
         const platformResult: AnswerCollectionPlatformResult = { status: 'capture-interrupted', error }
         platforms[platform] = platformResult
         pending.delete(platform)
-        notify(() => dependencies.onPlatformSettled?.(platform, platformResult))
+        invokeObserverSafely(() => dependencies.onPlatformSettled?.(platform, platformResult))
         finishDiagnostic(platform, {
           outcome: 'interrupted',
           errorCode: 'unexpected-error',
@@ -299,7 +299,7 @@ export async function runAnswerCollectionTask(
         }
         platforms[platform] = platformResult
         pending.delete(platform)
-        notify(() => dependencies.onPlatformSettled?.(platform, platformResult))
+        invokeObserverSafely(() => dependencies.onPlatformSettled?.(platform, platformResult))
         finishDiagnostic(platform, {
           outcome: probe.status === 'paused' ? 'paused' : 'completed',
           now: dependencies.now(),
@@ -310,7 +310,7 @@ export async function runAnswerCollectionTask(
         const platformResult: AnswerCollectionPlatformResult = { status: 'capture-timeout', error }
         platforms[platform] = platformResult
         pending.delete(platform)
-        notify(() => dependencies.onPlatformSettled?.(platform, platformResult))
+        invokeObserverSafely(() => dependencies.onPlatformSettled?.(platform, platformResult))
         finishDiagnostic(platform, {
           outcome: 'timed-out',
           errorCode: probe.diagnosticErrorCode
