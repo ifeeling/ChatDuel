@@ -1,6 +1,7 @@
 import type { StreamStatus } from '../types'
 import type { DiagnosticReporter } from '../lib/diagnostic-client'
 import type { DiagnosticErrorCode, DiagnosticRunOutcome } from '../lib/diagnostic-types'
+export { classifyResponseCaptureWait } from '../lib/response-capture'
 
 const RESPONSE_CHECKPOINTS_MS = [5_000, 15_000, 30_000, 60_000] as const
 
@@ -23,23 +24,6 @@ export interface ResponseDiagnosticFinish {
 export interface ResponseDiagnosticTracker {
   observe(observation: ResponseDiagnosticObservation): void
   finish(result: ResponseDiagnosticFinish): void
-}
-
-export interface ResponseCaptureWaitState {
-  stateRequestTimedOut: boolean
-  status: StreamStatus
-  responseLength: number
-  differsFromBaseline: boolean
-}
-
-export function classifyResponseCaptureWait(state: ResponseCaptureWaitState): DiagnosticErrorCode {
-  if (state.stateRequestTimedOut) return 'state-request-timeout'
-  if (state.responseLength === 0) return 'response-selector-empty'
-  if (!state.differsFromBaseline) return 'response-equals-baseline'
-  if (state.status === 'queued' || state.status === 'sending' || state.status === 'streaming') {
-    return 'response-still-streaming'
-  }
-  return 'response-capture-timeout'
 }
 
 function waitedMs(now: number, startedAt: number): number {

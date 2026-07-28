@@ -1,5 +1,6 @@
 import type { StreamStatus } from '../types'
 import { logCaptureDebug } from './capture-debug'
+import type { DiagnosticErrorCode } from './diagnostic-types'
 
 export interface ResponseProbe {
   text?: string
@@ -21,9 +22,24 @@ export interface ResponseCaptureDecision {
   progress: ResponseCaptureProgress
 }
 
+export interface ResponseCaptureWaitState {
+  stateRequestTimedOut: boolean
+  status: StreamStatus
+  responseLength: number
+  differsFromBaseline: boolean
+}
+
 const ACTIVE_STATUSES: StreamStatus[] = ['queued', 'sending', 'streaming']
 export const RESPONSE_NO_PROGRESS_TIMEOUT_MS = 60_000
 export const RESPONSE_ABSOLUTE_TIMEOUT_MS = 10 * 60_000
+
+export function classifyResponseCaptureWait(state: ResponseCaptureWaitState): DiagnosticErrorCode {
+  if (state.stateRequestTimedOut) return 'state-request-timeout'
+  if (state.responseLength === 0) return 'response-selector-empty'
+  if (!state.differsFromBaseline) return 'response-equals-baseline'
+  if (ACTIVE_STATUSES.includes(state.status)) return 'response-still-streaming'
+  return 'response-capture-timeout'
+}
 
 function nextProgress(
   text: string,

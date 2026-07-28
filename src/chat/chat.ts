@@ -63,12 +63,8 @@ import { t, type UserLanguage } from '../lib/i18n'
 import { getSendButtonState } from '../lib/send-button-state'
 import { addSession, deleteSession, getSession, loadSessions, updateSession } from '../lib/session-store'
 import {
-  applyCaptureFailures,
-  applyCapturedResponses,
-  applySendResults,
   createSessionRecord,
   createSummarySessionRecord,
-  isNewCapturedResponse,
   normalizeCapturedResponse,
 } from '../lib/session-record'
 import {
@@ -85,11 +81,9 @@ import {
 import { buildSessionMarkdownExport, formatBytes, formatCapturedMarkdownText, formatSessionMarkdown } from '../lib/history-format'
 import { buildSummaryPrompt } from '../lib/summary-builder'
 import {
-  evaluateResponseCapture,
-  isResponseCompleteForUnlock,
-  partitionResponseCapturePlatforms,
-  type ResponseCaptureProgress,
-} from '../lib/response-capture'
+  runAnswerCollectionTask,
+  type AnswerCollectionRead,
+} from '../lib/answer-collection-task'
 import { buildTransferContent, buildTransferSourceOptions, type TransferSourceOption } from '../lib/transfer-source'
 import { bindComposerFocusRestorer } from '../lib/focus-restore'
 import { filterSessionsByTitle } from '../lib/history-search'
@@ -109,9 +103,7 @@ import {
 } from '../lib/diagnostic-client'
 import type { DiagnosticContext, DiagnosticErrorCode } from '../lib/diagnostic-types'
 import {
-  classifyResponseCaptureWait,
   createResponseDiagnosticTracker,
-  type ResponseDiagnosticTracker,
 } from './response-diagnostic'
 import {
   choosePlatformMessageRoute,
@@ -213,8 +205,6 @@ const readyWaiters = SUPPORTED_PLATFORMS.reduce((acc, platform) => {
   acc[platform] = []
   return acc
 }, {} as Record<AIPlatform, Array<(ok: boolean) => void>>)
-const RESPONSE_BACKFILL_INTERVAL_MS = 3000
-const RESPONSE_STABLE_REQUIRED_POLLS = 2
 let userSettings: UserSettings = DEFAULT_USER_SETTINGS
 let diagnosticEventCount = 0
 let preparedDiagnosticExport: PreparedDiagnosticExport | null = null
@@ -1318,6 +1308,21 @@ function requestConversationState(p: AIPlatform, timeoutMs = 3000): Promise<Conv
   })
 }
 
+async function readAnswerCollectionPlatform(platform: AIPlatform): Promise<AnswerCollectionRead> {
+  const state = await requestConversationState(platform, 1500)
+  const responseRead = state.lastResponse
+    ? { text: state.lastResponse }
+    : await requestLastResponseForCapture(platform, 1500)
+  return {
+    text: responseRead.text,
+    status: state.status,
+    stopButtonDetected: state.stopButtonDetected,
+    completionActionBarDetected: state.completionActionBarDetected,
+    requestTimedOut: state.requestTimedOut,
+    diagnosticErrorCode: state.diagnosticErrorCode ?? responseRead.diagnosticErrorCode,
+  }
+}
+
 function requestPlatformLocation(p: AIPlatform, timeoutMs = 1500): Promise<string> {
   const win = panelIframe(p).contentWindow
   if (!win) return Promise.resolve('')
@@ -1383,255 +1388,6 @@ function requestDeepSeekConversationUrl(timeoutMs = 1500): Promise<string> {
   })
 }
 
-async function captureResponseBaselines(targets: AIPlatform[]): Promise<Partial<Record<AIPlatform, string>>> {
-  const entries = await Promise.all(
-    targets.map(async (platform) => [platform, await requestLastResponse(platform, 1500)] as const),
-  )
-  return Object.fromEntries(entries)
-}
-
-function scheduleSessionResponseBackfill(
-  sessionId: string,
-  platforms: AIPlatform[],
-  baselines: Partial<Record<AIPlatform, string>>,
-  progress: Partial<Record<AIPlatform, ResponseCaptureProgress>> = {},
-  attempt = 0,
-  diagnosticTrackers: Partial<Record<AIPlatform, ResponseDiagnosticTracker>> = {},
-  diagnosticWaitErrors: Partial<Record<AIPlatform, DiagnosticErrorCode>> = {},
-) {
-  // 修改回答回填前先看 docs/RESPONSE_CAPTURE_MAINTENANCE.md，避免再次覆盖旧历史或无限等待。
-  if (platforms.length === 0) return
-  const { waiting, timedOut } = partitionResponseCapturePlatforms(platforms, progress, Date.now())
-  if (timedOut.length > 0) {
-    void finalizeResponseCaptureTimeouts(
-      sessionId,
-      timedOut,
-      progress,
-      attempt,
-      diagnosticTrackers,
-      diagnosticWaitErrors,
-    ).catch((e) => {
-      for (const platform of timedOut) {
-        diagnosticTrackers[platform]?.finish({
-          outcome: 'failed', errorCode: 'unexpected-error', now: Date.now(),
-        })
-      }
-      console.error('[AIChatRoom chat] response backfill timeout failed', e)
-    }).finally(() => {
-      scheduleSessionResponseBackfill(
-        sessionId,
-        waiting,
-        baselines,
-        progress,
-        attempt,
-        diagnosticTrackers,
-        diagnosticWaitErrors,
-      )
-    })
-    return
-  }
-
-  setTimeout(() => {
-    void backfillSessionResponses(
-      sessionId,
-      platforms,
-      baselines,
-      progress,
-      attempt,
-      diagnosticTrackers,
-      diagnosticWaitErrors,
-    )
-  }, RESPONSE_BACKFILL_INTERVAL_MS)
-}
-
-async function finalizeResponseCaptureTimeouts(
-  sessionId: string,
-  platforms: AIPlatform[],
-  progress: Partial<Record<AIPlatform, ResponseCaptureProgress>>,
-  attempt: number,
-  diagnosticTrackers: Partial<Record<AIPlatform, ResponseDiagnosticTracker>>,
-  diagnosticWaitErrors: Partial<Record<AIPlatform, DiagnosticErrorCode>>,
-) {
-  const session = await getSession(sessionId)
-  if (!session) {
-    for (const platform of platforms) {
-      diagnosticTrackers[platform]?.finish({
-        outcome: 'failed', errorCode: 'unexpected-error', now: Date.now(),
-      })
-    }
-    return
-  }
-
-  const failures: Partial<Record<AIPlatform, string>> = {}
-  for (const platform of platforms) {
-    const response = session.responses[platform]
-    if (response?.status !== 'pending') continue
-    diagnosticTrackers[platform]?.finish({
-      outcome: 'timed-out',
-      errorCode: diagnosticWaitErrors[platform] ?? 'response-capture-timeout',
-      now: Date.now(),
-    })
-    failures[platform] = 'response capture timed out'
-    setStatus(platform, 'err', t(userSettings.language, 'send.statusFailed'))
-    finishSendLockPlatform(platform)
-    logCaptureDebug({
-      platform,
-      event: 'backfill-timeout',
-      sessionId,
-      attempt,
-      lastTextPreview: textPreview(progress[platform]?.lastText ?? ''),
-      lastStableCount: progress[platform]?.stableCount ?? 0,
-      requiredStableCount: RESPONSE_STABLE_REQUIRED_POLLS,
-    })
-  }
-  const updated = applyCaptureFailures(session, failures)
-  if (updated !== session) await updateSession(updated)
-}
-
-async function backfillSessionResponses(
-  sessionId: string,
-  platforms: AIPlatform[],
-  baselines: Partial<Record<AIPlatform, string>>,
-  progress: Partial<Record<AIPlatform, ResponseCaptureProgress>>,
-  attempt: number,
-  diagnosticTrackers: Partial<Record<AIPlatform, ResponseDiagnosticTracker>>,
-  diagnosticWaitErrors: Partial<Record<AIPlatform, DiagnosticErrorCode>>,
-) {
-  try {
-    const session = await getSession(sessionId)
-    if (!session) {
-      for (const platform of platforms) {
-        diagnosticTrackers[platform]?.finish({
-          outcome: 'failed', errorCode: 'unexpected-error', now: Date.now(),
-        })
-      }
-      return
-    }
-
-    const trackedPlatforms = platforms.filter((platform) => {
-      const response = session.responses[platform]
-      return response?.status === 'pending'
-    })
-    if (trackedPlatforms.length === 0) return
-
-    const captured: Partial<Record<AIPlatform, string>> = {}
-    const nextProgress = { ...progress }
-    const nextDiagnosticWaitErrors = { ...diagnosticWaitErrors }
-    await Promise.all(trackedPlatforms.map(async (platform) => {
-      const state = await requestConversationState(platform, 1500)
-      if (state.status === 'streaming') {
-        setStatus(platform, 'warn', t(userSettings.language, 'send.statusResponding'))
-      }
-      const responseRead = state.lastResponse
-        ? { text: state.lastResponse }
-        : await requestLastResponseForCapture(platform, 1500)
-      const text = responseRead.text
-      const interruptionCode = state.diagnosticErrorCode ?? responseRead.diagnosticErrorCode
-      if (interruptionCode) {
-        diagnosticTrackers[platform]?.finish({
-          outcome: 'interrupted', errorCode: interruptionCode, now: Date.now(),
-        })
-      }
-      const trimmedText = text.trim()
-      const baselineText = (baselines[platform] ?? '').trim()
-      const observedAt = Date.now()
-      diagnosticTrackers[platform]?.observe({
-        now: observedAt,
-        status: state.status,
-        responseLength: trimmedText.length,
-        baselineLength: baselineText.length,
-        differsFromBaseline: trimmedText !== baselineText,
-        stopButtonDetected: state.stopButtonDetected === true,
-        completionActionBarDetected: state.completionActionBarDetected === true,
-      })
-      nextDiagnosticWaitErrors[platform] = classifyResponseCaptureWait({
-        stateRequestTimedOut: state.requestTimedOut === true,
-        status: state.status,
-        responseLength: trimmedText.length,
-        differsFromBaseline: trimmedText !== baselineText,
-      })
-      const decision = evaluateResponseCapture(
-        { text, status: state.status, stopButtonDetected: state.stopButtonDetected },
-        baselines[platform],
-        progress[platform],
-        RESPONSE_STABLE_REQUIRED_POLLS,
-        observedAt,
-      )
-      nextProgress[platform] = decision.progress
-      const completeForUnlock = isResponseCompleteForUnlock({ text, status: state.status }, baselines[platform])
-      const willCapture = decision.shouldCapture && isNewCapturedResponse(decision.text, baselines[platform])
-      // 详细诊断：分析 completeForUnlock 为 false 的原因
-      const completeForUnlockReason = (() => {
-        if (completeForUnlock) return 'complete'
-        if (!trimmedText) return 'text-empty'
-        if (trimmedText === baselineText) return 'text-equals-baseline'
-        if (state.status === 'streaming' || state.status === 'queued' || state.status === 'sending') return `status-active-${state.status}`
-        return 'unknown'
-      })()
-      logCaptureDebug({
-        platform,
-        event: 'backfill-poll',
-        sessionId,
-        attempt,
-        stateStatus: state.status,
-        route: platformMessageRoute(platform),
-        textLength: text.trim().length,
-        textPreview: textPreview(text),
-        baselinePreview: textPreview(baselines[platform] ?? ''),
-        previousStableCount: progress[platform]?.stableCount ?? 0,
-        nextStableCount: decision.progress.stableCount,
-        requiredStableCount: RESPONSE_STABLE_REQUIRED_POLLS,
-        shouldCapture: decision.shouldCapture,
-        willCapture,
-        completeForUnlock,
-        completeForUnlockReason,
-        completionActionBarDetected: state.completionActionBarDetected === true,
-      })
-      if (willCapture) {
-        diagnosticTrackers[platform]?.finish({
-          outcome: state.status === 'paused' ? 'paused' : 'completed',
-          now: Date.now(),
-        })
-        setStatus(platform, 'ok', t(userSettings.language, 'send.statusDone'))
-        finishSendLockPlatform(platform)
-        captured[platform] = decision.text
-      }
-    }))
-
-    const updated = applyCapturedResponses(session, captured)
-    for (const [platform, text] of Object.entries(captured) as Array<[AIPlatform, string]>) {
-      logCaptureDebug({
-        platform,
-        event: 'history-capture',
-        sessionId,
-        attempt,
-        textLength: text.trim().length,
-        textPreview: textPreview(text),
-      })
-    }
-    if (updated !== session) await updateSession(updated)
-
-    const remaining = trackedPlatforms
-    scheduleSessionResponseBackfill(
-      sessionId,
-      remaining,
-      baselines,
-      nextProgress,
-      attempt + 1,
-      diagnosticTrackers,
-      nextDiagnosticWaitErrors,
-    )
-  } catch (e) {
-    for (const platform of platforms) {
-      diagnosticTrackers[platform]?.finish({
-        outcome: 'failed',
-        errorCode: 'unexpected-error',
-        now: Date.now(),
-      })
-    }
-    console.error('[AIChatRoom chat] response backfill failed', e)
-  }
-}
 
 window.addEventListener('message', (e: MessageEvent) => {
   const data = e.data as
@@ -1742,158 +1498,157 @@ async function onSend() {
     }]
     : []
 
-  let currentSession: Session | null = createSessionRecord({
+  const currentSession = createSessionRecord({
     prompt: text,
     sentPrompt: textToSend,
     targetPlatforms: targets,
     attachments,
   })
-  try {
-    await addSession(currentSession)
-  } catch (e) {
-    console.error('[AIChatRoom chat] failed to save session history', e)
-    currentSession = null
-  }
+  const sentAttachmentHandling = pendingAttachment?.classification.handling
 
-  const responseBaselines = await captureResponseBaselines(targets)
-
-  // 2. 发文字 + 附件到官方页面。iframe 被 CSP 拦住的平台会走官方标签页兜底。
-  const results: PlatformSendResult[] = []
-  await Promise.all(
-    targets.map(async (p) => {
-      const shouldUploadFile = deliveryPlan.autoUploadTargets.includes(p)
-      const diagnosticContext = diagnosticContexts[p]
-      const reporter = diagnosticContext
-        ? createDiagnosticReporter(diagnosticContext, p, createDiagnosticProducerId('chat-ui'))
-        : undefined
-      const route = platformMessageRoute(p)
-      reporter?.emit({
-        component: 'chat-ui',
-        operation: 'route-select',
-        stage: 'routed',
-        eventStatus: 'succeeded',
-        route,
-        inputCharacterCount: textToSend.length,
-        hasAttachment: shouldUploadFile,
-      })
-      const result = await writeAndSendToPlatform(p, {
-        text: textToSend,
-        imageDataUrl: shouldUploadFile ? imageDataUrl : undefined,
-        imageMime: shouldUploadFile ? imageMime : undefined,
-        imageName: shouldUploadFile ? imageName : undefined,
-        diagnostics: diagnosticContext,
-      })
-      if (!result.ok) {
-        const timedOutWithoutReply = !result.error
-        const terminalErrorCode = result.diagnosticErrorCode
-          ?? (timedOutWithoutReply ? routeTimeoutErrorCode(route) : undefined)
+  void runAnswerCollectionTask(
+    {
+      id: `answer-collection-${currentSession.id}`,
+      session: currentSession,
+    },
+    {
+      now: () => Date.now(),
+      wait: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+      captureBaseline: (platform) => requestLastResponse(platform, 1500),
+      send: async (platform) => {
+        const shouldUploadFile = deliveryPlan.autoUploadTargets.includes(platform)
+        const diagnosticContext = diagnosticContexts[platform]
+        const reporter = diagnosticContext
+          ? createDiagnosticReporter(
+            diagnosticContext,
+            platform,
+            createDiagnosticProducerId('chat-ui'),
+          )
+          : undefined
+        const route = platformMessageRoute(platform)
         reporter?.emit({
-          component: route === 'iframe' ? 'iframe-bridge' : 'official-tab',
-          operation: 'result-return',
-          stage: timedOutWithoutReply ? 'timed-out' : 'failed',
-          eventStatus: timedOutWithoutReply ? 'timed-out' : 'failed',
+          component: 'chat-ui',
+          operation: 'route-select',
+          stage: 'routed',
+          eventStatus: 'succeeded',
           route,
-          ...(terminalErrorCode
-            ? {
-                runOutcome: timedOutWithoutReply ? 'timed-out' : 'failed',
-                errorCode: terminalErrorCode,
-                timeoutMs: route === 'iframe' ? iframeWriteResultTimeoutMs({
-                  imageDataUrl: shouldUploadFile ? imageDataUrl : undefined,
-                }) : undefined,
-              }
-            : {}),
+          inputCharacterCount: textToSend.length,
+          hasAttachment: shouldUploadFile,
         })
-      }
-      results.push(result)
-    }),
-  )
-
-  markCurrentSendSubmitted()
-
-  for (const result of results) {
-    if (result.ok) {
-      setStatus(result.p, 'warn', t(userSettings.language, 'send.statusWaiting'))
-    } else {
-      setStatus(result.p, 'err', t(userSettings.language, 'send.statusFailed'))
-      finishSendLockPlatform(result.p)
-    }
-  }
-
-  const responseDiagnosticTrackers = Object.fromEntries(
-    results
-      .filter((result) => result.ok && diagnosticContexts[result.p])
-      .map((result) => {
-        const context = diagnosticContexts[result.p]!
-        return [
-          result.p,
-          createResponseDiagnosticTracker(
-            createDiagnosticReporter(
-              context,
-              result.p,
-              createDiagnosticProducerId('response-capture'),
-            ),
-            Date.now(),
+        const result = await writeAndSendToPlatform(platform, {
+          text: textToSend,
+          imageDataUrl: shouldUploadFile ? imageDataUrl : undefined,
+          imageMime: shouldUploadFile ? imageMime : undefined,
+          imageName: shouldUploadFile ? imageName : undefined,
+          diagnostics: diagnosticContext,
+        })
+        if (!result.ok) {
+          const timedOutWithoutReply = !result.error
+          const terminalErrorCode = result.diagnosticErrorCode
+            ?? (timedOutWithoutReply ? routeTimeoutErrorCode(route) : undefined)
+          reporter?.emit({
+            component: route === 'iframe' ? 'iframe-bridge' : 'official-tab',
+            operation: 'result-return',
+            stage: timedOutWithoutReply ? 'timed-out' : 'failed',
+            eventStatus: timedOutWithoutReply ? 'timed-out' : 'failed',
+            route,
+            ...(terminalErrorCode
+              ? {
+                  runOutcome: timedOutWithoutReply ? 'timed-out' : 'failed',
+                  errorCode: terminalErrorCode,
+                  timeoutMs: route === 'iframe'
+                    ? iframeWriteResultTimeoutMs({
+                        imageDataUrl: shouldUploadFile ? imageDataUrl : undefined,
+                      })
+                    : undefined,
+                }
+              : {}),
+          })
+        }
+        return {
+          platform,
+          ok: result.ok,
+          error: result.error,
+        }
+      },
+      read: async (platform) => {
+        const read = await readAnswerCollectionPlatform(platform)
+        if (read.status === 'streaming') {
+          setStatus(platform, 'warn', t(userSettings.language, 'send.statusResponding'))
+        }
+        return read
+      },
+      history: {
+        add: addSession,
+        get: getSession,
+        update: updateSession,
+      },
+      createDiagnosticTracker: (platform, startedAt) => {
+        const context = diagnosticContexts[platform]
+        if (!context) return undefined
+        return createResponseDiagnosticTracker(
+          createDiagnosticReporter(
+            context,
+            platform,
+            createDiagnosticProducerId('response-capture'),
           ),
-        ]
-      }),
-  ) as Partial<Record<AIPlatform, ResponseDiagnosticTracker>>
+          startedAt,
+        )
+      },
+      onSendComplete: (results) => {
+        markCurrentSendSubmitted()
+        for (const result of results) {
+          if (result.ok) {
+            setStatus(result.platform, 'warn', t(userSettings.language, 'send.statusWaiting'))
+          } else {
+            setStatus(result.platform, 'err', t(userSettings.language, 'send.statusFailed'))
+            finishSendLockPlatform(result.platform)
+          }
+        }
+        scheduleConversationSnapshot(
+          text,
+          results.filter((result) => result.ok).map((result) => result.platform),
+        )
 
-  const failResponseDiagnosticTrackers = () => {
-    for (const tracker of Object.values(responseDiagnosticTrackers)) {
-      tracker?.finish({ outcome: 'failed', errorCode: 'unexpected-error', now: Date.now() })
-    }
-  }
+        const okCount = results.filter((result) => result.ok).length
+        const firstError = results.find((result) => !result.ok && result.error)?.error
+        if (sentAttachmentHandling === 'file-upload') {
+          if (okCount === results.length && results.length > 0) {
+            showToast(t(userSettings.language, 'send.fileAllSent'), 'success', 2500)
+          } else if (okCount > 0) {
+            showToast(t(userSettings.language, 'send.filePartial'), 'warn', 6000)
+          } else {
+            showToast(firstError ?? t(userSettings.language, 'send.fileFailed'), 'err', 6000)
+          }
+        } else if (okCount === 0 && results.length > 0) {
+          showToast(firstError ?? t(userSettings.language, 'send.failed'), 'err', 3000)
+        } else {
+          showToast(t(userSettings.language, 'send.success'), 'success', 1200)
+        }
 
-  if (currentSession) {
-    try {
-      currentSession = applySendResults(currentSession, results)
-      await updateSession(currentSession)
-      scheduleSessionResponseBackfill(
-        currentSession.id,
-        results.filter((r) => r.ok).map((r) => r.p),
-        responseBaselines,
-        {},
-        0,
-        responseDiagnosticTrackers,
-      )
-    } catch (e) {
-      failResponseDiagnosticTrackers()
-      console.error('[AIChatRoom chat] failed to update session history', e)
+        inputEl.value = ''
+        clearAttachment()
+      },
+      onPlatformSettled: (platform, result) => {
+        if (result.status === 'captured') {
+          setStatus(platform, 'ok', t(userSettings.language, 'send.statusDone'))
+          finishSendLockPlatform(platform)
+        } else if (result.status === 'capture-timeout' || result.status === 'capture-interrupted') {
+          setStatus(platform, 'err', t(userSettings.language, 'send.statusFailed'))
+          finishSendLockPlatform(platform)
+        }
+      },
+    },
+  ).then((result) => {
+    if (result.historyStatus === 'unsaved') {
+      console.error('[AIChatRoom chat] answer collection completed but history save failed', {
+        taskId: result.id,
+        sessionId: result.session.id,
+      })
     }
-  } else {
-    failResponseDiagnosticTrackers()
-  }
-  scheduleConversationSnapshot(text, results.filter((r) => r.ok).map((r) => r.p))
-
-  // 3. 根据结果给一个合并的 toast
-  const okCount = results.filter((r) => r.ok).length
-  const firstError = results.find((r) => !r.ok && r.error)?.error
-  if (pendingAttachment?.classification.handling === 'file-upload') {
-    if (okCount === results.length && results.length > 0) {
-      showToast(t(userSettings.language, 'send.fileAllSent'), 'success', 2500)
-    } else if (okCount > 0) {
-      // 部分成功:v0.5+ 不再走剪贴板兜底(跨源 iframe 写剪贴板经常失败)
-      showToast(t(userSettings.language, 'send.filePartial'), 'warn', 6000)
-    } else {
-      // 全部失败:v0.5+ 不再走剪贴板兜底
-      showToast(firstError ?? t(userSettings.language, 'send.fileFailed'), 'err', 6000)
-    }
-  } else {
-    if (okCount === 0 && results.length > 0) {
-      showToast(firstError ?? t(userSettings.language, 'send.failed'), 'err', 3000)
-    } else {
-      showToast(t(userSettings.language, 'send.success'), 'success', 1200)
-    }
-  }
-
-  // 4. 清空
-  inputEl.value = ''
-  clearAttachment()
-  // onSend 完顺手清掉 at 选择(避免下条消息还受上一条的影响)
-  // 不清 atSelected:如果想连发同一组目标,保留;但目前默认清掉,符合"每次明确选"的直觉
-  // 选 1:不 clear(连发场景更顺手)
-  // 选 2:clear(显式选择更可控)
-  // —— 选 1
+  }).catch((error) => {
+    console.error('[AIChatRoom chat] answer collection task failed', error)
+  })
 }
 
 // ---------- @ 弹层 / Chips ----------
@@ -3158,14 +2913,12 @@ async function onGenerateSummary() {
 
   btnSummaryGenerate.disabled = true
   try {
-    const summaryBaselines = await captureResponseBaselines([target])
     const summarySession = createSummarySessionRecord({
       title: summarySessionTitle(sessions, mode),
       prompt,
       target,
       summary,
     })
-    await addSession(summarySession)
 
     for (const session of sessions) {
       await updateSession({
@@ -3174,10 +2927,46 @@ async function onGenerateSummary() {
         updatedAt: Date.now(),
       })
     }
-    postToIframe(target, 'write-and-send', { text: prompt })
-    scheduleSessionResponseBackfill(summarySession.id, [target], summaryBaselines)
-    closeSummaryDialog()
-    showToast(uiText('summary.sent', { targetLabel: getPlatformMeta(target)?.label ?? target }), 'success', 1800)
+    void runAnswerCollectionTask(
+      {
+        id: `answer-collection-${summarySession.id}`,
+        session: summarySession,
+      },
+      {
+        now: () => Date.now(),
+        wait: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+        captureBaseline: (platform) => requestLastResponse(platform, 1500),
+        send: async (platform) => {
+          postToIframe(platform, 'write-and-send', { text: prompt })
+          return { platform, ok: true }
+        },
+        read: readAnswerCollectionPlatform,
+        history: {
+          add: addSession,
+          get: getSession,
+          update: updateSession,
+        },
+        onSendComplete: () => {
+          closeSummaryDialog()
+          showToast(
+            uiText('summary.sent', { targetLabel: getPlatformMeta(target)?.label ?? target }),
+            'success',
+            1800,
+          )
+        },
+      },
+    ).then((result) => {
+      if (result.historyStatus === 'unsaved') {
+        throw new Error('history save failed')
+      }
+    }).catch((e) => {
+      console.error('[AIChatRoom chat] summary collection failed', e)
+      showToast(
+        uiText('summary.failed', { message: e instanceof Error ? e.message : String(e) }),
+        'err',
+        5000,
+      )
+    })
   } catch (e) {
     console.error('[AIChatRoom chat] summary failed', e)
     showToast(uiText('summary.failed', { message: e instanceof Error ? e.message : String(e) }), 'err', 5000)
