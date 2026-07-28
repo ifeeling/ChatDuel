@@ -69,9 +69,7 @@ export function renderPendingQuestionQueue(
   snapshot: PendingQuestionQueueSnapshot,
   options: PendingQuestionQueueViewOptions,
 ): void {
-  const visible = snapshot.status !== 'idle'
-    || snapshot.activeTaskId !== null
-    || snapshot.items.length > 0
+  const visible = snapshot.items.length > 0
   container.hidden = !visible
   if (!visible) return
 
