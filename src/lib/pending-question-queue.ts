@@ -17,6 +17,13 @@ export interface PendingQuestionDraft extends PendingQuestion {
   readonly hasAttachment?: boolean
 }
 
+export interface PendingQuestionUpdate {
+  readonly text: string
+  readonly targetPlatforms: readonly AIPlatform[]
+}
+
+export type PendingQuestionMoveDirection = 'up' | 'down'
+
 export type QueuePauseReason =
   | 'all-sends-failed'
   | 'capture-timeout'
@@ -104,6 +111,44 @@ export class PendingQuestionQueue {
       text,
     }))
     return { ok: true }
+  }
+
+  update(id: string, input: PendingQuestionUpdate): boolean {
+    const index = this.items.findIndex((question) => question.id === id)
+    const text = input.text.trim()
+    if (index < 0 || !text || input.targetPlatforms.length === 0) return false
+    const current = this.items[index]
+    this.items[index] = copyQuestion({
+      ...current,
+      text,
+      targetPlatforms: input.targetPlatforms,
+    })
+    return true
+  }
+
+  remove(id: string): boolean {
+    const index = this.items.findIndex((question) => question.id === id)
+    if (index < 0) return false
+    this.items.splice(index, 1)
+    return true
+  }
+
+  move(id: string, direction: PendingQuestionMoveDirection): boolean {
+    const index = this.items.findIndex((question) => question.id === id)
+    const nextIndex = direction === 'up' ? index - 1 : index + 1
+    if (index < 0 || nextIndex < 0 || nextIndex >= this.items.length) return false
+    const [question] = this.items.splice(index, 1)
+    this.items.splice(nextIndex, 0, question)
+    return true
+  }
+
+  moveTo(id: string, targetId: string): boolean {
+    const sourceIndex = this.items.findIndex((question) => question.id === id)
+    const targetIndex = this.items.findIndex((question) => question.id === targetId)
+    if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return false
+    const [question] = this.items.splice(sourceIndex, 1)
+    this.items.splice(targetIndex, 0, question)
+    return true
   }
 
   startTask(taskId: string, targetPlatforms: readonly AIPlatform[]): boolean {
