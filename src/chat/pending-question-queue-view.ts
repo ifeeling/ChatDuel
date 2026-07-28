@@ -1,24 +1,71 @@
-import { MAX_PENDING_QUESTIONS, type PendingQuestionQueueSnapshot } from '../lib/pending-question-queue'
+import {
+  MAX_PENDING_QUESTIONS,
+  type PendingQuestion,
+  type PendingQuestionMoveDirection,
+  type PendingQuestionQueueSnapshot,
+} from '../lib/pending-question-queue'
 import type { AIPlatform } from '../types'
 
 export interface PendingQuestionQueueViewText {
   title(count: number, max: number): string
+  position(index: number): string
   lifecycleNote: string
   waitingFor(labels: string): string
   paused(reason: string): string
   stopWaiting: string
+  edit: string
+  delete: string
+  moveUp: string
+  moveDown: string
+  drag: string
+  questionLabel: string
+  targetsLabel: string
+  save: string
+  cancel: string
+  emptyText: string
+  noTargets: string
+  editUnavailable: string
+}
+
+export interface PendingQuestionEditorPlatform {
+  key: AIPlatform
+  label: string
+}
+
+export interface PendingQuestionEdit {
+  text: string
+  targetPlatforms: AIPlatform[]
 }
 
 export interface PendingQuestionQueueViewOptions {
   text: PendingQuestionQueueViewText
   platformLabel(platform: AIPlatform): string
+  editablePlatforms: readonly PendingQuestionEditorPlatform[]
   canStop: boolean
+  onSave(id: string, update: PendingQuestionEdit): boolean
+  onDelete(id: string): void
+  onMove(id: string, direction: PendingQuestionMoveDirection): void
+  onMoveTo(id: string, targetId: string): void
 }
 
 function requiredElement<T extends HTMLElement>(container: HTMLElement, selector: string): T {
   const element = container.querySelector<T>(selector)
   if (!element) throw new Error(`Missing pending question queue element: ${selector}`)
   return element
+}
+
+function actionButton(
+  label: string,
+  className: string,
+  visibleLabel: string,
+): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = className
+  button.textContent = visibleLabel
+  button.title = label
+  button.setAttribute('aria-label', label)
+  return button
 }
 
 export function renderPendingQuestionQueue(
@@ -56,9 +103,19 @@ export function renderPendingQuestionQueue(
   }
 
   const list = requiredElement<HTMLOListElement>(container, '#pending-question-list')
-  list.replaceChildren(...snapshot.items.map((question) => {
+  let activeEditorId: string | null = null
+
+  const renderedItem = (question: PendingQuestion, index: number): HTMLLIElement => {
     const item = document.createElement('li')
     item.className = 'pending-question-item'
+    item.dataset.questionId = question.id
+
+    const position = document.createElement('span')
+    position.className = 'pending-question-position'
+    position.textContent = options.text.position(index + 1)
+
+    const summary = document.createElement('span')
+    summary.className = 'pending-question-summary'
 
     const questionText = document.createElement('span')
     questionText.className = 'pending-question-text'
@@ -68,7 +125,133 @@ export function renderPendingQuestionQueue(
     targets.className = 'pending-question-targets'
     targets.textContent = question.targetPlatforms.map(options.platformLabel).join(' / ')
 
-    item.append(questionText, targets)
+    summary.append(questionText, targets)
+
+    const actions = document.createElement('span')
+    actions.className = 'pending-question-actions'
+
+    const drag = document.createElement('span')
+    drag.className = 'pending-question-drag'
+    drag.textContent = '⋮⋮'
+    drag.draggable = true
+    drag.title = options.text.drag
+    drag.setAttribute('aria-label', options.text.drag)
+    drag.setAttribute('role', 'img')
+    const edit = actionButton(options.text.edit, 'pending-question-edit', '✎')
+    const remove = actionButton(options.text.delete, 'pending-question-delete', '×')
+    const moveUp = actionButton(options.text.moveUp, 'pending-question-move-up', '↑')
+    const moveDown = actionButton(options.text.moveDown, 'pending-question-move-down', '↓')
+    moveUp.disabled = index === 0
+    moveDown.disabled = index === snapshot.items.length - 1
+
+    drag.addEventListener('dragstart', (event) => {
+      event.dataTransfer?.setData('text/plain', question.id)
+    })
+    item.addEventListener('dragover', (event) => {
+      event.preventDefault()
+    })
+    item.addEventListener('drop', (event) => {
+      event.preventDefault()
+      const sourceId = event.dataTransfer?.getData('text/plain')
+      if (sourceId && sourceId !== question.id) {
+        options.onMoveTo(sourceId, question.id)
+      }
+    })
+    edit.addEventListener('click', () => {
+      if (activeEditorId && activeEditorId !== question.id) {
+        const previousIndex = snapshot.items.findIndex(({ id }) => id === activeEditorId)
+        const previousQuestion = snapshot.items[previousIndex]
+        const previousItem = [...list.children].find(
+          (child) => (child as HTMLElement).dataset.questionId === activeEditorId,
+        )
+        if (previousQuestion && previousItem) {
+          previousItem.replaceWith(renderedItem(previousQuestion, previousIndex))
+        }
+      }
+      activeEditorId = question.id
+
+      const editor = document.createElement('span')
+      editor.className = 'pending-question-editor'
+
+      const textarea = document.createElement('textarea')
+      textarea.className = 'pending-question-edit-text'
+      textarea.value = question.text
+      textarea.setAttribute('aria-label', options.text.questionLabel)
+
+      const targets = document.createElement('fieldset')
+      targets.className = 'pending-question-edit-targets'
+      const targetsLabel = document.createElement('legend')
+      targetsLabel.textContent = options.text.targetsLabel
+      targets.append(targetsLabel)
+
+      const selectedTargets = new Set(question.targetPlatforms)
+      const checkboxes = options.editablePlatforms.map(({ key, label }) => {
+        const target = document.createElement('label')
+        target.className = 'pending-question-edit-target'
+        const input = document.createElement('input')
+        input.type = 'checkbox'
+        input.value = key
+        input.checked = selectedTargets.has(key)
+        target.append(input, document.createTextNode(label))
+        targets.append(target)
+        return { key, input }
+      })
+
+      const error = document.createElement('span')
+      error.className = 'pending-question-edit-error'
+      error.setAttribute('role', 'alert')
+
+      const editorActions = document.createElement('span')
+      editorActions.className = 'pending-question-editor-actions'
+      const save = actionButton(options.text.save, 'pending-question-save', options.text.save)
+      const cancel = actionButton(
+        options.text.cancel,
+        'pending-question-cancel',
+        options.text.cancel,
+      )
+      editorActions.append(save, cancel)
+
+      cancel.addEventListener('click', () => {
+        activeEditorId = null
+        item.replaceWith(renderedItem(question, index))
+      })
+      save.addEventListener('click', () => {
+        const text = textarea.value.trim()
+        if (!text) {
+          error.textContent = options.text.emptyText
+          return
+        }
+        const targetPlatforms = checkboxes
+          .filter(({ input }) => input.checked)
+          .map(({ key }) => key)
+        if (targetPlatforms.length === 0) {
+          error.textContent = options.text.noTargets
+          return
+        }
+        if (!options.onSave(question.id, { text, targetPlatforms })) {
+          error.textContent = options.text.editUnavailable
+          return
+        }
+        activeEditorId = null
+        item.replaceWith(renderedItem({
+          ...question,
+          text,
+          targetPlatforms,
+        }, index))
+      })
+
+      editor.append(textarea, targets, error, editorActions)
+      item.replaceChildren(editor)
+      textarea.focus()
+    })
+    remove.addEventListener('click', () => options.onDelete(question.id))
+    moveUp.addEventListener('click', () => options.onMove(question.id, 'up'))
+    moveDown.addEventListener('click', () => options.onMove(question.id, 'down'))
+
+    actions.append(drag, edit, remove, moveUp, moveDown)
+    item.append(position, summary, actions)
     return item
-  }))
+  }
+
+  list.replaceChildren(...snapshot.items.map(renderedItem))
 }

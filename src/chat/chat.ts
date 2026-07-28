@@ -464,14 +464,48 @@ function renderQueue() {
   renderPendingQuestionQueue(pendingQuestionQueueEl, pendingQuestionQueue.snapshot(), {
     text: {
       title: (count, max) => uiText('queue.title', { count, max }),
+      position: (index) => uiText('queue.position', { index }),
       lifecycleNote: t(userSettings.language, 'queue.lifecycleNote'),
       waitingFor: (labels) => uiText('queue.waitingFor', { labels }),
       paused: (reason) => t(userSettings.language, `queue.paused.${reason}`),
       stopWaiting: t(userSettings.language, 'queue.stopWaiting'),
+      edit: t(userSettings.language, 'queue.edit'),
+      delete: t(userSettings.language, 'queue.delete'),
+      moveUp: t(userSettings.language, 'queue.moveUp'),
+      moveDown: t(userSettings.language, 'queue.moveDown'),
+      drag: t(userSettings.language, 'queue.drag'),
+      questionLabel: t(userSettings.language, 'queue.questionLabel'),
+      targetsLabel: t(userSettings.language, 'queue.targetsLabel'),
+      save: t(userSettings.language, 'queue.save'),
+      cancel: t(userSettings.language, 'queue.cancel'),
+      emptyText: t(userSettings.language, 'queue.emptyText'),
+      noTargets: t(userSettings.language, 'queue.noTargets'),
+      editUnavailable: t(userSettings.language, 'queue.editUnavailable'),
     },
     platformLabel: (platform) => getPlatformMeta(platform)?.label ?? platform,
+    editablePlatforms: platformsWithCapability('supportsText').map((platform) => ({
+      key: platform,
+      label: getPlatformMeta(platform)?.label ?? platform,
+    })),
     canStop: currentSendLock?.status === 'waiting'
       && currentSendLock.phase === 'waiting-response',
+    onSave: (id, update) => {
+      const saved = pendingQuestionQueue.update(id, update)
+      renderQueue()
+      return saved
+    },
+    onDelete: (id) => {
+      pendingQuestionQueue.remove(id)
+      renderQueue()
+    },
+    onMove: (id, direction) => {
+      pendingQuestionQueue.move(id, direction)
+      renderQueue()
+    },
+    onMoveTo: (id, targetId) => {
+      pendingQuestionQueue.moveTo(id, targetId)
+      renderQueue()
+    },
   })
   updateSendButtonState()
 }
