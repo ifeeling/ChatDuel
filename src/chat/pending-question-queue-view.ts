@@ -3,6 +3,7 @@ import {
   type PendingQuestion,
   type PendingQuestionMoveDirection,
   type PendingQuestionQueueSnapshot,
+  type PendingQuestionUpdate,
 } from '../lib/pending-question-queue'
 import type { AIPlatform } from '../types'
 
@@ -32,17 +33,12 @@ export interface PendingQuestionEditorPlatform {
   label: string
 }
 
-export interface PendingQuestionEdit {
-  text: string
-  targetPlatforms: AIPlatform[]
-}
-
 export interface PendingQuestionQueueViewOptions {
   text: PendingQuestionQueueViewText
   platformLabel(platform: AIPlatform): string
   editablePlatforms: readonly PendingQuestionEditorPlatform[]
   canStop: boolean
-  onSave(id: string, update: PendingQuestionEdit): boolean
+  onSave(id: string, update: PendingQuestionUpdate): boolean
   onDelete(id: string): void
   onMove(id: string, direction: PendingQuestionMoveDirection): void
   onMoveTo(id: string, targetId: string): void
