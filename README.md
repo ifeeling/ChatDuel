@@ -25,7 +25,7 @@ Get ChatDuel from your browser's extension store:
 ## Features
 
 - **Shared input box** — type once at the bottom and send to all enabled AIs at once.
-- **Pending question management** — while answers are being collected, queued text questions can be edited, deleted, and reordered before they are sent.
+- **Pending question management** — while answers are being collected, queued text questions can be edited, deleted, and reordered before they are sent. The queue stays hidden until at least one question is pending.
 - **Target a specific AI** — prefix with `@chatgpt`, `@claude`, `@gemini`, `@doubao`, `@deepseek`, or use the @-candidate menu, to send to just one.
 - **Panel management** — each AI's title bar can switch or close the AI in that slot; "Add AI" brings hidden AIs back. If the target AI is already shown, the two panels swap positions.
 - **Attachments** — images, TXT, Markdown, CSV, PDF, and Excel (XLSX) are supported; they are uploaded automatically or downgraded to text depending on each platform's current capability.
