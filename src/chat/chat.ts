@@ -100,7 +100,7 @@ import {
   createDiagnosticProducerId,
   createDiagnosticReporter,
 } from '../lib/diagnostic-client'
-import type { DiagnosticContext, DiagnosticErrorCode } from '../lib/diagnostic-types'
+import type { DiagnosticContext } from '../lib/diagnostic-types'
 import {
   createResponseDiagnosticTracker,
 } from './response-diagnostic'
@@ -113,11 +113,10 @@ import {
 } from './pending-question-composer'
 import { renderPendingQuestionQueue } from './pending-question-queue-view'
 import {
-  choosePlatformMessageRoute,
+  createPlatformCommunication,
   iframeWriteResultTimeoutMs,
   routeTimeoutErrorCode,
-  waitForIframeReadyWithRetry,
-} from './platform-message-route'
+} from './platform-communication'
 
 // ---------- DOM 引用 ----------
 const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => document.querySelector<T>(sel)!
@@ -210,11 +209,6 @@ const transferSelected = $<HTMLDivElement>('#transfer-selected')
 const transferPreview = $<HTMLDivElement>('#transfer-preview')
 
 // ---------- 状态 ----------
-const readyMap = Object.fromEntries(SUPPORTED_PLATFORMS.map((platform) => [platform, false])) as Record<AIPlatform, boolean>
-const readyWaiters = SUPPORTED_PLATFORMS.reduce((acc, platform) => {
-  acc[platform] = []
-  return acc
-}, {} as Record<AIPlatform, Array<(ok: boolean) => void>>)
 let userSettings: UserSettings = DEFAULT_USER_SETTINGS
 let diagnosticEventCount = 0
 let preparedDiagnosticExport: PreparedDiagnosticExport | null = null
@@ -617,19 +611,6 @@ function resetSendLockUi() {
   hideSendLockUi()
 }
 
-function waitForIframeReady(p: AIPlatform, timeoutMs = 5000): Promise<boolean> {
-  if (readyMap[p]) return Promise.resolve(true)
-  return new Promise<boolean>((resolve) => {
-    const waiter = (ok: boolean) => resolve(ok)
-    readyWaiters[p].push(waiter)
-    setTimeout(() => {
-      const idx = readyWaiters[p].indexOf(waiter)
-      if (idx >= 0) readyWaiters[p].splice(idx, 1)
-      resolve(readyMap[p])
-    }, timeoutMs)
-  })
-}
-
 function sendToSw<T = unknown>(msg: unknown): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     chrome.runtime.sendMessage(msg, (resp) => {
@@ -676,6 +657,26 @@ function platformOrigin(p: AIPlatform): string {
     return '*'
   }
 }
+
+const platformCommunication = createPlatformCommunication({
+  platforms: SUPPORTED_PLATFORMS,
+  messageHost: window,
+  getFrame: panelIframe,
+  getPlatformOrigin: platformOrigin,
+  supportsEmbed: (platform) => getPlatformCapabilities(platform).supportsEmbed,
+  ensureEmbedRules: ensureEmbedRulesEnabled,
+  reload: (platform) => {
+    panelIframe(platform).src = platformUrl(platform)
+  },
+  sendRuntimeMessage: (message) => chrome.runtime.sendMessage(message),
+  onTimeout: ({ platform, operation, timeoutMs }) => {
+    logCaptureDebug({
+      platform,
+      event: `${operation}-timeout`,
+      timeoutMs,
+    })
+  },
+})
 
 function platformStatusItem(p: AIPlatform): HTMLElement | null {
   return document.querySelector<HTMLElement>(`.status-item[data-platform="${p}"]`)
@@ -751,7 +752,7 @@ function applyUserSettings(settings: UserSettings) {
     if (status) status.hidden = !enabled
     if (!enabled && iframe) {
       iframe.src = 'about:blank'
-      readyMap[p] = false
+      platformCommunication.markNotReady(p)
     }
     if (!enabled || !getPlatformCapabilities(p).supportsText) atSelected.delete(p)
   }
@@ -1163,7 +1164,7 @@ async function bootstrap() {
 async function refreshAllStatuses() {
   for (const p of activePlatforms()) {
     if (!getPlatformCapabilities(p).supportsEmbed) {
-      readyMap[p] = false
+      platformCommunication.markNotReady(p)
       setStatus(p, 'warn', t(userSettings.language, 'panel.status.pending'))
       const iframe = panelIframe(p)
       iframe.src = 'about:blank'
@@ -1176,14 +1177,7 @@ async function refreshAllStatuses() {
     }
     let ok = false
     try {
-      ok = await waitForIframeReadyWithRetry({
-        waitForReady: () => waitForIframeReady(p),
-        ensureRules: ensureEmbedRulesEnabled,
-        reload: () => {
-          readyMap[p] = false
-          iframe.src = platformUrl(p)
-        },
-      })
+      ok = await platformCommunication.prepare(p)
     } catch (e) {
       console.error(`[AIChatRoom chat] failed to recover ${p} iframe`, e)
     }
@@ -1192,13 +1186,13 @@ async function refreshAllStatuses() {
       if (capabilities.supportsText) {
         setStatus(p, 'ok', t(userSettings.language, 'panel.status.opened'))
       } else {
-        const state = await requestConversationState(p, 1000)
+        const state = await platformCommunication.readConversationState(p, 1000)
         if (state.status === 'error') setStatus(p, 'warn', state.errorMessage ?? t(userSettings.language, 'panel.status.needCheck'))
         else setStatus(p, 'ok', t(userSettings.language, 'panel.status.opened'))
       }
     } else {
-      if (platformMessageRoute(p) === 'official-tab') {
-        const state = await requestConversationState(p, 1200)
+      if (platformCommunication.routeFor(p) === 'official-tab') {
+        const state = await platformCommunication.readConversationState(p, 1200)
         if (state.status === 'error') setStatus(p, 'warn', state.errorMessage ?? t(userSettings.language, 'panel.status.needCheck'))
         else setStatus(p, 'ok', t(userSettings.language, 'panel.status.opened'))
       } else {
@@ -1208,206 +1202,11 @@ async function refreshAllStatuses() {
   }
 }
 
-// ---------- 父页 ↔ iframe postMessage ----------
-function postToIframe(p: AIPlatform, action: string, extra: Record<string, unknown> = {}) {
-  const win = panelIframe(p).contentWindow
-  if (!win) return
-  win.postMessage({ source: 'aichatroom-parent', action, ...extra }, platformOrigin(p))
-}
-
-function platformMessageRoute(p: AIPlatform) {
-  return choosePlatformMessageRoute({
-    platform: p,
-    iframeReady: readyMap[p],
-    iframeUrl: panelIframe(p).src,
-    supportsEmbed: getPlatformCapabilities(p).supportsEmbed,
-  })
-}
-
-async function sendOfficialTabCommand<T = unknown>(
-  platform: AIPlatform,
-  command: 'write-and-send' | 'get-state' | 'get-last-response',
-  payload: Record<string, unknown> = {},
-): Promise<T | null> {
-  try {
-    const response = await chrome.runtime.sendMessage({
-      type: 'official-tab-command',
-      platform,
-      command,
-      ...payload,
-    })
-    return (response ?? null) as T | null
-  } catch {
-    return null
-  }
-}
-
-function waitForIframeWriteResult(p: AIPlatform, payload: Record<string, unknown>): Promise<{ p: AIPlatform; ok: boolean; error?: string }> {
-  const win = panelIframe(p).contentWindow
-  if (!win) return Promise.resolve({ p, ok: false })
-  return new Promise((resolve) => {
-    const onMsg = (e: MessageEvent) => {
-      const d = e.data as { source?: string; event?: string; action?: string; platform?: AIPlatform; ok?: boolean; error?: string } | undefined
-      if (!d || d.source !== 'aichatroom-content') return
-      if (d.event === 'result' && d.action === 'write-and-send' && d.platform === p) {
-        window.removeEventListener('message', onMsg)
-        resolve({ p, ok: !!d.ok, error: d.error })
-      }
-    }
-    window.addEventListener('message', onMsg)
-    postToIframe(p, 'write-and-send', payload)
-    setTimeout(() => {
-      window.removeEventListener('message', onMsg)
-      resolve({ p, ok: false })
-    }, iframeWriteResultTimeoutMs(payload))
-  })
-}
-
-interface PlatformSendResult {
-  p: AIPlatform
-  ok: boolean
-  error?: string
-  diagnosticErrorCode?: DiagnosticErrorCode
-}
-
-async function writeAndSendToPlatform(p: AIPlatform, payload: Record<string, unknown>): Promise<PlatformSendResult> {
-  if (platformMessageRoute(p) === 'official-tab') {
-    const response = await sendOfficialTabCommand<{
-      ok?: boolean
-      error?: string
-      diagnosticErrorCode?: DiagnosticErrorCode
-    }>(p, 'write-and-send', payload)
-    return {
-      p,
-      ok: !!response?.ok,
-      error: response?.error,
-      diagnosticErrorCode: response?.diagnosticErrorCode,
-    }
-  }
-  return waitForIframeWriteResult(p, payload)
-}
-
-function requestLastResponse(p: AIPlatform, timeoutMs = 3000): Promise<string> {
-  if (platformMessageRoute(p) === 'official-tab') {
-    return sendOfficialTabCommand<{ type?: string; text?: string; ok?: boolean }>(p, 'get-last-response')
-      .then((response) => response?.text ?? '')
-  }
-  const win = panelIframe(p).contentWindow
-  if (!win) return Promise.resolve('')
-  return new Promise<string>((resolve) => {
-    let timeoutId: ReturnType<typeof setTimeout> | undefined
-    const onMsg = (e: MessageEvent) => {
-      const d = e.data as { source?: string; type?: string; platform?: AIPlatform; text?: string } | undefined
-      if (
-        e.source === win &&
-        d?.source === 'aichatroom-content' &&
-        d.type === 'last-response' &&
-        d.platform === p
-      ) {
-        window.removeEventListener('message', onMsg)
-        if (timeoutId !== undefined) clearTimeout(timeoutId)
-        resolve(d.text ?? '')
-      }
-    }
-    window.addEventListener('message', onMsg)
-    timeoutId = setTimeout(() => {
-      window.removeEventListener('message', onMsg)
-      logCaptureDebug({
-        platform: p,
-        event: 'request-last-response-timeout',
-        timeoutMs,
-      })
-      resolve('')
-    }, timeoutMs)
-    postToIframe(p, 'get-last-response')
-  })
-}
-
-interface ResponseReadResult {
-  text: string
-  diagnosticErrorCode?: DiagnosticErrorCode
-}
-
-function requestLastResponseForCapture(p: AIPlatform, timeoutMs = 3000): Promise<ResponseReadResult> {
-  if (platformMessageRoute(p) === 'official-tab') {
-    return sendOfficialTabCommand<{
-      text?: string
-      diagnosticErrorCode?: DiagnosticErrorCode
-    }>(p, 'get-last-response').then((response) => ({
-      text: response?.text ?? '',
-      diagnosticErrorCode: response?.diagnosticErrorCode,
-    }))
-  }
-  return requestLastResponse(p, timeoutMs).then((text) => ({ text }))
-}
-
-type ConversationStateResult = ConversationState & {
-  requestTimedOut?: boolean
-  diagnosticErrorCode?: DiagnosticErrorCode
-}
-
-function requestConversationState(p: AIPlatform, timeoutMs = 3000): Promise<ConversationStateResult> {
-  if (platformMessageRoute(p) === 'official-tab') {
-    return sendOfficialTabCommand<{
-      type?: string
-      state?: ConversationState
-      ok?: boolean
-      error?: string
-      diagnosticErrorCode?: DiagnosticErrorCode
-    }>(p, 'get-state')
-      .then((response) => {
-        if (response?.ok === false) {
-          return {
-            status: 'error',
-            errorMessage: response.error ?? '官方标签页不可用',
-            diagnosticErrorCode: response.diagnosticErrorCode,
-          }
-        }
-        return response?.state ?? { status: 'idle', requestTimedOut: true }
-      })
-  }
-  const win = panelIframe(p).contentWindow
-  if (!win) return Promise.resolve({ status: 'idle', requestTimedOut: true })
-  return new Promise<ConversationStateResult>((resolve) => {
-    let timeoutId: ReturnType<typeof setTimeout> | undefined
-    const onMsg = (e: MessageEvent) => {
-      const d = e.data as {
-        source?: string
-        type?: string
-        platform?: AIPlatform
-        state?: ConversationState
-      } | undefined
-      if (
-        e.source === win &&
-        d?.source === 'aichatroom-content' &&
-        d.type === 'state' &&
-        d.platform === p &&
-        d.state
-      ) {
-        window.removeEventListener('message', onMsg)
-        if (timeoutId !== undefined) clearTimeout(timeoutId)
-        resolve(d.state)
-      }
-    }
-    window.addEventListener('message', onMsg)
-    timeoutId = setTimeout(() => {
-      window.removeEventListener('message', onMsg)
-      logCaptureDebug({
-        platform: p,
-        event: 'request-conversation-state-timeout',
-        timeoutMs,
-      })
-      resolve({ status: 'idle', requestTimedOut: true })
-    }, timeoutMs)
-    postToIframe(p, 'get-state')
-  })
-}
-
 async function readAnswerCollectionPlatform(platform: AIPlatform): Promise<AnswerCollectionRead> {
-  const state = await requestConversationState(platform, 1500)
+  const state = await platformCommunication.readConversationState(platform, 1500)
   const responseRead = state.lastResponse
     ? { text: state.lastResponse }
-    : await requestLastResponseForCapture(platform, 1500)
+    : await platformCommunication.readLastResponse(platform, 1500)
   return {
     text: responseRead.text,
     status: state.status,
@@ -1425,7 +1224,9 @@ function createAnswerCollectionBaseDependencies(): Pick<
   return {
     now: () => Date.now(),
     wait: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-    captureBaseline: (platform) => requestLastResponse(platform, 1500),
+    captureBaseline: async (platform) => (
+      await platformCommunication.readLastResponse(platform, 1500)
+    ).text,
     read: readAnswerCollectionPlatform,
     history: {
       add: addSession,
@@ -1434,91 +1235,6 @@ function createAnswerCollectionBaseDependencies(): Pick<
     },
   }
 }
-
-function requestPlatformLocation(p: AIPlatform, timeoutMs = 1500): Promise<string> {
-  const win = panelIframe(p).contentWindow
-  if (!win) return Promise.resolve('')
-  return new Promise<string>((resolve) => {
-    const onMsg = (e: MessageEvent) => {
-      const d = e.data as {
-        source?: string
-        type?: string
-        platform?: AIPlatform
-        href?: string
-      } | undefined
-      if (
-        e.source === win &&
-        d?.source === 'aichatroom-content' &&
-        d.type === 'location' &&
-        d.platform === p
-      ) {
-        window.removeEventListener('message', onMsg)
-        resolve(d.href ?? '')
-      }
-    }
-    window.addEventListener('message', onMsg)
-    postToIframe(p, 'get-location')
-    setTimeout(() => {
-      window.removeEventListener('message', onMsg)
-      resolve('')
-    }, timeoutMs)
-  })
-}
-
-/**
- * 从 DeepSeek iframe 的侧边栏 DOM 中提取当前会话 ID
- * DeepSeek 的 location.href 始终是 /，但侧边栏中存在 /a/chat/s/<uuid> 链接
- * 第一个链接对应当前活跃会话
- */
-function requestDeepSeekConversationUrl(timeoutMs = 1500): Promise<string> {
-  const win = panelIframe('deepseek').contentWindow
-  if (!win) return Promise.resolve('')
-  return new Promise<string>((resolve) => {
-    const onMsg = (e: MessageEvent) => {
-      const d = e.data as {
-        source?: string
-        type?: string
-        platform?: AIPlatform
-        url?: string
-      } | undefined
-      if (
-        e.source === win &&
-        d?.source === 'aichatroom-content' &&
-        d?.type === 'conversation-id' &&
-        d?.platform === 'deepseek'
-      ) {
-        window.removeEventListener('message', onMsg)
-        resolve(d.url ?? '')
-      }
-    }
-    window.addEventListener('message', onMsg)
-    postToIframe('deepseek', 'get-conversation-id')
-    setTimeout(() => {
-      window.removeEventListener('message', onMsg)
-      resolve('')
-    }, timeoutMs)
-  })
-}
-
-
-window.addEventListener('message', (e: MessageEvent) => {
-  const data = e.data as
-    | { source?: string; event?: string; platform?: AIPlatform; action?: string; ok?: boolean; error?: string }
-    | undefined
-  if (!data || data.source !== 'aichatroom-content') return
-
-  if (data.event === 'ready' && data.platform && allPlatforms().includes(data.platform)) {
-    readyMap[data.platform] = true
-    const waiters = readyWaiters[data.platform]
-    readyWaiters[data.platform] = []
-    for (const w of waiters) w(true)
-    console.log('[AIChatRoom chat] ready:', data.platform)
-  }
-
-  if (data.event === 'result' && data.action === 'write-and-send') {
-    console.log(`[AIChatRoom chat] write-and-send result for ${data.platform}: ok=${data.ok} error=${data.error ?? ''}`)
-  }
-})
 
 // ---------- 发送 ----------
 function resolveComposerTargets(text: string): AIPlatform[] {
@@ -1709,7 +1425,7 @@ async function dispatchQuestion(input: DispatchQuestionInput) {
             createDiagnosticProducerId('chat-ui'),
           )
           : undefined
-        const route = platformMessageRoute(platform)
+        const route = platformCommunication.routeFor(platform)
         reporter?.emit({
           component: 'chat-ui',
           operation: 'route-select',
@@ -1719,7 +1435,7 @@ async function dispatchQuestion(input: DispatchQuestionInput) {
           inputCharacterCount: textToSend.length,
           hasAttachment: shouldUploadFile,
         })
-        const result = await writeAndSendToPlatform(platform, {
+        const result = await platformCommunication.writeAndSend(platform, {
           text: textToSend,
           imageDataUrl: shouldUploadFile ? imageDataUrl : undefined,
           imageMime: shouldUploadFile ? imageMime : undefined,
@@ -1891,7 +1607,9 @@ async function recheckPlatformStatus() {
     showToast(t(userSettings.language, 'queue.recheckClear'), 'success', 4000)
     return
   }
-  const states = await Promise.all(platforms.map((platform) => requestConversationState(platform, 2000)))
+  const states = await Promise.all(
+    platforms.map((platform) => platformCommunication.readConversationState(platform, 2000)),
+  )
   if (!isPlatformStateSafeToResume(states)) {
     queueRecheckPassed = false
     renderQueue()
@@ -2198,12 +1916,13 @@ async function onTransfer(sourceKey: AIPlatform) {
 }
 
 async function getCurrentTransferResponse(sourceKey: AIPlatform): Promise<string> {
-  const state = await requestConversationState(sourceKey, 2000)
+  const state = await platformCommunication.readConversationState(sourceKey, 2000)
   if (!['idle', 'finished', 'error'].includes(state.status)) {
     showToast(uiText('transfer.sourceBusy', { status: state.status }), 'warn', 4000)
     return ''
   }
-  return state.lastResponse?.trim() || await requestLastResponse(sourceKey, 3000)
+  return state.lastResponse?.trim()
+    || (await platformCommunication.readLastResponse(sourceKey, 3000)).text
 }
 
 function renderTransferTargets(sourceKey: AIPlatform, candidates: AIPlatform[]) {
@@ -2400,53 +2119,16 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform, sel
     let content = selectedContent?.trim() ?? ''
     if (!content) {
       if (!srcWin) throw new Error(t(userSettings.language, 'transfer.sourceFrameUnavailable'))
-      const srcState = await new Promise<{ status: string }>((resolve) => {
-        const onMsg = (e: MessageEvent) => {
-          const d = e.data as { source?: string; type?: string; platform?: AIPlatform; state?: { status: string } } | undefined
-          if (
-            e.source === srcWin &&
-            d?.source === 'aichatroom-content' &&
-            d.type === 'state' &&
-            d.platform === sourceKey &&
-            d.state
-          ) {
-            window.removeEventListener('message', onMsg)
-            resolve(d.state)
-          }
-        }
-        window.addEventListener('message', onMsg)
-        srcWin.postMessage(
-          { source: 'aichatroom-parent', action: 'get-state' },
-          platformOrigin(sourceKey),
-        )
-        setTimeout(() => { window.removeEventListener('message', onMsg); resolve({ status: 'unknown' }) }, 2000)
-      })
+      const srcState = await platformCommunication.readConversationState(sourceKey, 2000)
 
-      if (!['idle', 'finished', 'error'].includes(srcState.status)) {
-        showToast(uiText('transfer.sourceBusy', { status: srcState.status }), 'warn', 4000)
+      if (srcState.requestTimedOut || !['idle', 'finished', 'error'].includes(srcState.status)) {
+        showToast(uiText('transfer.sourceBusy', {
+          status: srcState.requestTimedOut ? 'unknown' : srcState.status,
+        }), 'warn', 4000)
         return
       }
 
-      content = await new Promise<string>((resolve) => {
-        const onMsg = (e: MessageEvent) => {
-          const d = e.data as { source?: string; type?: string; platform?: AIPlatform; text?: string } | undefined
-          if (
-            e.source === srcWin &&
-            d?.source === 'aichatroom-content' &&
-            d.type === 'last-response' &&
-            d.platform === sourceKey
-          ) {
-            window.removeEventListener('message', onMsg)
-            resolve(d.text ?? '')
-          }
-        }
-        window.addEventListener('message', onMsg)
-        srcWin.postMessage(
-          { source: 'aichatroom-parent', action: 'get-last-response' },
-          platformOrigin(sourceKey),
-        )
-        setTimeout(() => { window.removeEventListener('message', onMsg); resolve('') }, 3000)
-      })
+      content = (await platformCommunication.readLastResponse(sourceKey, 3000)).text
     }
 
     if (!content || !content.trim()) {
@@ -2459,27 +2141,7 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform, sel
     const tgtWin = tgtIframe.contentWindow
     if (tgtWin) {
       try {
-        const tgtState = await new Promise<{ status: string } | null>((resolve) => {
-          const onMsg = (e: MessageEvent) => {
-            const d = e.data as { source?: string; type?: string; platform?: AIPlatform; state?: { status: string } } | undefined
-            if (
-              e.source === tgtWin &&
-              d?.source === 'aichatroom-content' &&
-              d.type === 'state' &&
-              d.platform === targetKey &&
-              d.state
-            ) {
-              window.removeEventListener('message', onMsg)
-              resolve(d.state)
-            }
-          }
-          window.addEventListener('message', onMsg)
-          tgtWin.postMessage(
-            { source: 'aichatroom-parent', action: 'get-state' },
-            platformOrigin(targetKey),
-          )
-          setTimeout(() => { window.removeEventListener('message', onMsg); resolve(null) }, 50)
-        })
+        const tgtState = await platformCommunication.readConversationState(targetKey, 50)
         if (tgtState && !['idle', 'finished', 'error'].includes(tgtState.status)) {
           showToast(uiText('transfer.targetBusy', { status: tgtState.status }), 'warn', 4000)
           return
@@ -2504,7 +2166,7 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform, sel
       fromLabel,
       targetLabel: getPlatformMeta(targetKey)?.label ?? targetKey,
     }), 'info', 2000)
-    postToIframe(targetKey, 'write-and-send', { text: prompt })
+    void platformCommunication.writeAndSend(targetKey, { text: prompt })
   } catch (e) {
     console.error('[AIChatRoom chat] transfer failed', e)
     showToast(uiText('transfer.failed', { message: e instanceof Error ? e.message : String(e) }), 'err', 5000)
@@ -2798,10 +2460,10 @@ async function saveConversationSnapshot(title: string, platforms: AIPlatform[]) 
   const entries = await Promise.all(
     platforms.map(async (platform) => {
       if (platform === 'deepseek') {
-        const url = await requestDeepSeekConversationUrl(2000)
+        const url = await platformCommunication.readConversationUrl('deepseek', 2000)
         return [platform, url] as const
       }
-      return [platform, await requestPlatformLocation(platform)] as const
+      return [platform, await platformCommunication.readConversationUrl(platform)] as const
     }),
   )
   const platformUrls = Object.fromEntries(
@@ -2931,7 +2593,7 @@ async function restoreConversation(entry: ConversationEntry) {
     const panel = platformPanel(platform)
     if (!panel) continue
 
-    readyMap[platform] = false
+    platformCommunication.markNotReady(platform)
     setStatus(platform, 'warn', t(userSettings.language, 'common.loading'))
     panelIframe(platform).src = url
   }
@@ -3255,7 +2917,7 @@ async function onGenerateSummary() {
       {
         ...createAnswerCollectionBaseDependencies(),
         send: async (platform) => {
-          postToIframe(platform, 'write-and-send', { text: prompt })
+          void platformCommunication.writeAndSend(platform, { text: prompt })
           return { platform, ok: true }
         },
         onSendComplete: () => {
