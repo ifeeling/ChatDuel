@@ -1,6 +1,8 @@
 import {
   type PendingQuestion,
   type PendingQuestionDraft,
+  type PendingQuestionMutationResult,
+  type PendingQuestionUpdate,
   PendingQuestionQueue,
 } from '../lib/pending-question-queue'
 import type { PreparedAttachment } from '../lib/file-handler'
@@ -34,10 +36,10 @@ export interface QueuedQuestionDispatchInput {
 export async function dispatchPendingQuestion(
   queue: PendingQuestionQueue,
   question: PendingQuestion,
-  dispatch: (input: QueuedQuestionDispatchInput) => Promise<void>,
+  dispatch: (input: QueuedQuestionDispatchInput) => Promise<boolean>,
 ): Promise<void> {
   try {
-    await dispatch({
+    const started = await dispatch({
       text: question.text,
       targets: [...question.targetPlatforms],
       attachment: question.attachment ?? null,
@@ -46,11 +48,32 @@ export async function dispatchPendingQuestion(
       sessionId: question.id,
       taskId: question.taskId,
     })
+    if (!started) throw new Error('Queued question dispatch did not start')
     queue.markDispatchStarted(question.taskId)
   } catch (error) {
     queue.pauseForDispatchFailure(question.taskId)
     throw error
   }
+}
+
+export function updatePendingQuestionFromView(
+  queue: PendingQuestionQueue,
+  id: string,
+  update: PendingQuestionUpdate,
+  redraw: () => void,
+): PendingQuestionMutationResult {
+  const result = queue.update(id, update)
+  if (result.ok) redraw()
+  return result
+}
+
+export function bindPendingQuestionPageLifecycle(
+  queue: PendingQuestionQueue,
+  target: EventTarget,
+): () => void {
+  const clearQueue = () => queue.clear()
+  target.addEventListener('beforeunload', clearQueue)
+  return () => target.removeEventListener('beforeunload', clearQueue)
 }
 
 export function stopPendingQuestionWaiting(

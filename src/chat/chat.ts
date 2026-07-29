@@ -104,9 +104,11 @@ import {
   createResponseDiagnosticTracker,
 } from './response-diagnostic'
 import {
+  bindPendingQuestionPageLifecycle,
   dispatchPendingQuestion,
   enqueuePendingQuestionFromComposer,
   stopPendingQuestionWaiting,
+  updatePendingQuestionFromView,
 } from './pending-question-composer'
 import { renderPendingQuestionQueue } from './pending-question-queue-view'
 import {
@@ -237,6 +239,37 @@ let originalInputPlaceholder = inputEl.placeholder
 // 待发送的附件(仅支持 1 个,后续 attach 会替换)
 let pendingAttachment: PreparedAttachment | null = null
 let pendingImageObjectUrl: string | null = null
+
+type AttachmentPreparationResult =
+  | { ok: true; attachment: PreparedAttachment }
+  | { ok: false; message: string; toastDuration?: number }
+
+async function prepareAttachmentForUi(file: File): Promise<AttachmentPreparationResult> {
+  try {
+    return { ok: true, attachment: await prepareAttachment(file) }
+  } catch (error) {
+    if (error instanceof UnsupportedFileTypeError) {
+      return {
+        ok: false,
+        message: getUnsupportedFileMessage(file),
+        toastDuration: 7000,
+      }
+    }
+    if (error instanceof FileTooLargeError) {
+      return {
+        ok: false,
+        message: uiText('attachment.tooLarge', {
+          size: (file.size / 1024 / 1024).toFixed(1),
+        }),
+      }
+    }
+    console.error('[AIChatRoom chat] failed to prepare attachment', error)
+    return {
+      ok: false,
+      message: t(userSettings.language, 'attachment.readTextFailed'),
+    }
+  }
+}
 
 function setElementText(selector: string, text: string) {
   const el = document.querySelector<HTMLElement>(selector)
@@ -489,31 +522,14 @@ function renderQueue() {
       && currentSendLock.phase === 'waiting-response',
     formatAttachment: (attachment) =>
       `${attachment.file.name || 'file'} · ${formatBytes(attachment.file.size)}`,
-    prepareAttachment: async (file) => {
-      try {
-        return { ok: true, attachment: await prepareAttachment(file) }
-      } catch (error) {
-        if (error instanceof UnsupportedFileTypeError) {
-          return { ok: false, message: getUnsupportedFileMessage(file) }
-        }
-        if (error instanceof FileTooLargeError) {
-          return {
-            ok: false,
-            message: uiText('attachment.tooLarge', {
-              size: (file.size / 1024 / 1024).toFixed(1),
-            }),
-          }
-        }
-        return {
-          ok: false,
-          message: t(userSettings.language, 'attachment.readTextFailed'),
-        }
-      }
-    },
+    prepareAttachment: prepareAttachmentForUi,
     onSave: (id, update) => {
-      const result = pendingQuestionQueue.update(id, update)
-      renderQueue()
-      return result
+      return updatePendingQuestionFromView(
+        pendingQuestionQueue,
+        id,
+        update,
+        renderQueue,
+      )
     },
     onDelete: (id) => {
       pendingQuestionQueue.remove(id)
@@ -1040,26 +1056,15 @@ async function acceptFile(file: File) {
     pendingImageObjectUrl = null
   }
 
-  let attachment: PreparedAttachment
-  try {
-    attachment = await prepareAttachment(file)
-  } catch (e) {
-    if (e instanceof UnsupportedFileTypeError) {
-      showToast(getUnsupportedFileMessage(file), 'err', 7000)
-      return
-    }
-    if (e instanceof FileTooLargeError) {
-      showToast(uiText('attachment.tooLarge', { size: (file.size / 1024 / 1024).toFixed(1) }), 'err')
-      return
-    }
-    console.error('[AIChatRoom chat] failed to prepare attachment', e)
-    showToast(t(userSettings.language, 'attachment.readTextFailed'), 'err')
+  const result = await prepareAttachmentForUi(file)
+  if (!result.ok) {
+    showToast(result.message, 'err', result.toastDuration)
     return
   }
 
-  pendingAttachment = attachment
+  pendingAttachment = result.attachment
 
-  if (attachment.classification.kind === 'image') {
+  if (result.attachment.classification.kind === 'image') {
     pendingImageObjectUrl = URL.createObjectURL(file)
     previewImg.src = pendingImageObjectUrl
     previewImg.hidden = false
@@ -1075,7 +1080,7 @@ async function acceptFile(file: File) {
   btnImage.classList.add('has-image')
   btnImage.title = uiText('attachment.attachedTitle', { name: file.name || 'file' })
   showToast(
-    attachment.classification.handling === 'inline-text'
+    result.attachment.classification.handling === 'inline-text'
       ? t(userSettings.language, 'attachment.textAttached')
       : t(userSettings.language, 'attachment.fileAttached'),
     'success',
@@ -1599,7 +1604,7 @@ async function dispatchQuestion(input: DispatchQuestionInput) {
     }
     if (targets.length === 0) {
       showToast(t(userSettings.language, 'send.noUploadTarget'), 'warn', 6000)
-      return
+      return false
     }
   }
 
@@ -1653,7 +1658,7 @@ async function dispatchQuestion(input: DispatchQuestionInput) {
   const taskId = input.taskId ?? `answer-collection-${currentSession.id}`
   if (!input.taskAlreadyStarted && !pendingQuestionQueue.startTask(taskId, targets)) {
     resetSendLockUi()
-    return
+    return false
   }
   const abortController = new AbortController()
   activeAnswerCollectionAbortController = abortController
@@ -1822,15 +1827,14 @@ async function dispatchQuestion(input: DispatchQuestionInput) {
     renderQueue()
     console.error('[AIChatRoom chat] answer collection task failed', error)
   })
+  return true
 }
 
 async function dispatchQueuedQuestion(question: PendingQuestion) {
   await dispatchPendingQuestion(pendingQuestionQueue, question, dispatchQuestion)
 }
 
-window.addEventListener('beforeunload', () => {
-  pendingQuestionQueue.clear()
-})
+bindPendingQuestionPageLifecycle(pendingQuestionQueue, window)
 
 function stopWaiting() {
   if (!stopPendingQuestionWaiting(
