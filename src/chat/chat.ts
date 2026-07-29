@@ -1834,6 +1834,12 @@ async function dispatchQuestion(input: DispatchQuestionInput) {
           finishSendLockPlatform(platform)
         }
       },
+      // 一旦任务观察到「区别于发送前基线的新回答文字」，立即把顶部状态切到「回答中」。
+      // 不依赖平台是否上报 streaming 状态（DeepSeek 带图等场景下不可靠），
+      // 因此能修复「回答已出现但状态仍停留等待回答」的问题。
+      onAnswerObserved: (platform) => {
+        setStatus(platform, 'warn', t(userSettings.language, 'send.statusResponding'))
+      },
     },
   ).then((result) => {
     if (activeAnswerCollectionAbortController === abortController) {

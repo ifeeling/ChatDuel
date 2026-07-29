@@ -76,6 +76,15 @@ export interface AnswerCollectionTaskDependencies {
     platform: AIPlatform,
     result: AnswerCollectionPlatformResult,
   ): void
+  /**
+   * 当任务首次观察到「区别于发送前基线的新回答文字」时触发一次。
+   * 供 UI 把顶部进度状态从「等待回答」切到「回答中」，
+   * 不依赖平台是否上报 streaming 状态（部分平台/图片场景不可靠）。
+   * 与「回答完成确认」（onPlatformSettled）相互独立。
+   */
+  onAnswerObserved?(
+    platform: AIPlatform,
+  ): void
 }
 
 export interface AnswerCollectionTaskInput {
@@ -324,6 +333,7 @@ export async function runAnswerCollectionTask(
   }
 
   const progress: Partial<Record<AIPlatform, ResponseCaptureProgress>> = {}
+  const observedPlatforms = new Set<AIPlatform>()
   while (pending.size > 0) {
     if (settleUserStoppedPlatforms()) break
     await dependencies.wait(POLL_INTERVAL_MS)
@@ -352,6 +362,11 @@ export async function runAnswerCollectionTask(
       const observedAt = dependencies.now()
       const text = probe.text.trim()
       const baseline = (baselines[platform] ?? '').trim()
+      const observedNewAnswer = text.length > 0 && text !== baseline
+      if (observedNewAnswer && !observedPlatforms.has(platform)) {
+        observedPlatforms.add(platform)
+        invokeObserverSafely(() => dependencies.onAnswerObserved?.(platform))
+      }
       if (probe.diagnosticErrorCode) {
         finishDiagnostic(platform, {
           outcome: 'interrupted',
