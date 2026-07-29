@@ -1755,13 +1755,6 @@ async function dispatchQuestion(input: DispatchQuestionInput) {
           error: result.error,
         }
       },
-      read: async (platform) => {
-        const read = await readAnswerCollectionPlatform(platform)
-        if (read.status === 'streaming') {
-          setStatus(platform, 'warn', t(userSettings.language, 'send.statusResponding'))
-        }
-        return read
-      },
       createDiagnosticTracker: (platform, startedAt) => {
         const context = diagnosticContexts[platform]
         if (!context) return undefined
@@ -1834,10 +1827,9 @@ async function dispatchQuestion(input: DispatchQuestionInput) {
           finishSendLockPlatform(platform)
         }
       },
-      // 一旦任务观察到「区别于发送前基线的新回答文字」，立即把顶部状态切到「回答中」。
-      // 不依赖平台是否上报 streaming 状态（DeepSeek 带图等场景下不可靠），
-      // 因此能修复「回答已出现但状态仍停留等待回答」的问题。
-      onAnswerObserved: (platform) => {
+      // 平台首次进入 streaming，或任务首次观察到区别于发送前 baseline 的新回答文字时，
+      // 统一由回答收集任务通知页面切换到「回答中」。
+      onResponseStarted: (platform) => {
         setStatus(platform, 'warn', t(userSettings.language, 'send.statusResponding'))
       },
     },

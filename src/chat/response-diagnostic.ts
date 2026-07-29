@@ -1,7 +1,6 @@
 import type { StreamStatus } from '../types'
 import type { DiagnosticReporter } from '../lib/diagnostic-client'
 import type { DiagnosticErrorCode, DiagnosticRunOutcome } from '../lib/diagnostic-types'
-export { classifyResponseCaptureWait } from '../lib/response-capture'
 
 const RESPONSE_CHECKPOINTS_MS = [5_000, 15_000, 30_000, 60_000] as const
 
