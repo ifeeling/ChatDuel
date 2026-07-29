@@ -16,6 +16,9 @@ export interface PendingQuestionQueueViewText {
   waitingFor(labels: string): string
   paused(reason: string): string
   stopWaiting: string
+  recheck: string
+  observe: string
+  resume: string
   edit: string
   delete: string
   moveUp: string
@@ -45,6 +48,7 @@ export interface PendingQuestionQueueViewOptions {
   platformLabel(platform: AIPlatform): string
   editablePlatforms: readonly PendingQuestionEditorPlatform[]
   canStop: boolean
+  canResume: boolean
   formatAttachment(attachment: PreparedAttachment): string
   prepareAttachment(file: File): Promise<
     | { ok: true; attachment: PreparedAttachment }
@@ -54,6 +58,9 @@ export interface PendingQuestionQueueViewOptions {
   onDelete(id: string): void
   onMove(id: string, direction: PendingQuestionMoveDirection): void
   onMoveTo(id: string, targetId: string): void
+  onRecheck(): void
+  onObserve(): void
+  onResume(): void
 }
 
 function requiredElement<T extends HTMLElement>(container: HTMLElement, selector: string): T {
@@ -106,6 +113,26 @@ export function renderPendingQuestionQueue(
     status.textContent = options.text.waitingFor(labels)
   } else {
     status.textContent = ''
+  }
+
+  const pauseActions = requiredElement(container, '#pending-question-pause-actions')
+  pauseActions.replaceChildren()
+  if (snapshot.status === 'paused') {
+    const recheck = actionButton(options.text.recheck, 'pending-question-recheck', options.text.recheck)
+    recheck.id = 'btn-recheck'
+    recheck.addEventListener('click', () => options.onRecheck())
+    pauseActions.append(recheck)
+
+    const observe = actionButton(options.text.observe, 'pending-question-observe', options.text.observe)
+    observe.id = 'btn-observe'
+    observe.addEventListener('click', () => options.onObserve())
+    pauseActions.append(observe)
+
+    const resume = actionButton(options.text.resume, 'pending-question-resume', options.text.resume)
+    resume.id = 'btn-resume'
+    resume.disabled = !options.canResume
+    resume.addEventListener('click', () => options.onResume())
+    pauseActions.append(resume)
   }
 
   const list = requiredElement<HTMLOListElement>(container, '#pending-question-list')

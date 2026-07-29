@@ -234,6 +234,9 @@ let transferSourceOptions: TransferSourceOption[] = []
 let currentSendLock: SendLockState | null = null
 const pendingQuestionQueue = new PendingQuestionQueue()
 let activeAnswerCollectionAbortController: AbortController | null = null
+// 恢复闸门：用户是否已通过「重新检查平台状态」确认没有平台仍在生成。
+let queueRecheckPassed = false
+let wasQueuePaused = false
 let originalInputPlaceholder = inputEl.placeholder
 
 // 待发送的附件(仅支持 1 个,后续 attach 会替换)
@@ -487,7 +490,15 @@ function updateSendButtonState() {
 }
 
 function renderQueue() {
-  renderPendingQuestionQueue(pendingQuestionQueueEl, pendingQuestionQueue.snapshot(), {
+  const queueSnapshot = pendingQuestionQueue.snapshot()
+  if (queueSnapshot.pauseReason && !wasQueuePaused) {
+    queueRecheckPassed = false
+  }
+  wasQueuePaused = queueSnapshot.pauseReason !== null
+  const now = Date.now()
+  const canResume = queueRecheckPassed
+    && (queueSnapshot.resumeBlockedUntil === null || now >= queueSnapshot.resumeBlockedUntil)
+  renderPendingQuestionQueue(pendingQuestionQueueEl, queueSnapshot, {
     text: {
       title: (count, max) => uiText('queue.title', { count, max }),
       position: (index) => uiText('queue.position', { index }),
@@ -495,6 +506,9 @@ function renderQueue() {
       waitingFor: (labels) => uiText('queue.waitingFor', { labels }),
       paused: (reason) => t(userSettings.language, `queue.paused.${reason}`),
       stopWaiting: t(userSettings.language, 'queue.stopWaiting'),
+      recheck: t(userSettings.language, 'queue.recheck'),
+      observe: t(userSettings.language, 'queue.observe'),
+      resume: t(userSettings.language, 'queue.resume'),
       edit: t(userSettings.language, 'queue.edit'),
       delete: t(userSettings.language, 'queue.delete'),
       moveUp: t(userSettings.language, 'queue.moveUp'),
@@ -520,6 +534,7 @@ function renderQueue() {
     })),
     canStop: currentSendLock?.status === 'waiting'
       && currentSendLock.phase === 'waiting-response',
+    canResume,
     formatAttachment: (attachment) =>
       `${attachment.file.name || 'file'} · ${formatBytes(attachment.file.size)}`,
     prepareAttachment: prepareAttachmentForUi,
@@ -543,6 +558,9 @@ function renderQueue() {
       pendingQuestionQueue.moveTo(id, targetId)
       renderQueue()
     },
+    onRecheck: recheckPlatformStatus,
+    onObserve: requestObservationFromPause,
+    onResume: resumeFromPause,
   })
   updateSendButtonState()
 }
@@ -1792,6 +1810,7 @@ async function dispatchQuestion(input: DispatchQuestionInput) {
         } else if (
           result.status === 'capture-timeout'
           || result.status === 'capture-interrupted'
+          || result.status === 'uncertain'
           || result.status === 'user-stopped'
         ) {
           setStatus(platform, 'err', t(userSettings.language, 'send.statusFailed'))
@@ -1843,6 +1862,66 @@ function stopWaiting() {
   )) return
   renderQueue()
   showToast(t(userSettings.language, 'queue.paused.user-stopped'), 'warn', 5000)
+}
+
+// 暂停后重新检查各目标平台状态；只要任一平台仍在生成或状态不明，就拒绝恢复。
+async function recheckPlatformStatus() {
+  const snapshot = pendingQuestionQueue.snapshot()
+  if (!snapshot.pauseReason) return
+  const platforms = snapshot.pausedTargetPlatforms
+  if (platforms.length === 0) {
+    queueRecheckPassed = true
+    renderQueue()
+    showToast(t(userSettings.language, 'queue.recheckClear'), 'success', 4000)
+    return
+  }
+  const states = await Promise.all(platforms.map((platform) => requestConversationState(platform, 2000)))
+  const stillActive = states.some((state) =>
+    state.status === 'streaming'
+    || state.status === 'sending'
+    || state.status === 'queued'
+    || state.requestTimedOut === true
+    || state.status === 'error')
+  if (stillActive) {
+    queueRecheckPassed = false
+    renderQueue()
+    showToast(t(userSettings.language, 'queue.recheckGenerating'), 'warn', 6000)
+    return
+  }
+  queueRecheckPassed = true
+  renderQueue()
+  showToast(t(userSettings.language, 'queue.recheckClear'), 'success', 4000)
+}
+
+// 增加一段观察期：观察期内恢复入口不可用，确保不发送下一条。
+function requestObservationFromPause() {
+  if (!pendingQuestionQueue.requestObservation(60_000, Date.now())) return
+  renderQueue()
+}
+
+// 恢复列表：仅在已过观察期且重新检查确认无平台继续生成时放行。
+function resumeFromPause() {
+  const snapshot = pendingQuestionQueue.snapshot()
+  if (!snapshot.pauseReason) return
+  if (snapshot.resumeBlockedUntil !== null && Date.now() < snapshot.resumeBlockedUntil) {
+    const seconds = Math.ceil((snapshot.resumeBlockedUntil - Date.now()) / 1000)
+    showToast(uiText('queue.resumeBlocked', { seconds }), 'warn', 3000)
+    return
+  }
+  if (!queueRecheckPassed) {
+    showToast(t(userSettings.language, 'queue.resumeNeedRecheck'), 'warn', 3000)
+    return
+  }
+  const transition = pendingQuestionQueue.resume(Date.now())
+  queueRecheckPassed = false
+  renderQueue()
+  if (transition.kind === 'dispatch') {
+    void dispatchQueuedQuestion(transition.next).catch((error) => {
+      resetSendLockUi()
+      renderQueue()
+      console.error('[AIChatRoom chat] queued question failed to start on resume', error)
+    })
+  }
 }
 
 // ---------- @ 弹层 / Chips ----------

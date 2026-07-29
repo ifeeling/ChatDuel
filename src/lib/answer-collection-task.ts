@@ -82,6 +82,7 @@ export type AnswerCollectionPlatformResult =
   | { status: 'send-failed'; error: string }
   | { status: 'capture-timeout'; error: string }
   | { status: 'capture-interrupted'; error: string }
+  | { status: 'uncertain'; error: string }
   | { status: 'user-stopped'; error: string }
 
 export interface AnswerCollectionTaskResult {
@@ -327,9 +328,17 @@ export async function runAnswerCollectionTask(
           now: dependencies.now(),
         })
       } else if (shouldResponseCaptureTimeout(decision.progress, dependencies.now())) {
-        const error = 'response capture timed out'
+        // 超时瞬间平台仍在生成，属于「状态不确定」，不能冒险继续；
+        // 若已回到 idle/paused 等终态仍未读到内容，则属于真正的收集超时。
+        const stillGenerating = probe.status === 'streaming'
+        const error = stillGenerating
+          ? 'platform still generating at capture timeout'
+          : 'response capture timed out'
         failures[platform] = error
-        const platformResult: AnswerCollectionPlatformResult = { status: 'capture-timeout', error }
+        const platformResult: AnswerCollectionPlatformResult = {
+          status: stillGenerating ? 'uncertain' : 'capture-timeout',
+          error,
+        }
         platforms[platform] = platformResult
         pending.delete(platform)
         invokeObserverSafely(() => dependencies.onPlatformSettled?.(platform, platformResult))

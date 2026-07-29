@@ -39,6 +39,7 @@ export type QueuePauseReason =
   | 'all-sends-failed'
   | 'capture-timeout'
   | 'capture-interrupted'
+  | 'uncertain'
   | 'history-unsaved'
   | 'user-stopped'
   | 'dispatch-failed'
@@ -51,6 +52,8 @@ export interface PendingQuestionQueueSnapshot {
   activeTaskId: string | null
   activeTargetPlatforms: AIPlatform[]
   pauseReason: QueuePauseReason | null
+  pausedTargetPlatforms: AIPlatform[]
+  resumeBlockedUntil: number | null
   items: PendingQuestion[]
 }
 
@@ -108,10 +111,11 @@ function pauseReasonFor(
   if (statuses.includes('user-stopped')) return 'user-stopped'
   if (statuses.includes('capture-timeout')) return 'capture-timeout'
   if (statuses.includes('capture-interrupted')) return 'capture-interrupted'
+  if (statuses.includes('uncertain')) return 'uncertain'
   if (statuses.includes('observed-unsaved')) return 'history-unsaved'
   if (statuses.every((status) => status === 'send-failed')) return 'all-sends-failed'
   if (statuses.some((status) => status !== 'captured' && status !== 'send-failed')) {
-    return 'unknown-result'
+    return 'uncertain'
   }
   return null
 }
@@ -122,6 +126,13 @@ export class PendingQuestionQueue {
   private activeTargetPlatforms: AIPlatform[] = []
   private activeQueuedQuestion: PendingQuestion | null = null
   private pauseReason: QueuePauseReason | null = null
+  private pausedTargetPlatforms: AIPlatform[] = []
+  private resumeBlockedUntil: number | null = null
+
+  private setPause(reason: QueuePauseReason, platforms: readonly AIPlatform[]): void {
+    this.pauseReason = reason
+    this.pausedTargetPlatforms = [...platforms]
+  }
 
   private queuedAttachmentBytes(): number {
     return this.items.reduce(
@@ -225,7 +236,7 @@ export class PendingQuestionQueue {
 
     const pauseReason = pauseReasonFor(result)
     if (pauseReason) {
-      this.pauseReason = pauseReason
+      this.setPause(pauseReason, result.session.targetPlatforms)
       return { kind: 'paused', reason: pauseReason }
     }
 
@@ -240,19 +251,22 @@ export class PendingQuestionQueue {
 
   pauseForUserStop(taskId: string): boolean {
     if (this.activeTaskId !== taskId) return false
-    this.pauseReason = 'user-stopped'
+    this.setPause('user-stopped', this.activeTargetPlatforms)
     return true
   }
 
   pauseForDispatchFailure(taskId: string): boolean {
     if (this.activeTaskId !== taskId) return false
+    const platforms = this.activeQueuedQuestion
+      ? [...this.activeQueuedQuestion.targetPlatforms]
+      : [...this.activeTargetPlatforms]
     if (this.activeQueuedQuestion) {
       this.items.unshift(copyQuestion(this.activeQueuedQuestion))
     }
     this.activeTaskId = null
     this.activeTargetPlatforms = []
     this.activeQueuedQuestion = null
-    this.pauseReason = 'dispatch-failed'
+    this.setPause('dispatch-failed', platforms)
     return true
   }
 
@@ -264,10 +278,41 @@ export class PendingQuestionQueue {
 
   pauseForTaskFailure(taskId: string): boolean {
     if (this.activeTaskId !== taskId) return false
+    this.setPause('unknown-result', this.activeTargetPlatforms)
     this.activeTaskId = null
     this.activeTargetPlatforms = []
     this.activeQueuedQuestion = null
-    this.pauseReason = 'unknown-result'
+    return true
+  }
+
+  /**
+   * 解除暂停并继续队列。仅在已暂停时生效。
+   * 若仍在「观察期」内（requestObservation 设置的最早可恢复时间），直接返回 paused，不发送下一条。
+   * 解除后若有待发送问题则按序派发下一条，否则回到 idle。
+   */
+  resume(now: number): QueueTransition {
+    if (!this.pauseReason) return { kind: 'ignored' }
+    if (this.resumeBlockedUntil !== null && now < this.resumeBlockedUntil) {
+      return { kind: 'paused', reason: this.pauseReason }
+    }
+    this.pauseReason = null
+    this.pausedTargetPlatforms = []
+    this.resumeBlockedUntil = null
+    const next = this.items.shift()
+    if (!next) return { kind: 'idle' }
+    this.activeTaskId = next.taskId
+    this.activeTargetPlatforms = [...next.targetPlatforms]
+    this.activeQueuedQuestion = copyQuestion(next)
+    return { kind: 'dispatch', next: copyQuestion(next) }
+  }
+
+  /**
+   * 增加一段「观察期」：在 now+ms 之前，resume 将被拒绝，保证观察期间不发送下一条。
+   * 仅在已暂停时生效。
+   */
+  requestObservation(ms: number, now: number): boolean {
+    if (!this.pauseReason) return false
+    this.resumeBlockedUntil = now + ms
     return true
   }
 
@@ -281,6 +326,8 @@ export class PendingQuestionQueue {
       activeTaskId: this.activeTaskId,
       activeTargetPlatforms: [...this.activeTargetPlatforms],
       pauseReason: this.pauseReason,
+      pausedTargetPlatforms: [...this.pausedTargetPlatforms],
+      resumeBlockedUntil: this.resumeBlockedUntil,
       items: this.items.map(copyQuestion),
     }
   }
@@ -291,5 +338,7 @@ export class PendingQuestionQueue {
     this.activeTargetPlatforms = []
     this.activeQueuedQuestion = null
     this.pauseReason = null
+    this.pausedTargetPlatforms = []
+    this.resumeBlockedUntil = null
   }
 }
