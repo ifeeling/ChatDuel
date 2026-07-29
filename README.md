@@ -32,6 +32,7 @@ Get ChatDuel from your browser's extension store:
 - **Forwarding** — pick one or more past answers from an AI and forward them to another AI for interpretation.
 - **Summarizing** — select several Q&As from history, choose which AIs take part, and let a chosen AI write a comparison summary. "Final conclusion / disagreements only / short summary / combined opinion" each have their own configurable prompt.
 - **History records** — per submission, saves the question, actual sent content, attachments, and AI replies, for review, per-block copy, Markdown export, summarizing, and forwarding. Markdown export restores headings, lists, and paragraphs where possible.
+- **History-save recovery** — if a local history record fails to save after an answer is captured, the pending queue pauses and offers "Retry saving history" or "Continue without saving", so you can recover the save or move on without losing the in-flight answer.
 - **Official-site sessions** — saves the official conversation URL and the AI state shown at the time, so you can restore the panels and reopen an old chat to continue.
 - **Languages** — the UI, help text, and default prompts switch among 中文 / English / Français / Deutsch / Svenska / Norsk / Nederlands / 日本語 / 한국어. Your saved prompts are not overwritten by language switching unless you click "Restore current prompt defaults".
 

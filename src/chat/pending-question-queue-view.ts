@@ -19,6 +19,9 @@ export interface PendingQuestionQueueViewText {
   recheck: string
   observe: string
   resume: string
+  historyUnsavedNote: string
+  retrySave: string
+  continueWithoutSave: string
   edit: string
   delete: string
   moveUp: string
@@ -61,6 +64,8 @@ export interface PendingQuestionQueueViewOptions {
   onRecheck(): void
   onObserve(): void
   onResume(): void
+  onRetryHistorySave(): void
+  onContinueWithoutSave(): void
 }
 
 function requiredElement<T extends HTMLElement>(container: HTMLElement, selector: string): T {
@@ -118,21 +123,38 @@ export function renderPendingQuestionQueue(
   const pauseActions = requiredElement(container, '#pending-question-pause-actions')
   pauseActions.replaceChildren()
   if (snapshot.status === 'paused') {
-    const recheck = actionButton(options.text.recheck, 'pending-question-recheck', options.text.recheck)
-    recheck.id = 'btn-recheck'
-    recheck.addEventListener('click', () => options.onRecheck())
-    pauseActions.append(recheck)
+    if (snapshot.pauseReason === 'history-unsaved') {
+      const note = document.createElement('p')
+      note.className = 'pending-question-history-unsaved-note'
+      note.textContent = options.text.historyUnsavedNote
+      pauseActions.append(note)
 
-    const observe = actionButton(options.text.observe, 'pending-question-observe', options.text.observe)
-    observe.id = 'btn-observe'
-    observe.addEventListener('click', () => options.onObserve())
-    pauseActions.append(observe)
+      const retry = actionButton(options.text.retrySave, 'pending-question-retry-history', options.text.retrySave)
+      retry.id = 'btn-retry-history-save'
+      retry.addEventListener('click', () => options.onRetryHistorySave())
+      pauseActions.append(retry)
 
-    const resume = actionButton(options.text.resume, 'pending-question-resume', options.text.resume)
-    resume.id = 'btn-resume'
-    resume.disabled = !options.canResume
-    resume.addEventListener('click', () => options.onResume())
-    pauseActions.append(resume)
+      const skip = actionButton(options.text.continueWithoutSave, 'pending-question-continue-without-save', options.text.continueWithoutSave)
+      skip.id = 'btn-continue-without-save'
+      skip.addEventListener('click', () => options.onContinueWithoutSave())
+      pauseActions.append(skip)
+    } else {
+      const recheck = actionButton(options.text.recheck, 'pending-question-recheck', options.text.recheck)
+      recheck.id = 'btn-recheck'
+      recheck.addEventListener('click', () => options.onRecheck())
+      pauseActions.append(recheck)
+
+      const observe = actionButton(options.text.observe, 'pending-question-observe', options.text.observe)
+      observe.id = 'btn-observe'
+      observe.addEventListener('click', () => options.onObserve())
+      pauseActions.append(observe)
+
+      const resume = actionButton(options.text.resume, 'pending-question-resume', options.text.resume)
+      resume.id = 'btn-resume'
+      resume.disabled = !options.canResume
+      resume.addEventListener('click', () => options.onResume())
+      pauseActions.append(resume)
+    }
   }
 
   const list = requiredElement<HTMLOListElement>(container, '#pending-question-list')

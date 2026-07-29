@@ -238,6 +238,8 @@ let activeAnswerCollectionAbortController: AbortController | null = null
 // 恢复闸门：用户是否已通过「重新检查平台状态」确认没有平台仍在生成。
 let queueRecheckPassed = false
 let wasQueuePaused = false
+// 历史保存失败后暂存未保存的会话，供「重试保存」复用；用户选择「继续(不保存)」后清空。
+let pendingHistoryUnsavedSession: Session | null = null
 let originalInputPlaceholder = inputEl.placeholder
 
 // 待发送的附件(仅支持 1 个,后续 attach 会替换)
@@ -510,6 +512,9 @@ function renderQueue() {
       recheck: t(userSettings.language, 'queue.recheck'),
       observe: t(userSettings.language, 'queue.observe'),
       resume: t(userSettings.language, 'queue.resume'),
+      historyUnsavedNote: t(userSettings.language, 'queue.historyUnsavedNote'),
+      retrySave: t(userSettings.language, 'queue.retrySave'),
+      continueWithoutSave: t(userSettings.language, 'queue.continueWithoutSave'),
       edit: t(userSettings.language, 'queue.edit'),
       delete: t(userSettings.language, 'queue.delete'),
       moveUp: t(userSettings.language, 'queue.moveUp'),
@@ -562,6 +567,8 @@ function renderQueue() {
     onRecheck: recheckPlatformStatus,
     onObserve: requestObservationFromPause,
     onResume: resumeFromPause,
+    onRetryHistorySave: retryHistorySave,
+    onContinueWithoutSave: continueWithoutSave,
   })
   updateSendButtonState()
 }
@@ -1767,6 +1774,15 @@ async function dispatchQuestion(input: DispatchQuestionInput) {
           startedAt,
         )
       },
+      createHistoryReporter: (platform) => {
+        const context = diagnosticContexts[platform]
+        if (!context) return undefined
+        return createDiagnosticReporter(
+          context,
+          platform,
+          createDiagnosticProducerId('history-store'),
+        )
+      },
       onSendComplete: (results) => {
         markCurrentSendSubmitted()
         renderQueue()
@@ -1824,6 +1840,7 @@ async function dispatchQuestion(input: DispatchQuestionInput) {
       activeAnswerCollectionAbortController = null
     }
     if (result.historyStatus === 'unsaved') {
+      pendingHistoryUnsavedSession = result.session
       console.error('[AIChatRoom chat] answer collection completed but history save failed', {
         taskId: result.id,
         sessionId: result.session.id,
@@ -1915,6 +1932,43 @@ function resumeFromPause() {
       resetSendLockUi()
       renderQueue()
       console.error('[AIChatRoom chat] queued question failed to start on resume', error)
+    })
+  }
+}
+
+// 历史保存失败后，用户主动「重试保存」：再写一次本机会话；成功则恢复列表，失败保留暂停并提示。
+async function retryHistorySave() {
+  const session = pendingHistoryUnsavedSession
+  if (!session) return
+  try {
+    await updateSession(session)
+    pendingHistoryUnsavedSession = null
+    const transition = pendingQuestionQueue.resume(Date.now())
+    renderQueue()
+    if (transition.kind === 'dispatch') {
+      void dispatchQueuedQuestion(transition.next).catch((error) => {
+        resetSendLockUi()
+        renderQueue()
+        console.error('[AIChatRoom chat] queued question failed to start on history retry', error)
+      })
+    }
+    showToast(t(userSettings.language, 'queue.historySaved'), 'success', 3000)
+  } catch (error) {
+    console.error('[AIChatRoom chat] retry history save failed', error)
+    showToast(t(userSettings.language, 'queue.historySaveRetryFailed'), 'err', 4000)
+  }
+}
+
+// 历史保存失败后，用户主动「继续(不保存)」：明确丢弃本机历史的保存，恢复列表继续发送下一条。
+function continueWithoutSave() {
+  pendingHistoryUnsavedSession = null
+  const transition = pendingQuestionQueue.resume(Date.now())
+  renderQueue()
+  if (transition.kind === 'dispatch') {
+    void dispatchQueuedQuestion(transition.next).catch((error) => {
+      resetSendLockUi()
+      renderQueue()
+      console.error('[AIChatRoom chat] queued question failed to start on continue without save', error)
     })
   }
 }

@@ -1,6 +1,11 @@
 import type { AIPlatform, Session, StreamStatus } from '../types'
 import { logCaptureDebug, textPreview } from './capture-debug'
-import type { DiagnosticErrorCode, DiagnosticRunOutcome } from './diagnostic-types'
+import type {
+  DiagnosticErrorCode,
+  DiagnosticEventStatus,
+  DiagnosticRunOutcome,
+} from './diagnostic-types'
+import type { DiagnosticReporter } from './diagnostic-client'
 import {
   classifyResponseCaptureWait,
   evaluateResponseCapture,
@@ -63,6 +68,9 @@ export interface AnswerCollectionTaskDependencies {
     platform: AIPlatform,
     startedAt: number,
   ): AnswerCollectionDiagnosticTracker | undefined
+  createHistoryReporter?(
+    platform: AIPlatform,
+  ): DiagnosticReporter | undefined
   onSendComplete?(results: AnswerCollectionSendResult[]): void
   onPlatformSettled?(
     platform: AIPlatform,
@@ -107,6 +115,33 @@ function mergeTaskSession(latest: Session, taskSession: Session): Session {
   }
 }
 
+function emitHistorySaveEvent(
+  dependencies: AnswerCollectionTaskDependencies,
+  session: Session,
+  params: {
+    eventStatus: DiagnosticEventStatus
+    errorCode?: DiagnosticErrorCode
+    retryNumber?: number
+    waitedMs?: number
+    runOutcome?: DiagnosticRunOutcome
+  },
+): void {
+  for (const platform of session.targetPlatforms) {
+    const reporter = dependencies.createHistoryReporter?.(platform)
+    if (!reporter) continue
+    reporter.emit({
+      component: 'history-store',
+      operation: 'history-write',
+      stage: 'history-save',
+      eventStatus: params.eventStatus,
+      ...(params.errorCode !== undefined ? { errorCode: params.errorCode } : {}),
+      ...(params.retryNumber !== undefined ? { retryNumber: params.retryNumber } : {}),
+      ...(params.waitedMs !== undefined ? { waitedMs: params.waitedMs } : {}),
+      ...(params.runOutcome !== undefined ? { runOutcome: params.runOutcome } : {}),
+    })
+  }
+}
+
 async function updateHistoryWithRetry(
   session: Session,
   dependencies: AnswerCollectionTaskDependencies,
@@ -115,13 +150,30 @@ async function updateHistoryWithRetry(
     await dependencies.history.update(session)
     return { session, saved: true }
   } catch {
+    emitHistorySaveEvent(dependencies, session, {
+      eventStatus: 'failed',
+      errorCode: 'history-update-failed',
+      retryNumber: 0,
+    })
     await dependencies.wait(HISTORY_RETRY_DELAY_MS)
     const latest = await dependencies.history.get(session.id).catch(() => undefined)
     const merged = latest ? mergeTaskSession(latest, session) : session
     try {
       await dependencies.history.update(merged)
+      emitHistorySaveEvent(dependencies, session, {
+        eventStatus: 'succeeded',
+        retryNumber: 1,
+        waitedMs: HISTORY_RETRY_DELAY_MS,
+      })
       return { session: merged, saved: true }
     } catch {
+      emitHistorySaveEvent(dependencies, session, {
+        eventStatus: 'failed',
+        errorCode: 'history-update-failed',
+        retryNumber: 1,
+        waitedMs: HISTORY_RETRY_DELAY_MS,
+        runOutcome: 'failed',
+      })
       return { session: merged, saved: false }
     }
   }
@@ -135,13 +187,37 @@ async function addHistoryWithRetry(
     await dependencies.history.add(session)
     return true
   } catch {
+    emitHistorySaveEvent(dependencies, session, {
+      eventStatus: 'failed',
+      errorCode: 'history-add-failed',
+      retryNumber: 0,
+    })
     await dependencies.wait(HISTORY_RETRY_DELAY_MS)
     const existing = await dependencies.history.get(session.id).catch(() => undefined)
-    if (existing) return true
+    if (existing) {
+      emitHistorySaveEvent(dependencies, session, {
+        eventStatus: 'succeeded',
+        retryNumber: 1,
+        waitedMs: HISTORY_RETRY_DELAY_MS,
+      })
+      return true
+    }
     try {
       await dependencies.history.add(session)
+      emitHistorySaveEvent(dependencies, session, {
+        eventStatus: 'succeeded',
+        retryNumber: 1,
+        waitedMs: HISTORY_RETRY_DELAY_MS,
+      })
       return true
     } catch {
+      emitHistorySaveEvent(dependencies, session, {
+        eventStatus: 'failed',
+        errorCode: 'history-add-failed',
+        retryNumber: 1,
+        waitedMs: HISTORY_RETRY_DELAY_MS,
+        runOutcome: 'failed',
+      })
       return false
     }
   }

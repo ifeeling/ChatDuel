@@ -27,6 +27,7 @@ const COMPONENTS = [
   'official-tab',
   'platform-adapter',
   'response-capture',
+  'history-store',
 ] as const
 const OPERATIONS = [
   'route-select',
@@ -39,6 +40,7 @@ const OPERATIONS = [
   'response-read',
   'response-compare',
   'result-return',
+  'history-write',
 ] as const
 const STAGES = [
   'started',
@@ -59,6 +61,7 @@ const STAGES = [
   'timed-out',
   'skipped',
   'interrupted',
+  'history-save',
 ] as const
 const EVENT_STATUSES = ['observed', 'succeeded', 'failed', 'timed-out', 'skipped'] as const
 const RUN_OUTCOMES = ['completed', 'paused', 'failed', 'timed-out', 'interrupted'] as const
@@ -87,6 +90,8 @@ const ERROR_CODES = [
   'attachment-preparation-timeout',
   'adapter-unsupported-page',
   'unexpected-error',
+  'history-add-failed',
+  'history-update-failed',
 ] as const
 
 export type DiagnosticComponent = typeof COMPONENTS[number]
