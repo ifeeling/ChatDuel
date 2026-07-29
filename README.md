@@ -34,6 +34,7 @@ Get ChatDuel from your browser's extension store:
 - **History records** — per submission, saves the question, actual sent content, attachments, and AI replies, for review, per-block copy, Markdown export, summarizing, and forwarding. Markdown export restores headings, lists, and paragraphs where possible.
 - **History-save recovery** — if a local history record fails to save after an answer is captured, the pending queue pauses and offers "Retry saving history" or "Continue without saving", so you can recover the save or move on without losing the in-flight answer.
 - **Official-site sessions** — saves the official conversation URL and the AI state shown at the time, so you can restore the panels and reopen an old chat to continue.
+- **Update reminder** — after ChatDuel is upgraded, the next extension page shows a one-time reminder to refresh any AI website tabs that were already open. ChatDuel never refreshes or closes those tabs automatically.
 - **Languages** — the UI, help text, and default prompts switch among 中文 / English / Français / Deutsch / Svenska / Norsk / Nederlands / 日本語 / 한국어. Your saved prompts are not overwritten by language switching unless you click "Restore current prompt defaults".
 
 ## Records vs official-site sessions

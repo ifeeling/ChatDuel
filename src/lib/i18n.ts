@@ -24,6 +24,8 @@ export const SUPPORTED_LANGUAGE_CODES = SUPPORTED_LANGUAGES.map((language) => la
 const dict: Record<UserLanguage, Dict> = {
   'zh-CN': {
     'app.settings': '设置',
+    'updateNotice.message': '检测到 ChatDuel 已更新。请刷新已打开的 AI 官网标签页，以加载新版本。',
+    'updateNotice.acknowledge': '我知道了',
     'common.close': '关闭',
     'common.save': '保存',
     'common.cancel': '取消',
@@ -317,6 +319,8 @@ const dict: Record<UserLanguage, Dict> = {
   },
   'en-US': {
     'app.settings': 'Settings',
+    'updateNotice.message': 'ChatDuel has been updated. Refresh any open AI website tabs to load the new version.',
+    'updateNotice.acknowledge': 'Got it',
     'common.close': 'Close',
     'common.save': 'Save',
     'common.cancel': 'Cancel',

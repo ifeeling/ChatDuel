@@ -117,6 +117,7 @@ import {
   iframeWriteResultTimeoutMs,
   routeTimeoutErrorCode,
 } from './platform-communication'
+import { showExtensionUpdateNotice } from './update-notice-dialog'
 
 // ---------- DOM 引用 ----------
 const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => document.querySelector<T>(sel)!
@@ -151,6 +152,9 @@ const attachmentWarning = $<HTMLSpanElement>('#attachment-warning')
 const btnImageRemove = $<HTMLButtonElement>('#btn-image-remove')
 const btnRefresh = $<HTMLButtonElement>('#btn-refresh')
 const toastContainer = $<HTMLDivElement>('#toast-container')
+const updateNoticeOverlay = $<HTMLDivElement>('#update-notice-overlay')
+const updateNoticeMessage = $<HTMLParagraphElement>('#update-notice-message')
+const btnUpdateNoticeAcknowledge = $<HTMLButtonElement>('#btn-update-notice-acknowledge')
 const settingsOverlay = $<HTMLDivElement>('#settings-overlay')
 const btnSettingsClose = $<HTMLButtonElement>('#btn-settings-close')
 const btnSettingsSave = $<HTMLButtonElement>('#btn-settings-save')
@@ -3269,7 +3273,8 @@ function bindEvents() {
       !historyOverlay.hidden ||
       !conversationOverlay.hidden ||
       !summaryOverlay.hidden ||
-      !transferOverlay.hidden
+      !transferOverlay.hidden ||
+      !updateNoticeOverlay.hidden
     ),
   })
 
@@ -3410,6 +3415,13 @@ window.addEventListener('DOMContentLoaded', () => {
     setupPanelCloseButtons()
     setupTransferButtons()
     bindEvents()
+    await showExtensionUpdateNotice({
+      overlay: updateNoticeOverlay,
+      message: updateNoticeMessage,
+      acknowledgeButton: btnUpdateNoticeAcknowledge,
+      language: userSettings.language,
+      storage: chrome.storage.local,
+    }).catch((e) => console.warn('[ChatDuel] failed to show extension update notice', e))
     await bootstrap()
   })()
 })

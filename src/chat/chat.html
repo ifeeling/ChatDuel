@@ -152,6 +152,20 @@
   <!-- Toast 通知 -->
   <div class="toast-container" id="toast-container"></div>
 
+  <div class="update-notice-overlay" id="update-notice-overlay" hidden>
+    <section
+      class="update-notice-dialog"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="update-notice-message"
+    >
+      <p id="update-notice-message">检测到 ChatDuel 已更新。请刷新已打开的 AI 官网标签页，以加载新版本。</p>
+      <div class="update-notice-actions">
+        <button id="btn-update-notice-acknowledge" type="button">我知道了</button>
+      </div>
+    </section>
+  </div>
+
   <div class="settings-overlay" id="settings-overlay" hidden>
     <section class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <header class="settings-header">

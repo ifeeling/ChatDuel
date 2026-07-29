@@ -15,6 +15,7 @@ import { removeTrackedChatTab } from './embed-rule-lifecycle'
 import { createDiagnosticWriter, handleDiagnosticWriterMessage } from './diagnostic-writer'
 import { SUPPORTED_PLATFORMS } from '../lib/ai-platforms'
 import { mapDiagnosticError } from '../lib/diagnostic-types'
+import { recordExtensionUpdate } from '../lib/extension-update-notice'
 import {
   REMOTE_SELECTOR_CONFIG_STORAGE_KEY,
   REMOTE_SELECTOR_CONFIG_URL,
@@ -131,7 +132,12 @@ async function refreshRemoteSelectorConfig(): Promise<boolean> {
 
 // ---------- 启动时的兜底清理 ----------
 // 之前会话可能崩溃 / beforeunload 没跑成功,先清掉旧的 DNR 规则
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener((details) => {
+  void recordExtensionUpdate(
+    details,
+    chrome.runtime.getManifest().version,
+    chrome.storage.local,
+  ).catch((e) => console.warn('[ChatDuel] failed to record extension update', e))
   scheduleSelectorConfigRefresh()
   void refreshRemoteSelectorConfig()
   chrome.declarativeNetRequest
