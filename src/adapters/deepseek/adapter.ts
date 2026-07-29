@@ -706,7 +706,7 @@ function responseCandidateScore(el: HTMLElement, text: string): number {
   let score = 0
   const isFragment = el.matches('p, li')
   if ((/\b(assistant|answer|markdown)\b/i.test(marker) || el.matches('article, [role="article"]')) && !isFragment) score += 100
-  if (/\b(user|human|question|query|recommend|suggest|guide|prompt|chip|card)\b/i.test(marker)) score -= 100
+  if (/\b(user|human|question|query|recommend|suggest|guide|prompt|chip|card|search|reference|citation|source)\b/i.test(marker)) score -= 100
   if (/^(已阅读\s*\d+\s*个网页|\d+\s*个网页)$/.test(text)) score -= 200
   if (hasDirectResponseActions(el)) score += 120
   if (/^[^\n]{1,80}[?？]$/.test(text)) score -= 80
@@ -714,6 +714,13 @@ function responseCandidateScore(el: HTMLElement, text: string): number {
   if (el.closest('main')) score += 10
   score += Math.min(text.length, 1000) / 100
   return score
+}
+
+function responseCandidateVisualBottom(el: HTMLElement): number | null {
+  const rect = el.getBoundingClientRect()
+  if (!Number.isFinite(rect.bottom)) return null
+  if (rect.width <= 0 && rect.height <= 0) return null
+  return rect.bottom
 }
 
 function hasOtherResponseCandidate(root: HTMLElement, current: HTMLElement, responseSelector: string): boolean {
@@ -792,6 +799,8 @@ function getLatestResponseText(selectors: DeepSeekSelectors): string {
         text: cleanDeepSeekResponseText(expanded.text),
         score: responseCandidateScore(expanded.el, expanded.text),
         index,
+        isFragment: expanded.el.matches('p, li'),
+        visualBottom: responseCandidateVisualBottom(expanded.el),
       }
     })
     .filter((candidate) => candidate.text.length > 0)
@@ -801,13 +810,26 @@ function getLatestResponseText(selectors: DeepSeekSelectors): string {
       return true
     })
 
-  // 优先在高分候选（保留了响应标记，score >= 50）中按 DOM 顺序取最后一个，
-  // 确保多轮对话时始终返回最新的回复，而不是历史最长的旧回复。
+  // DeepSeek 的对话 DOM 可能按倒序排列，不能只依赖 DOM 顺序判断最新回答。
+  // 页面提供有效布局位置时，优先选择视觉上最靠下的完整回答。
+  const visuallyOrdered = candidates
+    .filter((candidate) =>
+      !candidate.isFragment
+      && candidate.score >= 0
+      && candidate.text.length >= 30
+      && candidate.visualBottom !== null
+    )
+    .sort((a, b) => (a.visualBottom ?? 0) - (b.visualBottom ?? 0))
+  const hasDistinctVisualOrder = visuallyOrdered.length >= 2
+    && visuallyOrdered[0].visualBottom !== visuallyOrdered[visuallyOrdered.length - 1].visualBottom
+
   const HIGH_QUALITY_MIN_SCORE = 50
   const highQuality = candidates.filter((c) => c.score >= HIGH_QUALITY_MIN_SCORE)
-  let selected = highQuality.length > 0
-    ? highQuality.sort((a, b) => a.index - b.index)[highQuality.length - 1]
-    : undefined
+  let selected = hasDistinctVisualOrder
+    ? visuallyOrdered[visuallyOrdered.length - 1]
+    : highQuality.length > 0
+      ? highQuality.sort((a, b) => a.index - b.index)[highQuality.length - 1]
+      : undefined
 
   if (!selected) {
     // 无高分候选时回退到原逻辑：按 score 排序取最高
@@ -977,10 +999,25 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
       // DeepSeek 的 paste 上传是异步的：先创建预览，再实际上传文件。
       // 需要足够等待让文件上传完成，否则发送时只发文字不发图片。
       await new Promise((resolve) => setTimeout(resolve, image ? 3000 : 200))
-      box.focus()
+      const currentBox = queryFirst<HTMLElement>(selectors.inputBox)
+      if (!currentBox) {
+        emit(diagnostics, {
+          component: 'platform-adapter', operation: 'input-locate', stage: 'failed', eventStatus: 'failed',
+          runOutcome: 'failed', errorCode: 'input-box-not-found', inputCharacterCount: text.length,
+        })
+        throw new Error('deepseek input box not found')
+      }
+      const currentText = currentBox instanceof HTMLTextAreaElement
+        ? currentBox.value
+        : currentBox.textContent ?? ''
+      if (currentText !== text) {
+        if (currentBox instanceof HTMLTextAreaElement) writeNativeTextareaValue(currentBox, text)
+        else writeEditableValue(currentBox, text)
+      }
+      currentBox.focus()
       await new Promise((resolve) => setTimeout(resolve, 50))
       for (let attempt = 1; attempt <= 3; attempt += 1) {
-        dispatchEnter(box)
+        dispatchEnter(currentBox)
         emit(diagnostics, {
           component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber: attempt,
         })
