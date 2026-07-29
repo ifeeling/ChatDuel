@@ -40,7 +40,7 @@ export async function dispatchPendingQuestion(
     await dispatch({
       text: question.text,
       targets: [...question.targetPlatforms],
-      attachment: question.attachment,
+      attachment: question.attachment ?? null,
       clearComposerOnSendComplete: false,
       taskAlreadyStarted: true,
       sessionId: question.id,

@@ -13,7 +13,7 @@ export interface PendingQuestion {
   readonly taskId: string
   readonly text: string
   readonly targetPlatforms: readonly AIPlatform[]
-  readonly attachment: PreparedAttachment | null
+  readonly attachment?: PreparedAttachment | null
 }
 
 export type PendingQuestionDraft = Omit<PendingQuestion, 'attachment'> & {

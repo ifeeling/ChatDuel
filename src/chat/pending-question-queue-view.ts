@@ -2,9 +2,11 @@ import {
   MAX_PENDING_QUESTIONS,
   type PendingQuestion,
   type PendingQuestionMoveDirection,
+  type PendingQuestionMutationResult,
   type PendingQuestionQueueSnapshot,
   type PendingQuestionUpdate,
 } from '../lib/pending-question-queue'
+import type { PreparedAttachment } from '../lib/file-handler'
 import type { AIPlatform } from '../types'
 
 export interface PendingQuestionQueueViewText {
@@ -26,6 +28,11 @@ export interface PendingQuestionQueueViewText {
   emptyText: string
   noTargets: string
   editUnavailable: string
+  attachmentLabel: string
+  replaceAttachment: string
+  removeAttachment: string
+  emptyContent: string
+  attachmentsTooLarge: string
 }
 
 export interface PendingQuestionEditorPlatform {
@@ -38,7 +45,12 @@ export interface PendingQuestionQueueViewOptions {
   platformLabel(platform: AIPlatform): string
   editablePlatforms: readonly PendingQuestionEditorPlatform[]
   canStop: boolean
-  onSave(id: string, update: PendingQuestionUpdate): boolean
+  formatAttachment(attachment: PreparedAttachment): string
+  prepareAttachment(file: File): Promise<
+    | { ok: true; attachment: PreparedAttachment }
+    | { ok: false; message: string }
+  >
+  onSave(id: string, update: PendingQuestionUpdate): PendingQuestionMutationResult
   onDelete(id: string): void
   onMove(id: string, direction: PendingQuestionMoveDirection): void
   onMoveTo(id: string, targetId: string): void
@@ -120,6 +132,12 @@ export function renderPendingQuestionQueue(
     targets.textContent = question.targetPlatforms.map(options.platformLabel).join(' / ')
 
     summary.append(questionText, targets)
+    if (question.attachment) {
+      const attachment = document.createElement('span')
+      attachment.className = 'pending-question-attachment'
+      attachment.textContent = options.formatAttachment(question.attachment)
+      summary.append(attachment)
+    }
 
     const actions = document.createElement('span')
     actions.className = 'pending-question-actions'
@@ -205,14 +223,69 @@ export function renderPendingQuestionQueue(
       )
       editorActions.append(save, cancel)
 
+      let attachmentDraft = question.attachment ?? null
+      const attachmentEditor = document.createElement('span')
+      attachmentEditor.className = 'pending-question-edit-attachments'
+      const attachmentSummary = document.createElement('span')
+      attachmentSummary.className = 'pending-question-edit-attachment'
+      const updateAttachmentSummary = () => {
+        attachmentSummary.textContent = attachmentDraft
+          ? options.formatAttachment(attachmentDraft)
+          : options.text.attachmentLabel
+      }
+      updateAttachmentSummary()
+      const attachmentInput = document.createElement('input')
+      attachmentInput.type = 'file'
+      attachmentInput.className = 'pending-question-attachment-input'
+      attachmentInput.hidden = true
+      const replaceAttachment = actionButton(
+        options.text.replaceAttachment,
+        'pending-question-replace-attachment',
+        options.text.replaceAttachment,
+      )
+      const removeAttachment = actionButton(
+        options.text.removeAttachment,
+        'pending-question-remove-attachment',
+        options.text.removeAttachment,
+      )
+      removeAttachment.disabled = !attachmentDraft
+      replaceAttachment.addEventListener('click', () => attachmentInput.click())
+      removeAttachment.addEventListener('click', () => {
+        attachmentDraft = null
+        removeAttachment.disabled = true
+        error.textContent = ''
+        updateAttachmentSummary()
+      })
+      attachmentInput.addEventListener('change', async () => {
+        const file = attachmentInput.files?.[0]
+        if (!file) return
+        save.disabled = true
+        const result = await options.prepareAttachment(file)
+        save.disabled = false
+        if (!result.ok) {
+          error.textContent = result.message
+          return
+        }
+        attachmentDraft = result.attachment
+        removeAttachment.disabled = false
+        error.textContent = ''
+        updateAttachmentSummary()
+      })
+      attachmentEditor.append(
+        attachmentSummary,
+        replaceAttachment,
+        removeAttachment,
+        attachmentInput,
+      )
+
       cancel.addEventListener('click', () => {
         activeEditorId = null
         item.replaceWith(renderedItem(question, index))
       })
       save.addEventListener('click', () => {
         const text = textarea.value.trim()
-        if (!text) {
-          error.textContent = options.text.emptyText
+        if (!text && !attachmentDraft) {
+          error.textContent = options.text.emptyContent
           return
         }
         const targetPlatforms = checkboxes
@@ -222,8 +295,19 @@ export function renderPendingQuestionQueue(
           error.textContent = options.text.noTargets
           return
         }
-        if (!options.onSave(question.id, { text, targetPlatforms })) {
-          error.textContent = options.text.editUnavailable
+        const result = options.onSave(question.id, {
+          text,
+          targetPlatforms,
+          attachment: attachmentDraft,
+        })
+        if (!result.ok) {
+          error.textContent = result.reason === 'attachments-too-large'
+            ? options.text.attachmentsTooLarge
+            : result.reason === 'empty'
+              ? options.text.emptyContent
+              : result.reason === 'no-targets'
+                ? options.text.noTargets
+                : options.text.editUnavailable
           return
         }
         activeEditorId = null
@@ -231,10 +315,11 @@ export function renderPendingQuestionQueue(
           ...question,
           text,
           targetPlatforms,
+          attachment: attachmentDraft,
         }, index))
       })
 
-      editor.append(editorActions, textarea, targets, error)
+      editor.append(editorActions, textarea, targets, attachmentEditor, error)
       item.replaceChildren(editor)
       textarea.focus()
     })

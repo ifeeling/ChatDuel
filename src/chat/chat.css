@@ -236,7 +236,11 @@ body { overflow: hidden; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.pending-question-targets {
+.pending-question-targets,
+.pending-question-attachment,
+.pending-question-edit-attachment {
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--muted);
   font-size: 11px;
   white-space: nowrap;
@@ -333,6 +337,19 @@ body { overflow: hidden; }
   cursor: pointer;
 }
 .pending-question-edit-target input { margin: 0; }
+.pending-question-edit-attachments {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.pending-question-edit-attachment {
+  min-width: 0;
+  flex: 1;
+}
+.pending-question-edit-attachments button {
+  flex-shrink: 0;
+}
 .pending-question-edit-error {
   color: #ff8a8a;
   font-size: 11px;
