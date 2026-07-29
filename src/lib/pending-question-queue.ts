@@ -2,7 +2,7 @@ import type {
   AnswerCollectionPlatformResult,
   AnswerCollectionTaskResult,
 } from './answer-collection-task'
-import type { AIPlatform } from '../types'
+import type { AIPlatform, StreamStatus } from '../types'
 import type { PreparedAttachment } from './file-handler'
 
 export const MAX_PENDING_QUESTIONS = 5
@@ -118,6 +118,24 @@ function pauseReasonFor(
     return 'uncertain'
   }
   return null
+}
+
+export interface PlatformStateProbe {
+  status: StreamStatus
+  requestTimedOut?: boolean
+}
+
+// 重查闸门的核心判定：只有所有被暂停平台都确认「没有继续生成、没有排队发送、
+// 状态请求没有超时或报错」时，才允许恢复队列。任何不确定情况一律判为不安全。
+export function isPlatformStateSafeToResume(states: readonly PlatformStateProbe[]): boolean {
+  return states.every(
+    (state) =>
+      state.status !== 'streaming'
+      && state.status !== 'sending'
+      && state.status !== 'queued'
+      && state.status !== 'error'
+      && state.requestTimedOut !== true,
+  )
 }
 
 export class PendingQuestionQueue {

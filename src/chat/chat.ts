@@ -61,6 +61,7 @@ import { t, type UserLanguage } from '../lib/i18n'
 import { getSendButtonState } from '../lib/send-button-state'
 import {
   PendingQuestionQueue,
+  isPlatformStateSafeToResume,
   type PendingQuestion,
 } from '../lib/pending-question-queue'
 import { addSession, deleteSession, getSession, loadSessions, updateSession } from '../lib/session-store'
@@ -1876,13 +1877,7 @@ async function recheckPlatformStatus() {
     return
   }
   const states = await Promise.all(platforms.map((platform) => requestConversationState(platform, 2000)))
-  const stillActive = states.some((state) =>
-    state.status === 'streaming'
-    || state.status === 'sending'
-    || state.status === 'queued'
-    || state.requestTimedOut === true
-    || state.status === 'error')
-  if (stillActive) {
+  if (!isPlatformStateSafeToResume(states)) {
     queueRecheckPassed = false
     renderQueue()
     showToast(t(userSettings.language, 'queue.recheckGenerating'), 'warn', 6000)
