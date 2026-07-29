@@ -3,24 +3,35 @@ import type {
   AnswerCollectionTaskResult,
 } from './answer-collection-task'
 import type { AIPlatform } from '../types'
+import type { PreparedAttachment } from './file-handler'
 
 export const MAX_PENDING_QUESTIONS = 5
+export const MAX_PENDING_ATTACHMENT_BYTES = 50 * 1024 * 1024
 
 export interface PendingQuestion {
   readonly id: string
   readonly taskId: string
   readonly text: string
   readonly targetPlatforms: readonly AIPlatform[]
+  readonly attachment: PreparedAttachment | null
 }
 
-export interface PendingQuestionDraft extends PendingQuestion {
-  readonly hasAttachment?: boolean
+export type PendingQuestionDraft = Omit<PendingQuestion, 'attachment'> & {
+  readonly attachment?: PreparedAttachment | null
 }
 
 export interface PendingQuestionUpdate {
   readonly text: string
   readonly targetPlatforms: readonly AIPlatform[]
+  readonly attachment?: PreparedAttachment | null
 }
+
+export type PendingQuestionMutationResult =
+  | { ok: true }
+  | {
+      ok: false
+      reason: 'attachments-too-large' | 'empty' | 'missing' | 'no-targets'
+    }
 
 export type PendingQuestionMoveDirection = 'up' | 'down'
 
@@ -51,7 +62,24 @@ export type QueueTransition =
 
 type EnqueueResult =
   | { ok: true }
-  | { ok: false; reason: 'attachment-unsupported' | 'empty' | 'full' | 'no-targets' }
+  | {
+      ok: false
+      reason: 'attachments-too-large' | 'empty' | 'full' | 'no-targets'
+    }
+
+function copyAttachment(
+  attachment: PreparedAttachment | null | undefined,
+): PreparedAttachment | null {
+  return attachment
+    ? {
+        file: attachment.file,
+        classification: { ...attachment.classification },
+        ...(attachment.textContent === undefined
+          ? {}
+          : { textContent: attachment.textContent }),
+      }
+    : null
+}
 
 function copyQuestion(question: PendingQuestion): PendingQuestion {
   return {
@@ -59,6 +87,7 @@ function copyQuestion(question: PendingQuestion): PendingQuestion {
     taskId: question.taskId,
     text: question.text,
     targetPlatforms: [...question.targetPlatforms],
+    attachment: copyAttachment(question.attachment),
   }
 }
 
@@ -94,36 +123,59 @@ export class PendingQuestionQueue {
   private activeQueuedQuestion: PendingQuestion | null = null
   private pauseReason: QueuePauseReason | null = null
 
+  private queuedAttachmentBytes(): number {
+    return this.items.reduce(
+      (total, question) => total + (question.attachment?.file.size ?? 0),
+      0,
+    )
+  }
+
   enqueue(input: PendingQuestionDraft): EnqueueResult {
-    if (input.hasAttachment) {
-      return { ok: false, reason: 'attachment-unsupported' }
-    }
     const text = input.text.trim()
-    if (!text) return { ok: false, reason: 'empty' }
+    if (!text && !input.attachment) return { ok: false, reason: 'empty' }
     if (this.items.length >= MAX_PENDING_QUESTIONS) {
       return { ok: false, reason: 'full' }
     }
     if (input.targetPlatforms.length === 0) {
       return { ok: false, reason: 'no-targets' }
     }
+    if (
+      this.queuedAttachmentBytes() + (input.attachment?.file.size ?? 0)
+      > MAX_PENDING_ATTACHMENT_BYTES
+    ) {
+      return { ok: false, reason: 'attachments-too-large' }
+    }
     this.items.push(copyQuestion({
       ...input,
       text,
+      attachment: input.attachment ?? null,
     }))
     return { ok: true }
   }
 
-  update(id: string, input: PendingQuestionUpdate): boolean {
+  update(id: string, input: PendingQuestionUpdate): PendingQuestionMutationResult {
     const index = this.items.findIndex((question) => question.id === id)
     const text = input.text.trim()
-    if (index < 0 || !text || input.targetPlatforms.length === 0) return false
+    if (index < 0) return { ok: false, reason: 'missing' }
     const current = this.items[index]
+    const attachment = input.attachment === undefined
+      ? current.attachment
+      : input.attachment
+    if (!text && !attachment) return { ok: false, reason: 'empty' }
+    if (input.targetPlatforms.length === 0) return { ok: false, reason: 'no-targets' }
+    const nextAttachmentBytes = this.queuedAttachmentBytes()
+      - (current.attachment?.file.size ?? 0)
+      + (attachment?.file.size ?? 0)
+    if (nextAttachmentBytes > MAX_PENDING_ATTACHMENT_BYTES) {
+      return { ok: false, reason: 'attachments-too-large' }
+    }
     this.items[index] = copyQuestion({
       ...current,
       text,
       targetPlatforms: input.targetPlatforms,
+      attachment,
     })
-    return true
+    return { ok: true }
   }
 
   remove(id: string): boolean {
@@ -204,6 +256,12 @@ export class PendingQuestionQueue {
     return true
   }
 
+  markDispatchStarted(taskId: string): boolean {
+    if (this.activeTaskId !== taskId || !this.activeQueuedQuestion) return false
+    this.activeQueuedQuestion = null
+    return true
+  }
+
   pauseForTaskFailure(taskId: string): boolean {
     if (this.activeTaskId !== taskId) return false
     this.activeTaskId = null
@@ -225,5 +283,13 @@ export class PendingQuestionQueue {
       pauseReason: this.pauseReason,
       items: this.items.map(copyQuestion),
     }
+  }
+
+  clear(): void {
+    this.items = []
+    this.activeTaskId = null
+    this.activeTargetPlatforms = []
+    this.activeQueuedQuestion = null
+    this.pauseReason = null
   }
 }
