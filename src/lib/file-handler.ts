@@ -14,6 +14,12 @@ export interface FileClassification {
   handling: AttachmentHandling
 }
 
+export interface PreparedAttachment {
+  readonly file: File
+  readonly classification: FileClassification
+  readonly textContent?: string
+}
+
 export interface InlineTextResult {
   textContent: string
   sentPrompt: string
@@ -116,6 +122,19 @@ ${fileName}
 【文件内容开始】
 ${textContent}
 【文件内容结束】`
+}
+
+export async function prepareAttachment(file: File): Promise<PreparedAttachment> {
+  const classification = classifyFile(file)
+  assertFileWithinLimit(file, classification)
+  if (classification.handling !== 'inline-text') {
+    return { file, classification }
+  }
+  return {
+    file,
+    classification,
+    textContent: await readFileAsText(file),
+  }
 }
 
 export async function inlineTextFile(file: File, userText: string): Promise<InlineTextResult> {
