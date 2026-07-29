@@ -234,7 +234,7 @@ export function renderPendingQuestionQueue(
         }, index))
       })
 
-      editor.append(textarea, targets, error, editorActions)
+      editor.append(editorActions, textarea, targets, error)
       item.replaceChildren(editor)
       textarea.focus()
     })
