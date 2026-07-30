@@ -82,10 +82,13 @@ export interface SessionSummary {
   // pending: 已落盘、待发送
   // sent: 平台明确确认发送成功
   // captured: 回答已收集并保存
-  // failed: 平台明确拒绝（可安全重发）
+  // failed: 平台明确拒绝（可安全重发）或收集明确失败（capture-failed）
   // unknown: 发送超时、结果未知（不得自动重发，需二次确认）
+  // uncertain: 平台已确认发送成功，但回答收集在平台仍在生成时超时、状态不确定（提供「重新检查」，不重发）
   // history-unsaved: 发送前或发送后历史保存失败（只需重新保存，不得重发）
-  status: 'pending' | 'sent' | 'captured' | 'failed' | 'unknown' | 'history-unsaved'
+  status: 'pending' | 'sent' | 'captured' | 'failed' | 'unknown' | 'uncertain' | 'history-unsaved'
+  // 发送前的会话基线（对话中已有的内容），供「重新检查」判断目标 AI 是否产生了新的安全回答。
+  baseline?: string
   result?: string
   sourceSessionIds: string[]
   timestamp: number
@@ -114,21 +117,23 @@ export interface SummaryAttempt {
     | 'send-failed'
     | 'send-unknown'
     | 'capture-failed'
+    | 'answer-uncertain'
     | 'history-unsaved'
   error?: string
 }
 
 /** 需要用户介入的恢复入口描述。 */
 export interface SummaryRecovery {
-  /** resend: 重新发送（原提示词与平台）；resave: 重新保存（不重发）。 */
-  action: 'resend' | 'resave'
+  /** resend: 重新发送（原提示词与平台）；resave: 重新保存（不重发）；recheck: 只读重新检查（不重发）。 */
+  action: 'resend' | 'resave' | 'recheck'
   /**
    * 是否需要二次确认：
    * - 明确失败重发不需要确认；
-   * - 结果未知的重发必须先确认重复发送风险。
+   * - 结果未知的重发必须先确认重复发送风险；
+   * - 「重新检查」是只读安全检查，不重发，无需确认。
    */
   needsConfirm: boolean
-  reason: 'send-failed' | 'send-unknown' | 'history-unsaved'
+  reason: 'send-failed' | 'send-unknown' | 'answer-uncertain' | 'history-unsaved'
 }
 
 export type SummaryRange = 'latest-1' | 'latest-3' | 'latest-5' | 'manual'

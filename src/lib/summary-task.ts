@@ -1,12 +1,19 @@
 import type { AIPlatform, Session, SessionSummary, SummaryMode, SummaryAttempt } from '../types'
 import {
   runAnswerCollectionTask,
+  POLL_INTERVAL_MS as ANSWER_COLLECTION_POLL_INTERVAL_MS,
+  REQUIRED_STABLE_POLLS as ANSWER_COLLECTION_REQUIRED_STABLE_POLLS,
   type AnswerCollectionHistory,
   type AnswerCollectionPlatformResult,
   type AnswerCollectionSendResult,
   type AnswerCollectionTaskDependencies,
 } from './answer-collection-task'
-import { applySummaryToSession, createSummarySessionRecord } from './session-record'
+import { applySummaryToSession, createSummarySessionRecord, isNewCapturedResponse } from './session-record'
+import {
+  evaluateResponseCapture,
+  shouldResponseCaptureTimeout,
+  type ResponseCaptureProgress,
+} from './response-capture'
 
 /**
  * 总结任务 module（Issue #18 P0.1 成功路径 + Issue #19 P0.2 失败恢复）
@@ -76,6 +83,8 @@ export type SummaryTaskOutcome =
   | 'send-unknown'
   /** 已确认发送成功，但回答收集超时 / 中断 / 状态不确定。 */
   | 'capture-failed'
+  /** 已确认发送成功，但回答收集在平台仍在生成时超时、状态不确定（提供「重新检查」）。 */
+  | 'answer-uncertain'
   /** 总结历史记录始终无法保存（含回答已观察到但没保存成功）。 */
   | 'history-unsaved'
 
@@ -119,6 +128,10 @@ function recoveryFor(
   platformResult: AnswerCollectionPlatformResult | undefined,
   historyStatus: 'saved' | 'unsaved',
 ): SessionSummary['recovery'] {
+  if (summary.status === 'uncertain') {
+    // 已确认发送成功，但回答状态不确定：只提供只读「重新检查」，绝不重发。
+    return { action: 'recheck', needsConfirm: false, reason: 'answer-uncertain' }
+  }
   if (summary.status === 'unknown') {
     // 结果未知：可重发，但必须先二次确认重复发送风险。
     return { action: 'resend', needsConfirm: true, reason: 'send-unknown' }
@@ -140,6 +153,7 @@ function decideOutcome(
   platformResult: AnswerCollectionPlatformResult | undefined,
   historyStatus: 'saved' | 'unsaved',
 ): SummaryTaskOutcome {
+  if (summary.status === 'uncertain') return 'answer-uncertain'
   if (summary.status === 'unknown') return 'send-unknown'
   if (historyStatus === 'unsaved' && (summary.status === 'sent' || summary.status === 'captured')) {
     return 'history-unsaved'
@@ -217,6 +231,87 @@ export async function resaveSummaryHistory(
   }
 }
 
+/** 重新检查复用与普通回答收集任务完全相同的轮询与稳定读取参数（AC5：规则不变）。 */
+const RECHECK_POLL_INTERVAL_MS = ANSWER_COLLECTION_POLL_INTERVAL_MS
+const RECHECK_REQUIRED_STABLE_POLLS = ANSWER_COLLECTION_REQUIRED_STABLE_POLLS
+
+export interface SummaryRecheckResult {
+  /** captured=已确认安全回答并更新记录；still-uncertain=仍无法确认安全、保持原状态。 */
+  outcome: 'captured' | 'still-uncertain'
+  ok: boolean
+  summary: SessionSummary
+  session: Session
+  error?: string
+}
+
+/**
+ * 「重新检查」：对已确认发送但回答状态不确定的总结，执行安全的只读状态与回答检查。
+ * 复用与普通回答收集相同的 3 秒轮询、60 秒无进展、10 分钟绝对超时与连续两次稳定读取规则（AC5），
+ * 绝不调用平台发送。确认平台已停止生成且存在安全的新回答时，更新原历史记录为已收集、
+ * 移除恢复入口；仍发现平台生成中或无法确认安全时，保持原记录与恢复入口不变。
+ */
+export async function recheckSummary(
+  session: Session,
+  summary: SessionSummary,
+  dependencies: Pick<SummaryTaskDependencies, 'now' | 'wait' | 'read' | 'history'>,
+): Promise<SummaryRecheckResult> {
+  const target = summary.target
+  const baseline = summary.baseline ?? ''
+  const at = dependencies.now()
+  const retryCount = (summary.retryCount ?? 0) + 1
+  let progress: ResponseCaptureProgress | undefined
+
+  while (true) {
+    const probe = await dependencies.read(target)
+    const decision = evaluateResponseCapture(
+      probe,
+      baseline,
+      progress,
+      RECHECK_REQUIRED_STABLE_POLLS,
+      dependencies.now(),
+    )
+    progress = decision.progress
+    if (decision.shouldCapture && isNewCapturedResponse(decision.text, baseline)) {
+      // 平台已停止生成且存在安全的新回答：更新原记录为已收集，移除恢复入口。
+      const capturedSummary: SessionSummary = {
+        ...summary,
+        status: 'captured',
+        result: decision.text,
+        capturedAt: dependencies.now(),
+        recovery: undefined,
+        retryCount,
+        attempts: [
+          ...(summary.attempts ?? []),
+          { index: retryCount, at, result: 'captured' as const },
+        ],
+      }
+      const record: Session = {
+        ...applySummaryToSession(session, capturedSummary),
+        updatedAt: dependencies.now(),
+      }
+      try {
+        const existing = await dependencies.history.get(record.id).catch(() => undefined)
+        if (existing) {
+          await dependencies.history.update(record)
+        } else {
+          await dependencies.history.add(record)
+        }
+        return { ok: true, outcome: 'captured', summary: capturedSummary, session: record }
+      } catch (e) {
+        const error = e instanceof Error ? e.message : 'history save failed'
+        // 保存失败：保留原可恢复状态，由用户稍后再次重新检查。
+        return { ok: false, outcome: 'still-uncertain', summary, session, error }
+      }
+    }
+    // 仍无法确认平台已停止生成或存在安全的新回答（含 60s 无进展 / 10 分钟绝对超时）：
+    // 保持原记录与恢复入口不变，不重发、不解锁，交由状态条继续等待用户。
+    if (shouldResponseCaptureTimeout(progress, dependencies.now())) {
+      return { ok: false, outcome: 'still-uncertain', summary, session }
+    }
+    await dependencies.wait(RECHECK_POLL_INTERVAL_MS)
+  }
+}
+
 /** 发送前保存 pending 记录（带一次重试）；保存失败返回 false，调用方不得继续发送。 */
 async function savePendingWithRetry(
   session: Session,
@@ -246,6 +341,9 @@ export async function runSummaryTask(
   // 总结状态由本 module 独占维护，初始必须是 pending：
   // 调用者拿不到中途修改状态的入口，因此无法提前宣称「已发送」。
   const summaryId = input.summaryId ?? makeSummaryId()
+  // 发送前捕获目标 AI 的会话基线（对话中已有内容），供「重新检查」判断
+  // 平台是否产生了相对这次总结的新安全回答；捕获失败则退化为空基线。
+  const baseline = await dependencies.captureBaseline(input.target).catch(() => '')
   let summary: SessionSummary = {
     id: summaryId,
     target: input.target,
@@ -253,6 +351,7 @@ export async function runSummaryTask(
     mode: input.mode,
     prompt: input.prompt,
     status: 'pending',
+    baseline,
     sourceSessionIds: [...input.sourceSessionIds],
     timestamp: startedAt,
     retryCount: input.retryCount ?? 0,
@@ -395,6 +494,12 @@ export async function runSummaryTask(
           summary = { ...summary, status: 'failed', error: result.error }
           return
         }
+        if (result.status === 'uncertain' && summary.status === 'sent') {
+          // 平台已确认发送成功，但回答收集在平台仍在生成时超时 → 状态不确定，
+          // 提供「重新检查」（只读、不重发），不降级为明确失败。
+          summary = { ...summary, status: 'uncertain', error: result.error }
+          return
+        }
         // 其它收集阶段失败：正常路径记为 failed（区别于发送失败由 send 包装结算）；
         // 超时探测路径保持 unknown，不把不确定性伪装成明确失败。
         if (summary.status !== 'unknown') {
@@ -458,6 +563,15 @@ export interface SummaryTaskRunner {
     input: SummaryTaskInput,
     dependencies: SummaryTaskDependencies,
   ): Promise<SummaryTaskResult> | null
+  /**
+   * 对已确认发送但回答状态不确定的总结执行只读「重新检查」；同一时间只允许一个总结任务。
+   * 已有任务运行时返回 null。运行期间占用唯一任务位（保持输入锁），结束后释放。
+   */
+  recheck(
+    session: Session,
+    summary: SessionSummary,
+    dependencies: Pick<SummaryTaskDependencies, 'now' | 'wait' | 'read' | 'history'>,
+  ): Promise<SummaryRecheckResult> | null
 }
 
 export function createSummaryTaskRunner(
@@ -485,6 +599,23 @@ export function createSummaryTaskRunner(
       // 发送结果未知时本 module 会在结算前完成只读探测，探测期间任务仍运行、输入锁保持；
       // 探测结束（仍 unknown）后释放，由输入框状态条提供带二次确认的重发入口（#19）。
       return runSummaryTask(input, dependencies).then(
+        (result) => {
+          settle()
+          return result
+        },
+        (error) => {
+          settle()
+          throw error
+        },
+      )
+    },
+    recheck(session, summary, dependencies) {
+      if (running) return null
+      setRunning(true)
+      const settle = () => setRunning(false)
+      // 重新检查占用唯一任务位并保持输入锁：检查期间用户不能发起新内容或重发，
+      // 确认安全后解锁，仍不确定时保持锁定直到用户再次检查或另行处理（#20）。
+      return recheckSummary(session, summary, dependencies).then(
         (result) => {
           settle()
           return result

@@ -115,8 +115,8 @@ export interface AnswerCollectionTaskResult {
   historyStatus: 'saved' | 'unsaved'
 }
 
-const POLL_INTERVAL_MS = 3_000
-const REQUIRED_STABLE_POLLS = 2
+export const POLL_INTERVAL_MS = 3_000
+export const REQUIRED_STABLE_POLLS = 2
 const HISTORY_RETRY_DELAY_MS = 500
 
 function mergeTaskSession(latest: Session, taskSession: Session): Session {

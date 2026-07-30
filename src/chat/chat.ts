@@ -72,6 +72,7 @@ import {
 import {
   buildSummaryRetryInput,
   createSummaryTaskRunner,
+  recheckSummary,
   resaveSummaryHistory,
   type SummaryTaskResult,
 } from '../lib/summary-task'
@@ -2469,9 +2470,7 @@ function appendSummaryRecoveryEntry(session: Session, summary: SessionSummary) {
   btn.type = 'button'
   btn.id = 'summary-detail-retry'
   btn.className = 'history-action'
-  btn.textContent = recovery.action === 'resend'
-    ? t(lang, 'summary.recover.resend')
-    : t(lang, 'summary.recover.resave')
+  btn.textContent = recoveryActionLabel(recovery.action)
   btn.disabled = summaryTaskRunner.isRunning()
   btn.addEventListener('click', () => void onSummaryRecoveryAction(summary.id, recovery))
   section.append(header, body, btn)
@@ -3040,6 +3039,16 @@ async function onGenerateSummary() {
     case 'history-unsaved':
       showToast(t(userSettings.language, 'summary.historyUnsaved'), 'warn', 5000)
       return
+    case 'answer-uncertain':
+      // 已确认发送成功，但回答状态不确定：状态条显示「重新检查」，并保持输入锁直到用户检查确认，
+      // 与重新检查失败后的锁定保持一致（AC：保持活动任务位置与输入锁）。
+      showToast(
+        t(userSettings.language, 'summary.recover.answerUncertain'),
+        'warn',
+        5000,
+      )
+      applySummaryTaskLockUi(true)
+      return
     default:
       // capture-failed：已确认发送成功，但回答收集未确认，无需恢复入口。
       showToast(
@@ -3071,19 +3080,25 @@ function recoveryTextFor(recovery: SummaryRecovery): string {
   const lang = userSettings.language
   if (recovery.reason === 'send-failed') return t(lang, 'summary.recover.sendFailed')
   if (recovery.reason === 'send-unknown') return t(lang, 'summary.recover.sendUnknown')
+  if (recovery.reason === 'answer-uncertain') return t(lang, 'summary.recover.answerUncertain')
   return t(lang, 'summary.recover.historyUnsaved')
 }
 
-function renderSummaryRecoveryBar(summaryId: string, recovery: SummaryRecovery) {
+/** 恢复入口按钮文案：重新发送 / 重新保存 / 重新检查（三种恢复互不混淆）。 */
+function recoveryActionLabel(action: SummaryRecovery['action']): string {
   const lang = userSettings.language
+  if (action === 'resend') return t(lang, 'summary.recover.resend')
+  if (action === 'recheck') return t(lang, 'summary.recover.recheck')
+  return t(lang, 'summary.recover.resave')
+}
+
+function renderSummaryRecoveryBar(summaryId: string, recovery: SummaryRecovery) {
   const bar = document.querySelector<HTMLElement>('#summary-recovery-bar')
   const text = document.querySelector<HTMLElement>('#summary-recovery-text')
   const action = document.querySelector<HTMLButtonElement>('#summary-recovery-action')
   if (!bar || !text || !action) return
   text.textContent = recoveryTextFor(recovery)
-  action.textContent = recovery.action === 'resend'
-    ? t(lang, 'summary.recover.resend')
-    : t(lang, 'summary.recover.resave')
+  action.textContent = recoveryActionLabel(recovery.action)
   action.dataset.recoveryAction = recovery.action
   action.disabled = summaryTaskRunner.isRunning()
   action.onclick = () => void onSummaryRecoveryAction(summaryId, recovery)
@@ -3145,6 +3160,33 @@ async function retrySummaryTask(summaryId: string) {
   }
   if (!targetSession || !targetSummary) {
     hideSummaryRecoveryBar()
+    return
+  }
+
+  // 已确认发送但回答状态不确定：只读「重新检查」，绝不再次发送（Issue #20）。
+  if (targetSummary.recovery?.action === 'recheck') {
+    const base = createAnswerCollectionBaseDependencies()
+    showToast(t(userSettings.language, 'summary.recheckStarted'), 'info', 1800)
+    const recheck = await summaryTaskRunner.recheck(targetSession, targetSummary, base)
+    if (recheck === null) {
+      // 已有总结任务在运行，防御性提示。
+      showToast(t(userSettings.language, 'summary.running'), 'warn', 3000)
+      return
+    }
+    if (recheck.outcome === 'captured') {
+      // 确认平台已停止生成且存在安全的新回答：移除状态条并解除输入锁（unlock 由 runner 释放）。
+      hideSummaryRecoveryBar()
+      showToast(t(userSettings.language, 'summary.recheckCaptured'), 'success', 3000)
+    } else {
+      // 仍无法确认安全：保持状态条，并继续保持输入锁（AC：仍发现生成中或无法确认时保持锁）。
+      showToast(t(userSettings.language, 'summary.recheckStillUncertain'), 'warn', 5000)
+      renderSummaryRecoveryBar(targetSummary.id, targetSummary.recovery)
+      applySummaryTaskLockUi(true)
+    }
+    const savedSession = await getSession(targetSession.id)
+    if (savedSession && currentHistorySessionId === savedSession.id) {
+      renderHistoryDetail(savedSession)
+    }
     return
   }
 
