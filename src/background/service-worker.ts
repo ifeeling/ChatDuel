@@ -242,9 +242,16 @@ chrome.runtime.onMessage.addListener((msg: { type: string; [k: string]: unknown 
           ? { type: 'get-state' }
           : command === 'get-last-response'
             ? { type: 'get-last-response' }
+            : command === 'get-conversation-url'
+              ? { type: 'get-conversation-url' }
             : null
     if (!contentMessage) {
-      sendResponse({ ok: false, error: `unknown official-tab-command: ${command}` })
+      sendResponse({
+        platform,
+        command,
+        ok: false,
+        error: `unknown official-tab-command: ${command}`,
+      })
       return false
     }
     sendOfficialTabMessage(platform, contentMessage)
@@ -252,6 +259,8 @@ chrome.runtime.onMessage.addListener((msg: { type: string; [k: string]: unknown 
       .catch((e) => {
         const mappedError = mapDiagnosticError(e)
         sendResponse({
+          platform,
+          command,
           ok: false,
           error: String(e),
           diagnosticErrorCode: mappedError === 'unexpected-error'

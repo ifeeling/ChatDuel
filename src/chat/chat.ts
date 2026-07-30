@@ -668,6 +668,7 @@ const platformCommunication = createPlatformCommunication({
   getFrame: panelIframe,
   getPlatformOrigin: platformOrigin,
   supportsEmbed: (platform) => getPlatformCapabilities(platform).supportsEmbed,
+  usesCommandBridge: (platform) => platform === 'chatgpt',
   ensureEmbedRules: ensureEmbedRulesEnabled,
   reload: (platform) => {
     panelIframe(platform).src = platformUrl(platform)
@@ -1213,10 +1214,10 @@ async function readAnswerCollectionPlatform(platform: AIPlatform): Promise<Answe
     : await platformCommunication.readLastResponse(platform, 1500)
   return {
     text: responseRead.text,
-    status: state.status,
+    status: responseRead.error ? 'error' : state.status,
     stopButtonDetected: state.stopButtonDetected,
     completionActionBarDetected: state.completionActionBarDetected,
-    requestTimedOut: state.requestTimedOut,
+    requestTimedOut: state.requestTimedOut || responseRead.requestTimedOut,
     diagnosticErrorCode: state.diagnosticErrorCode ?? responseRead.diagnosticErrorCode,
   }
 }
