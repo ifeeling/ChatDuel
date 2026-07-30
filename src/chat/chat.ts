@@ -67,9 +67,9 @@ import {
 import { addSession, deleteSession, getSession, loadSessions, updateSession } from '../lib/session-store'
 import {
   createSessionRecord,
-  createSummarySessionRecord,
   normalizeCapturedResponse,
 } from '../lib/session-record'
+import { createSummaryTaskRunner } from '../lib/summary-task'
 import {
   createSendLock,
   markSendLockSubmitted,
@@ -231,6 +231,11 @@ const selectedSummaryPlatforms: Set<AIPlatform> = new Set()
 let transferSourcePlatform: AIPlatform | null = null
 let transferSourceOptions: TransferSourceOption[] = []
 let currentSendLock: SendLockState | null = null
+// 总结任务唯一任务位：同一时间只允许一个总结任务运行（Issue #18）。
+// 占用/释放时同步锁定或恢复输入区控件。
+const summaryTaskRunner = createSummaryTaskRunner({
+  onRunningChanged: (running) => applySummaryTaskLockUi(running),
+})
 const pendingQuestionQueue = new PendingQuestionQueue()
 let activeAnswerCollectionAbortController: AbortController | null = null
 // 恢复闸门：用户是否已通过「重新检查平台状态」确认没有平台仍在生成。
@@ -316,6 +321,7 @@ function applyStaticUiLanguage(language: UserLanguage) {
   setElementTitle('#btn-send', t(language, 'toolbar.send'))
   inputEl.placeholder = t(language, 'input.placeholder')
   originalInputPlaceholder = inputEl.placeholder
+  enforceSummaryTaskLockUi()
   renderQueue()
   setElementText('#settings-title', t(language, 'app.settings'))
   setElementText('[data-settings-tab="sites"]', t(language, 'settings.sitesTab'))
@@ -479,7 +485,8 @@ function updateSendButtonState() {
   })
   sendBtn.dataset.icon = state.icon
   sendBtn.dataset.kind = state.kind
-  sendBtn.disabled = state.disabled
+  // 总结任务运行期间发送按钮一律禁用，避免新请求混入正在收集的回答。
+  sendBtn.disabled = state.disabled || summaryTaskRunner.isRunning()
   sendBtn.classList.toggle('waiting-response', state.kind === 'queue')
   sendBtn.classList.toggle('empty', state.kind === 'empty')
   sendButtonLabel.textContent = state.kind === 'queue'
@@ -582,6 +589,7 @@ function setWaitingResponseLockUi() {
   inputEl.disabled = false
   btnImage.disabled = false
   inputEl.placeholder = originalInputPlaceholder
+  enforceSummaryTaskLockUi()
   updateSendButtonState()
 }
 
@@ -589,7 +597,40 @@ function hideSendLockUi() {
   inputEl.disabled = false
   btnImage.disabled = false
   inputEl.placeholder = originalInputPlaceholder
+  enforceSummaryTaskLockUi()
   updateSendButtonState()
+}
+
+// ---------- 总结任务输入锁 ----------
+// 总结任务运行期间锁定会制造新内容的控件（输入框、附件、发送、总结），
+// 并说明「正在生成总结」；记录、官网会话、设置和 AI 面板操作保持可用（Issue #18）。
+function applySummaryTaskLockUi(running: boolean) {
+  if (running) {
+    inputEl.disabled = true
+    btnImage.disabled = true
+    btnSummary.disabled = true
+    inputEl.placeholder = t(userSettings.language, 'summary.lockedPlaceholder')
+  } else {
+    inputEl.disabled = false
+    btnImage.disabled = false
+    btnSummary.disabled = platformsWithCapability('supportsText').length < 2
+    inputEl.placeholder = originalInputPlaceholder
+    // 若普通提问的发送锁仍处于提交阶段，恢复它自己的锁定状态。
+    if (currentSendLock?.status === 'waiting' && currentSendLock.phase === 'submitting') {
+      setSubmittingLockUi()
+      return
+    }
+  }
+  updateSendButtonState()
+}
+
+// 普通发送锁解锁或语言切换重设占位符时，若总结任务仍在运行，保持总结锁不被覆盖。
+function enforceSummaryTaskLockUi() {
+  if (!summaryTaskRunner.isRunning()) return
+  inputEl.disabled = true
+  btnImage.disabled = true
+  btnSummary.disabled = true
+  inputEl.placeholder = t(userSettings.language, 'summary.lockedPlaceholder')
 }
 
 function beginSendLock(targets: AIPlatform[]) {
@@ -769,6 +810,7 @@ function applyUserSettings(settings: UserSettings) {
     btn.disabled = !canTransfer || !platform || !getPlatformCapabilities(platform).supportsLastResponse
   })
   btnSummary.disabled = platformsWithCapability('supportsText').length < 2
+    || summaryTaskRunner.isRunning()
   renderChips()
 }
 
@@ -1290,6 +1332,10 @@ function enqueueComposerText() {
 }
 
 async function onSend() {
+  if (summaryTaskRunner.isRunning()) {
+    showToast(t(userSettings.language, 'summary.running'), 'warn', 4000)
+    return
+  }
   const queueSnapshot = pendingQuestionQueue.snapshot()
   if (queueSnapshot.status === 'paused' && queueSnapshot.pauseReason) {
     showToast(t(userSettings.language, `queue.paused.${queueSnapshot.pauseReason}`), 'warn', 5000)
@@ -2885,71 +2931,63 @@ async function onGenerateSummary() {
     modeLabel: summaryModeLabelText(mode),
     includedPlatforms,
   })
-  const summary: SessionSummary = {
-    id: `summary-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    target,
-    range: 'manual',
-    mode,
-    prompt,
-    status: 'sent',
-    sourceSessionIds: sessions.map((session) => session.id),
-    timestamp: Date.now(),
-    sentAt: Date.now(),
-  }
+  const sourceSessionIds = sessions.map((session) => session.id)
 
-  btnSummaryGenerate.disabled = true
-  try {
-    const summarySession = createSummarySessionRecord({
+  // 立即关闭总结窗口：委托 summaryTaskRunner 后窗口不再等待发送/收集结果。
+  // 总结任务 module 会自行负责 pending 落盘、发送确认与历史更新，调用者不再介入。
+  closeSummaryDialog()
+
+  const result = await summaryTaskRunner.start(
+    {
       title: summarySessionTitle(sessions, mode),
       prompt,
       target,
-      summary,
-    })
+      mode,
+      sourceSessionIds,
+    },
+    {
+      ...createAnswerCollectionBaseDependencies(),
+      send: async (platform) => {
+        const sendResult = await platformCommunication.writeAndSend(platform, { text: prompt })
+        return { platform, ok: sendResult.ok, error: sendResult.error }
+      },
+      onSendConfirmed: () => {
+        showToast(
+          uiText('summary.sent', { targetLabel: getPlatformMeta(target)?.label ?? target }),
+          'success',
+          1800,
+        )
+      },
+    },
+  )
 
-    for (const session of sessions) {
-      await updateSession({
-        ...session,
-        summaries: [summary, ...(session.summaries ?? [])],
-        updatedAt: Date.now(),
-      })
-    }
-    void runAnswerCollectionTask(
-      {
-        id: `answer-collection-${summarySession.id}`,
-        session: summarySession,
-      },
-      {
-        ...createAnswerCollectionBaseDependencies(),
-        send: async (platform) => {
-          void platformCommunication.writeAndSend(platform, { text: prompt })
-          return { platform, ok: true }
-        },
-        onSendComplete: () => {
-          closeSummaryDialog()
-          showToast(
-            uiText('summary.sent', { targetLabel: getPlatformMeta(target)?.label ?? target }),
-            'success',
-            1800,
-          )
-        },
-      },
-    ).then((result) => {
-      if (result.historyStatus === 'unsaved') {
-        throw new Error('history save failed')
-      }
-    }).catch((e) => {
-      console.error('[AIChatRoom chat] summary collection failed', e)
+  if (result === null) {
+    // 已有总结任务在运行（按钮在运行期间已被禁用，这里做防御性提示）。
+    showToast(t(userSettings.language, 'summary.running'), 'warn', 3000)
+    return
+  }
+
+  switch (result.outcome) {
+    case 'captured':
+      // 成功：输入锁已由 runner 释放，无需额外提示。
+      return
+    case 'send-failed':
       showToast(
-        uiText('summary.failed', { message: e instanceof Error ? e.message : String(e) }),
+        uiText('summary.sendFailed', { message: result.error ?? '' }),
         'err',
         5000,
       )
-    })
-  } catch (e) {
-    console.error('[AIChatRoom chat] summary failed', e)
-    showToast(uiText('summary.failed', { message: e instanceof Error ? e.message : String(e) }), 'err', 5000)
-  } finally {
-    updateSummarySelectedCount()
+      return
+    case 'history-unsaved':
+      showToast(t(userSettings.language, 'summary.historyUnsaved'), 'warn', 5000)
+      return
+    default:
+      // capture-failed：已确认发送成功，但回答收集未确认。
+      showToast(
+        uiText('summary.captureFailed', { message: result.error ?? '' }),
+        'warn',
+        5000,
+      )
   }
 }
 

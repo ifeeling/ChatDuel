@@ -82,6 +82,22 @@ export function createSummarySessionRecord(input: CreateSummarySessionRecordInpu
   }
 }
 
+/**
+ * 把总结的最新状态写回 session.summaries：
+ * 已存在同 id 的条目就原位替换，否则插到最前面。不修改 updatedAt，由调用方决定。
+ */
+export function applySummaryToSession(session: Session, summary: SessionSummary): Session {
+  const summaries = session.summaries ?? []
+  const index = summaries.findIndex((item) => item.id === summary.id)
+  const next = index >= 0
+    ? summaries.map((item, i) => (i === index ? summary : item))
+    : [summary, ...summaries]
+  return {
+    ...session,
+    summaries: next,
+  }
+}
+
 export function applySendResults(session: Session, results: SendResult[], now = Date.now()): Session {
   const responses = { ...session.responses }
   for (const result of results) {
