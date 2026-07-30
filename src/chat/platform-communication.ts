@@ -348,6 +348,29 @@ export function createPlatformCommunication(
     })
   }
 
+  async function requestReadOnlyOfficialTabCommand<T>(
+    platform: AIPlatform,
+    command: 'get-state' | 'get-last-response',
+    timeoutMs: number,
+    timeoutOperation: string,
+  ): Promise<{ response: T | null; timedOut: boolean }> {
+    const firstResult = await sendOfficialTabCommandWithTimeout<T>(
+      platform,
+      command,
+      timeoutMs,
+      {},
+      timeoutOperation,
+    )
+    if (firstResult.response || !firstResult.timedOut) return firstResult
+    return sendOfficialTabCommandWithTimeout<T>(
+      platform,
+      command,
+      timeoutMs,
+      {},
+      timeoutOperation,
+    )
+  }
+
   async function prepare(platform: AIPlatform): Promise<boolean> {
     if (!dependencies.supportsEmbed(platform)) return false
     if (await waitUntilReady(platform)) return true
@@ -443,11 +466,10 @@ export function createPlatformCommunication(
   ): Promise<ResponseReadResult> {
     if (chooseRoute(platform, dependencies) === 'official-tab') {
       if (dependencies.usesCommandBridge?.(platform)) {
-        const { response: result, timedOut } = await sendOfficialTabCommandWithTimeout<CommandBridgeResult>(
+        const { response: result, timedOut } = await requestReadOnlyOfficialTabCommand<CommandBridgeResult>(
           platform,
           'get-last-response',
           timeoutMs,
-          {},
           'request-last-response',
         )
         if (!result) {
@@ -532,11 +554,10 @@ export function createPlatformCommunication(
   ): Promise<ConversationStateResult> {
     if (chooseRoute(platform, dependencies) === 'official-tab') {
       if (dependencies.usesCommandBridge?.(platform)) {
-        const { response: result, timedOut } = await sendOfficialTabCommandWithTimeout<CommandBridgeResult>(
+        const { response: result, timedOut } = await requestReadOnlyOfficialTabCommand<CommandBridgeResult>(
           platform,
           'get-state',
           timeoutMs,
-          {},
           'request-conversation-state',
         )
         if (!result) {
