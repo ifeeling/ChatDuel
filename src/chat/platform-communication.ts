@@ -648,39 +648,21 @@ export function createPlatformCommunication(
   }
 
   async function readConversationUrl(platform: AIPlatform, timeoutMs = 1500): Promise<string> {
-    if (dependencies.usesCommandBridge?.(platform)) {
-      if (chooseRoute(platform, dependencies) === 'official-tab') {
-        const { response: result } = await sendOfficialTabCommandWithTimeout<CommandBridgeResult>(
-          platform,
-          'get-conversation-url',
-          timeoutMs,
-        )
-        return result?.ok && typeof result.data === 'string' ? result.data : ''
-      }
-      const result = await waitForCommandBridgeReply(
+    if (!dependencies.usesCommandBridge?.(platform)) return ''
+    if (chooseRoute(platform, dependencies) === 'official-tab') {
+      const { response: result } = await sendOfficialTabCommandWithTimeout<CommandBridgeResult>(
         platform,
         'get-conversation-url',
         timeoutMs,
       )
       return result?.ok && typeof result.data === 'string' ? result.data : ''
     }
-    const isDeepSeek = platform === 'deepseek'
-    return waitForReply(
+    const result = await waitForCommandBridgeReply(
       platform,
-      isDeepSeek ? 'get-conversation-id' : 'get-location',
+      'get-conversation-url',
       timeoutMs,
-      (event, data) => (
-        event.source === dependencies.getFrame(platform).contentWindow
-        && data.source === 'aichatroom-content'
-        && data.type === (isDeepSeek ? 'conversation-id' : 'location')
-        && data.platform === platform
-      ),
-      (data) => {
-        const value = isDeepSeek ? data.url : data.href
-        return typeof value === 'string' ? value : ''
-      },
-      '',
     )
+    return result?.ok && typeof result.data === 'string' ? result.data : ''
   }
 
   return {

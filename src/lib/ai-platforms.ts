@@ -76,7 +76,7 @@ export const AI_PLATFORMS: Record<AIPlatform, AIPlatformMeta> = {
     url: 'https://www.doubao.com/chat/',
     capabilities: {
       supportsEmbed: true,
-      usesCommandBridge: false,
+      usesCommandBridge: true,
       supportsText: true,
       supportsImageUpload: true,
       supportsFileUpload: false,
@@ -90,7 +90,7 @@ export const AI_PLATFORMS: Record<AIPlatform, AIPlatformMeta> = {
     url: 'https://chat.deepseek.com/',
     capabilities: {
       supportsEmbed: true,
-      usesCommandBridge: false,
+      usesCommandBridge: true,
       supportsText: true,
       supportsImageUpload: true,
       supportsFileUpload: false,
