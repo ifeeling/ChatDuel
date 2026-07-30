@@ -23,6 +23,13 @@ export interface AnswerCollectionSendResult {
   platform: AIPlatform
   ok: boolean
   error?: string
+  /**
+   * 发送未成功时的原因：
+   * - 'rejected'：平台明确拒绝（可安全重发）；
+   * - 'timeout'：通信超时、未收到回执（结果未知，不得自动重发）。
+   * 缺省按 'rejected' 处理，兼容未区分原因的调用方。
+   */
+  reason?: 'rejected' | 'timeout'
 }
 
 export interface AnswerCollectionRead {

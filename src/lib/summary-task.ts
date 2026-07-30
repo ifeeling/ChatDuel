@@ -1,21 +1,33 @@
-import type { AIPlatform, Session, SessionSummary, SummaryMode } from '../types'
+import type { AIPlatform, Session, SessionSummary, SummaryMode, SummaryAttempt } from '../types'
 import {
   runAnswerCollectionTask,
   type AnswerCollectionHistory,
+  type AnswerCollectionPlatformResult,
   type AnswerCollectionSendResult,
   type AnswerCollectionTaskDependencies,
 } from './answer-collection-task'
 import { applySummaryToSession, createSummarySessionRecord } from './session-record'
 
 /**
- * 总结任务 module（Issue #18 P0.1）
+ * 总结任务 module（Issue #18 P0.1 成功路径 + Issue #19 P0.2 失败恢复）
  *
  * 一个高层入口承担总结的发送、回答收集、历史更新和诊断结算：
  * - 调用者只提供总结内容和平台通信依赖，不再自行宣称发送成功；
  * - 复用普通提问的回答收集任务（runAnswerCollectionTask），共享稳定读取与超时规则；
  * - 发送前先落盘 pending 记录，只有平台明确确认成功后才把状态改为 sent 并写入 sentAt；
- * - 收集成功后更新同一条历史记录（不新增重复条目），并同步源 session 里的总结副本。
+ * - 发送超时记为「结果未知」（unknown），不冒充明确失败，并继续只读探测迟到回答；
+ * - 收集成功后更新同一条历史记录（不新增重复条目），并同步源 session 里的总结副本；
+ * - 失败/未保存时设置 recovery 恢复入口，供输入框上方状态条与历史详情重试入口复用，刷新后仍可还原。
  */
+
+/** 平台发送结果的三分类：成功 / 明确拒绝 / 超时未知。 */
+export type SummarySendReason = 'ok' | 'rejected' | 'timeout'
+
+export function summarizeSendReason(result: AnswerCollectionSendResult): SummarySendReason {
+  if (result.ok) return 'ok'
+  if (result.reason === 'timeout') return 'timeout'
+  return 'rejected'
+}
 
 export interface SummaryTaskInput {
   /** 总结历史记录的标题（显示在历史列表里）。 */
@@ -30,6 +42,10 @@ export interface SummaryTaskInput {
   summaryId?: string
   sessionId?: string
   taskId?: string
+  /** 第几次重试（不含首次），由重试调用方递增传入。 */
+  retryCount?: number
+  /** 之前的尝试诊断记录，重试时整体保留并追加本次结果。 */
+  attempts?: SummaryAttempt[]
 }
 
 export type SummaryTaskDependencies = Pick<
@@ -46,6 +62,7 @@ export type SummaryTaskDependencies = Pick<
   /**
    * 平台返回真实发送结果后触发一次（无论成败）。
    * 页面据此提示「已发送」——在此之前不允许对用户宣称发送成功。
+   * 发送超时时不会触发（结果未知，不能冒充实发成功）。
    */
   onSendConfirmed?(results: AnswerCollectionSendResult[]): void
 }
@@ -53,8 +70,10 @@ export type SummaryTaskDependencies = Pick<
 export type SummaryTaskOutcome =
   /** 发送成功且回答已捕获并保存。 */
   | 'captured'
-  /** 平台明确拒绝或发送超时，没有产生 sentAt。 */
+  /** 平台明确拒绝发送。 */
   | 'send-failed'
+  /** 发送超时、结果未知，未确认是否到达目标 AI。 */
+  | 'send-unknown'
   /** 已确认发送成功，但回答收集超时 / 中断 / 状态不确定。 */
   | 'capture-failed'
   /** 总结历史记录始终无法保存（含回答已观察到但没保存成功）。 */
@@ -72,6 +91,153 @@ function makeSummaryId(): string {
   return `summary-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
+/**
+ * 由已保存的总结记录构造一次重试所需的输入：
+ * 复用原总结 id / 记录 id / 提示词 / 目标平台，重试计数 +1，并保留历史尝试诊断。
+ */
+export function buildSummaryRetryInput(
+  session: Session,
+  summary: SessionSummary,
+): SummaryTaskInput {
+  return {
+    title: session.prompt,
+    prompt: summary.prompt,
+    target: summary.target,
+    mode: summary.mode,
+    sourceSessionIds: summary.sourceSessionIds,
+    summaryId: summary.id,
+    sessionId: session.id,
+    taskId: `summary-task-${session.id}`,
+    retryCount: (summary.retryCount ?? 0) + 1,
+    attempts: summary.attempts ?? [],
+  }
+}
+
+/** 根据总结状态与平台结果计算需要用户介入的恢复入口（无则任务已正常结束）。 */
+function recoveryFor(
+  summary: SessionSummary,
+  platformResult: AnswerCollectionPlatformResult | undefined,
+  historyStatus: 'saved' | 'unsaved',
+): SessionSummary['recovery'] {
+  if (summary.status === 'unknown') {
+    // 结果未知：可重发，但必须先二次确认重复发送风险。
+    return { action: 'resend', needsConfirm: true, reason: 'send-unknown' }
+  }
+  if (summary.status === 'failed' && platformResult?.status === 'send-failed') {
+    // 平台明确拒绝：可安全重发，无需确认。
+    return { action: 'resend', needsConfirm: false, reason: 'send-failed' }
+  }
+  if (historyStatus === 'unsaved' && (summary.status === 'sent' || summary.status === 'captured')) {
+    // 已发送/已收集但历史保存失败：只重新保存，不得重发。
+    return { action: 'resave', needsConfirm: false, reason: 'history-unsaved' }
+  }
+  return undefined
+}
+
+/** 由总结最终状态推导对外 outcome。 */
+function decideOutcome(
+  summary: SessionSummary,
+  platformResult: AnswerCollectionPlatformResult | undefined,
+  historyStatus: 'saved' | 'unsaved',
+): SummaryTaskOutcome {
+  if (summary.status === 'unknown') return 'send-unknown'
+  if (historyStatus === 'unsaved' && (summary.status === 'sent' || summary.status === 'captured')) {
+    return 'history-unsaved'
+  }
+  if (summary.status === 'failed') {
+    return platformResult?.status === 'send-failed' ? 'send-failed' : 'capture-failed'
+  }
+  if (summary.status === 'captured') return 'captured'
+  return 'capture-failed'
+}
+
+export interface SummaryResaveResult {
+  ok: boolean
+  summary: SessionSummary
+  session: Session
+  error?: string
+}
+
+/**
+ * 只重新保存总结历史记录，绝不触发平台发送（AC9）：
+ * 用于「平台已确认发送 / 回答已收集，但历史保存失败」的恢复。
+ * 成功时清除 recovery 并追加成功尝试诊断；失败时保留可恢复状态。
+ * 注意：首次 pending 保存失败（status 为 history-unsaved）不走本函数，
+ * 应重跑完整任务——保存成功后由同一任务继续发送（AC8）。
+ */
+export async function resaveSummaryHistory(
+  session: Session,
+  summary: SessionSummary,
+  dependencies: Pick<SummaryTaskDependencies, 'now' | 'history'>,
+): Promise<SummaryResaveResult> {
+  const at = dependencies.now()
+  const retryCount = (summary.retryCount ?? 0) + 1
+  const savedSummary: SessionSummary = {
+    ...summary,
+    retryCount,
+    recovery: undefined,
+    attempts: [
+      ...(summary.attempts ?? []),
+      {
+        index: retryCount,
+        at,
+        result: summary.status === 'captured' ? ('captured' as const) : ('sent' as const),
+      },
+    ],
+  }
+  const record: Session = {
+    ...applySummaryToSession(session, savedSummary),
+    updatedAt: at,
+  }
+  try {
+    const existing = await dependencies.history.get(record.id).catch(() => undefined)
+    if (existing) {
+      await dependencies.history.update(record)
+    } else {
+      await dependencies.history.add(record)
+    }
+    return { ok: true, summary: savedSummary, session: record }
+  } catch (e) {
+    const error = e instanceof Error ? e.message : 'history save failed'
+    // 保存仍失败：保留原 recovery（可再次重试），仅在内存里追加失败诊断。
+    const failedSummary: SessionSummary = {
+      ...summary,
+      retryCount,
+      attempts: [
+        ...(summary.attempts ?? []),
+        { index: retryCount, at, result: 'history-unsaved' as const, error },
+      ],
+    }
+    return {
+      ok: false,
+      summary: failedSummary,
+      session: applySummaryToSession(session, failedSummary),
+      error,
+    }
+  }
+}
+
+/** 发送前保存 pending 记录（带一次重试）；保存失败返回 false，调用方不得继续发送。 */
+async function savePendingWithRetry(
+  session: Session,
+  dependencies: SummaryTaskDependencies,
+): Promise<boolean> {
+  try {
+    await dependencies.history.add(session)
+    return true
+  } catch {
+    await dependencies.wait(300)
+    const existing = await dependencies.history.get(session.id).catch(() => undefined)
+    if (existing) return true
+    try {
+      await dependencies.history.add(session)
+      return true
+    } catch {
+      return false
+    }
+  }
+}
+
 export async function runSummaryTask(
   input: SummaryTaskInput,
   dependencies: SummaryTaskDependencies,
@@ -79,8 +245,9 @@ export async function runSummaryTask(
   const startedAt = dependencies.now()
   // 总结状态由本 module 独占维护，初始必须是 pending：
   // 调用者拿不到中途修改状态的入口，因此无法提前宣称「已发送」。
+  const summaryId = input.summaryId ?? makeSummaryId()
   let summary: SessionSummary = {
-    id: input.summaryId ?? makeSummaryId(),
+    id: summaryId,
     target: input.target,
     range: 'manual',
     mode: input.mode,
@@ -88,9 +255,13 @@ export async function runSummaryTask(
     status: 'pending',
     sourceSessionIds: [...input.sourceSessionIds],
     timestamp: startedAt,
+    retryCount: input.retryCount ?? 0,
+    attempts: input.attempts ?? [],
   }
+  // 未显式提供 sessionId 时，让权威总结记录(id)与总结 id 一致，
+  // 这样恢复时能用 summaryId 直接定位到该记录，避免误改源 session。
   const summarySession = createSummarySessionRecord({
-    id: input.sessionId,
+    id: input.sessionId ?? summaryId,
     title: input.title,
     prompt: input.prompt,
     target: input.target,
@@ -100,15 +271,17 @@ export async function runSummaryTask(
   const taskId = input.taskId ?? `summary-task-${summarySession.id}`
 
   // 源 session 同步是尽力而为的镜像：失败不阻断总结任务本身，
-  // 总结记录的权威状态始终在 summarySession 里。
+  // 总结记录的权威状态始终在 summarySession 里。镜像只同步状态/结果，
+  // 不携带 recovery（恢复入口只属于权威总结记录，避免重复恢复入口）。
   const syncSourceSessions = async (): Promise<void> => {
+    const mirroredSummary: SessionSummary = { ...summary, recovery: undefined }
     for (const sourceId of input.sourceSessionIds) {
       if (sourceId === summarySession.id) continue
       try {
         const source = await dependencies.history.get(sourceId)
         if (!source) continue
         await dependencies.history.update({
-          ...applySummaryToSession(source, summary),
+          ...applySummaryToSession(source, mirroredSummary),
           updatedAt: dependencies.now(),
         })
       } catch {
@@ -119,16 +292,53 @@ export async function runSummaryTask(
 
   // 历史装饰器：共享回答收集任务的每一次落盘都注入当前总结状态，
   // 这样「pending → sent → captured/failed」永远和发送/收集事实同步。
+  // 这里把 add 处理成 upsert：重试时记录已存在则原地更新，避免产生重复条目。
   const decorate = (session: Session): Session =>
     session.id === summarySession.id ? applySummaryToSession(session, summary) : session
   const history: AnswerCollectionHistory = {
-    add: (session) => dependencies.history.add(decorate(session)),
+    add: async (session) => {
+      const existing = await dependencies.history.get(session.id)
+      if (existing) {
+        await dependencies.history.update(session)
+        return
+      }
+      await dependencies.history.add(session)
+    },
     get: (id) => dependencies.history.get(id),
     update: (session) => dependencies.history.update(decorate(session)),
   }
 
-  // 发送前先把 pending 副本写进源 session（总结记录本身由收集任务在发送前落盘）。
+  // 发送前先把 pending 副本写进源 session（总结记录本身由本 module 在发送前落盘）。
   await syncSourceSessions()
+
+  // 发送前先保存 pending 记录；保存失败不得调用平台发送（AC8）。
+  const pendingSaved = await savePendingWithRetry(summarySession, dependencies)
+  if (!pendingSaved) {
+    summary = {
+      ...summary,
+      status: 'history-unsaved',
+      error: 'pending record save failed',
+      recovery: { action: 'resave', needsConfirm: false, reason: 'history-unsaved' },
+    }
+    await syncSourceSessions()
+    const attempts = [
+      ...(summary.attempts ?? []),
+      { index: summary.retryCount ?? 0, at: dependencies.now(), result: 'history-unsaved' as const, error: summary.error },
+    ]
+    summary = { ...summary, attempts }
+    const finalSession = applySummaryToSession(summarySession, summary)
+    return {
+      taskId,
+      session: finalSession,
+      summary,
+      outcome: 'history-unsaved',
+      error: summary.error,
+    }
+  }
+
+  // 发送超时抑制「已发送」提示：超时未确认，不能冒充实发成功。
+  let sendConfirmSuppressed = false
+  let sendConfirmedFired = false
 
   const collectionResult = await runAnswerCollectionTask(
     {
@@ -145,26 +355,49 @@ export async function runSummaryTask(
       createHistoryReporter: dependencies.createHistoryReporter,
       send: async (platform) => {
         const result = await dependencies.send(platform)
-        // 只有平台明确确认成功才标记 sent + sentAt；失败立即记为 failed。
-        summary = result.ok
-          ? { ...summary, status: 'sent', sentAt: dependencies.now() }
-          : { ...summary, status: 'failed', error: result.error || 'send failed' }
+        const reason = summarizeSendReason(result)
+        if (reason === 'ok') {
+          summary = { ...summary, status: 'sent', sentAt: dependencies.now() }
+        } else if (reason === 'timeout') {
+          // 结果未知：先记为 unknown，仍让收集任务进入只读轮询探测迟到回答；
+          // 向收集任务谎报 ok:true 以便它继续轮询，但绝不触发「已发送」提示。
+          summary = { ...summary, status: 'unknown' }
+          sendConfirmSuppressed = true
+          return { platform, ok: true }
+        } else {
+          summary = { ...summary, status: 'failed', error: result.error || 'send failed' }
+        }
         return result
       },
       onSendComplete: (results) => {
+        if (sendConfirmSuppressed) return
         dependencies.onSendConfirmed?.(results)
       },
       onPlatformSettled: (platform, result) => {
         if (platform !== input.target) return
         if (result.status === 'captured' || result.status === 'observed-unsaved') {
+          // 迟到回答确认了发送：升级 unknown → sent（不重发），并继续完成回答收集。
+          const wasUnknown = summary.status === 'unknown'
           summary = {
             ...summary,
             status: 'captured',
+            sentAt: summary.sentAt ?? dependencies.now(),
             result: result.text,
             capturedAt: dependencies.now(),
           }
-        } else if (result.status !== 'send-failed') {
-          // send-failed 已在 send 包装里结算；其余都是收集阶段的失败。
+          if (wasUnknown && !sendConfirmedFired) {
+            sendConfirmedFired = true
+            dependencies.onSendConfirmed?.([{ platform, ok: true }])
+          }
+          return
+        }
+        if (result.status === 'send-failed') {
+          summary = { ...summary, status: 'failed', error: result.error }
+          return
+        }
+        // 其它收集阶段失败：正常路径记为 failed（区别于发送失败由 send 包装结算）；
+        // 超时探测路径保持 unknown，不把不确定性伪装成明确失败。
+        if (summary.status !== 'unknown') {
           summary = { ...summary, status: 'failed', error: result.error }
         }
       },
@@ -175,18 +408,30 @@ export async function runSummaryTask(
   await syncSourceSessions()
 
   const platformResult = collectionResult.platforms[input.target]
+  const recovery = recoveryFor(summary, platformResult, collectionResult.historyStatus)
+  summary = { ...summary, recovery }
+  const outcome = decideOutcome(summary, platformResult, collectionResult.historyStatus)
+
+  const attempts = [
+    ...(summary.attempts ?? []),
+    {
+      index: summary.retryCount ?? 0,
+      at: dependencies.now(),
+      result: outcome,
+      ...(summary.error !== undefined ? { error: summary.error } : {}),
+    },
+  ]
+  summary = { ...summary, attempts }
+
   const finalSession = applySummaryToSession(collectionResult.session, summary)
   const error = platformResult && 'error' in platformResult ? platformResult.error : undefined
 
-  let outcome: SummaryTaskOutcome
-  if (collectionResult.historyStatus === 'unsaved') {
-    outcome = 'history-unsaved'
-  } else if (platformResult?.status === 'captured') {
-    outcome = 'captured'
-  } else if (platformResult?.status === 'send-failed') {
-    outcome = 'send-failed'
-  } else {
-    outcome = 'capture-failed'
+  // 收尾时确保最终状态（含 recovery / attempts）落盘：收集任务在结算前写入的
+  // 是更早的摘要副本，这里用最终副本补一次更新，保证刷新后仍可还原恢复入口。
+  try {
+    await dependencies.history.update(finalSession)
+  } catch {
+    // 尽力保存，失败不阻断任务结算。
   }
 
   return {
@@ -236,8 +481,9 @@ export function createSummaryTaskRunner(
       if (running) return null
       setRunning(true)
       const settle = () => setRunning(false)
-      // P0.1 策略：任务结算（无论成功、失败还是异常）即释放任务位并解锁；
-      // 父 Issue #17 的「结果未知继续占位」将在状态条/重试落地时收紧。
+      // P0.1 策略：任务结算（无论成功、失败还是异常）即释放任务位并解锁。
+      // 发送结果未知时本 module 会在结算前完成只读探测，探测期间任务仍运行、输入锁保持；
+      // 探测结束（仍 unknown）后释放，由输入框状态条提供带二次确认的重发入口（#19）。
       return runSummaryTask(input, dependencies).then(
         (result) => {
           settle()

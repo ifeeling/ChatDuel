@@ -23,7 +23,7 @@
 //   - "历史"按每次用户提交保存问题、实际发送内容、附件和 AI 回复,用于回看、总结、转发。
 //   - "会话"只保存官方网页的具体会话 URL,用于回到旧对话继续聊,不保存 AI 回复正文。
 
-import type { AIPlatform, ConversationEntry, ConversationState, Session, SessionAttachment, SessionResponse, SessionSummary, SummaryMode } from '../types'
+import type { AIPlatform, ConversationEntry, ConversationState, Session, SessionAttachment, SessionResponse, SessionSummary, SummaryMode, SummaryRecovery } from '../types'
 import {
   FileTooLargeError,
   UnsupportedFileTypeError,
@@ -69,7 +69,12 @@ import {
   createSessionRecord,
   normalizeCapturedResponse,
 } from '../lib/session-record'
-import { createSummaryTaskRunner } from '../lib/summary-task'
+import {
+  buildSummaryRetryInput,
+  createSummaryTaskRunner,
+  resaveSummaryHistory,
+  type SummaryTaskResult,
+} from '../lib/summary-task'
 import {
   createSendLock,
   markSendLockSubmitted,
@@ -116,6 +121,7 @@ import {
   createPlatformCommunication,
   iframeWriteResultTimeoutMs,
   routeTimeoutErrorCode,
+  type PlatformSendResult,
 } from './platform-communication'
 import { showExtensionUpdateNotice } from './update-notice-dialog'
 
@@ -232,9 +238,12 @@ let transferSourcePlatform: AIPlatform | null = null
 let transferSourceOptions: TransferSourceOption[] = []
 let currentSendLock: SendLockState | null = null
 // 总结任务唯一任务位：同一时间只允许一个总结任务运行（Issue #18）。
-// 占用/释放时同步锁定或恢复输入区控件。
+// 占用/释放时同步锁定或恢复输入区控件，并同步恢复入口的可用状态（Issue #19）。
 const summaryTaskRunner = createSummaryTaskRunner({
-  onRunningChanged: (running) => applySummaryTaskLockUi(running),
+  onRunningChanged: (running) => {
+    applySummaryTaskLockUi(running)
+    updateSummaryRecoveryControlsDisabled()
+  },
 })
 const pendingQuestionQueue = new PendingQuestionQueue()
 let activeAnswerCollectionAbortController: AbortController | null = null
@@ -243,6 +252,8 @@ let queueRecheckPassed = false
 let wasQueuePaused = false
 // 历史保存失败后暂存未保存的会话，供「重试保存」复用；用户选择「继续(不保存)」后清空。
 let pendingHistoryUnsavedSession: Session | null = null
+// 当前在历史详情面板中展示的会话 id，用于重试后刷新详情里的恢复入口。
+let currentHistorySessionId: string | null = null
 let originalInputPlaceholder = inputEl.placeholder
 
 // 待发送的附件(仅支持 1 个,后续 attach 会替换)
@@ -2322,6 +2333,7 @@ function selectFirstVisibleHistorySession() {
 }
 
 function renderHistoryDetail(session?: Session) {
+  currentHistorySessionId = session?.id ?? null
   historyDetail.innerHTML = ''
   if (!session) {
     const empty = document.createElement('div')
@@ -2368,6 +2380,8 @@ function renderHistoryDetail(session?: Session) {
 
   if (session.summaries.length > 0) {
     appendHistorySection(t(userSettings.language, 'history.summaryInfo'), formatSummaryHistoryInfo(session.summaries[0]))
+    const recovery = session.summaries[0].recovery
+    if (recovery) appendSummaryRecoveryEntry(session, session.summaries[0])
   }
   appendHistorySection(t(userSettings.language, 'history.userQuestion'), session.prompt || t(userSettings.language, 'common.empty'))
   if (session.sentPrompt && session.sentPrompt !== session.prompt) {
@@ -2417,6 +2431,13 @@ async function copyHistoryBlockText(text: string) {
   }
 }
 
+/** 总结状态 → i18n 键（history-unsaved 键名去掉连字符）。 */
+function summaryStatusLabel(status: SessionSummary['status']): string {
+  const key = status === 'history-unsaved' ? 'historyUnsaved' : status
+  return t(userSettings.language, `summary.status.${key}`)
+}
+
+// 正常历史只显示当前状态与重试次数（AC11）；逐次尝试明细保留在诊断里，不在这里展示。
 function formatSummaryHistoryInfo(summary: SessionSummary): string {
   const targetLabel = getPlatformMeta(summary.target)?.label ?? summary.target
   const modeLabel = summaryModeLabelText(summary.mode)
@@ -2426,7 +2447,35 @@ function formatSummaryHistoryInfo(summary: SessionSummary): string {
     uiText('history.summaryMode', { modeLabel }),
     uiText('history.summarySourceCount', { count: sourceCount }),
     uiText('history.summarySentAt', { time: formatTime(summary.sentAt ?? summary.timestamp) }),
+    uiText('history.summaryStatus', { status: summaryStatusLabel(summary.status) }),
+    uiText('history.summaryRetryCount', { count: summary.retryCount ?? 0 }),
   ].join('\n')
+}
+
+function appendSummaryRecoveryEntry(session: Session, summary: SessionSummary) {
+  const recovery = summary.recovery
+  if (!recovery) return
+  const lang = userSettings.language
+  const section = document.createElement('section')
+  section.className = 'history-section summary-recovery-entry'
+  const header = document.createElement('div')
+  header.className = 'history-section-header'
+  const title = document.createElement('h3')
+  title.textContent = t(lang, 'history.summaryRecovery')
+  const body = document.createElement('p')
+  body.className = 'history-block'
+  body.textContent = recoveryTextFor(recovery)
+  const btn = document.createElement('button')
+  btn.type = 'button'
+  btn.id = 'summary-detail-retry'
+  btn.className = 'history-action'
+  btn.textContent = recovery.action === 'resend'
+    ? t(lang, 'summary.recover.resend')
+    : t(lang, 'summary.recover.resave')
+  btn.disabled = summaryTaskRunner.isRunning()
+  btn.addEventListener('click', () => void onSummaryRecoveryAction(summary.id, recovery))
+  section.append(header, body, btn)
+  historyDetail.appendChild(section)
 }
 
 function appendAttachmentSection(attachments: SessionAttachment[]) {
@@ -2947,10 +2996,10 @@ async function onGenerateSummary() {
     },
     {
       ...createAnswerCollectionBaseDependencies(),
-      send: async (platform) => {
-        const sendResult = await platformCommunication.writeAndSend(platform, { text: prompt })
-        return { platform, ok: sendResult.ok, error: sendResult.error }
-      },
+      send: async (platform) =>
+        mapPlatformSendToSummary(
+          await platformCommunication.writeAndSend(platform, { text: prompt }),
+        ),
       onSendConfirmed: () => {
         showToast(
           uiText('summary.sent', { targetLabel: getPlatformMeta(target)?.label ?? target }),
@@ -2967,9 +3016,12 @@ async function onGenerateSummary() {
     return
   }
 
+  // 需要用户介入时，在输入框上方状态条显示恢复入口（重发/重存）。
+  renderSummaryRecoveryFromResult(result)
+
   switch (result.outcome) {
     case 'captured':
-      // 成功：输入锁已由 runner 释放，无需额外提示。
+      // 成功：输入锁已由 runner 释放，状态条已自动消失，无需额外提示。
       return
     case 'send-failed':
       showToast(
@@ -2978,11 +3030,18 @@ async function onGenerateSummary() {
         5000,
       )
       return
+    case 'send-unknown':
+      showToast(
+        uiText('summary.sendUnknown', { message: result.error ?? '' }),
+        'warn',
+        5000,
+      )
+      return
     case 'history-unsaved':
       showToast(t(userSettings.language, 'summary.historyUnsaved'), 'warn', 5000)
       return
     default:
-      // capture-failed：已确认发送成功，但回答收集未确认。
+      // capture-failed：已确认发送成功，但回答收集未确认，无需恢复入口。
       showToast(
         uiText('summary.captureFailed', { message: result.error ?? '' }),
         'warn',
@@ -2993,6 +3052,166 @@ async function onGenerateSummary() {
 
 // ---------- 工具按钮(暂作占位) ----------
 // 转发按钮(panel header 上的 .panel-transfer)由 setupTransferButtons() 单独绑定(动态 target)
+// ---------- 总结任务失败恢复（Issue #19） ----------
+// 把平台发送结果映射为总结任务可区分的原因：明确拒绝 / 超时未知 / 成功。
+function mapPlatformSendToSummary(result: PlatformSendResult) {
+  let reason: 'rejected' | 'timeout' | undefined
+  if (!result.ok) {
+    const code = result.diagnosticErrorCode
+    if (code === 'iframe-result-timeout' || code === 'official-tab-unavailable') {
+      reason = 'timeout'
+    } else {
+      reason = 'rejected'
+    }
+  }
+  return { platform: result.platform, ok: result.ok, error: result.error, ...(reason ? { reason } : {}) }
+}
+
+function recoveryTextFor(recovery: SummaryRecovery): string {
+  const lang = userSettings.language
+  if (recovery.reason === 'send-failed') return t(lang, 'summary.recover.sendFailed')
+  if (recovery.reason === 'send-unknown') return t(lang, 'summary.recover.sendUnknown')
+  return t(lang, 'summary.recover.historyUnsaved')
+}
+
+function renderSummaryRecoveryBar(summaryId: string, recovery: SummaryRecovery) {
+  const lang = userSettings.language
+  const bar = document.querySelector<HTMLElement>('#summary-recovery-bar')
+  const text = document.querySelector<HTMLElement>('#summary-recovery-text')
+  const action = document.querySelector<HTMLButtonElement>('#summary-recovery-action')
+  if (!bar || !text || !action) return
+  text.textContent = recoveryTextFor(recovery)
+  action.textContent = recovery.action === 'resend'
+    ? t(lang, 'summary.recover.resend')
+    : t(lang, 'summary.recover.resave')
+  action.dataset.recoveryAction = recovery.action
+  action.disabled = summaryTaskRunner.isRunning()
+  action.onclick = () => void onSummaryRecoveryAction(summaryId, recovery)
+  bar.hidden = false
+}
+
+function hideSummaryRecoveryBar() {
+  const bar = document.querySelector<HTMLElement>('#summary-recovery-bar')
+  if (bar) bar.hidden = true
+}
+
+// 任务结束时根据结果决定是否显示状态条：有恢复入口则显示，否则消失。
+function renderSummaryRecoveryFromResult(result: SummaryTaskResult) {
+  if (!result.summary.recovery) {
+    hideSummaryRecoveryBar()
+    return
+  }
+  renderSummaryRecoveryBar(result.summary.id, result.summary.recovery)
+}
+
+/** 任务运行时禁用所有恢复入口，保证任意时刻最多只有一个总结任务（AC4）。 */
+function updateSummaryRecoveryControlsDisabled() {
+  const running = summaryTaskRunner.isRunning()
+  const action = document.querySelector<HTMLButtonElement>('#summary-recovery-action')
+  if (action) action.disabled = running
+  const detailBtn = document.querySelector<HTMLButtonElement>('#summary-detail-retry')
+  if (detailBtn) detailBtn.disabled = running
+}
+
+async function onSummaryRecoveryAction(summaryId: string, recovery: SummaryRecovery) {
+  if (summaryTaskRunner.isRunning()) {
+    showToast(t(userSettings.language, 'summary.running'), 'warn', 3000)
+    return
+  }
+  // 结果未知的重发必须先二次确认重复发送风险（AC7）。
+  if (recovery.needsConfirm) {
+    if (!confirm(t(userSettings.language, 'summary.recover.confirmUnknown'))) return
+  }
+  await retrySummaryTask(summaryId)
+}
+
+// 用原提示词与原目标平台重试同一总结任务，更新同一条历史记录（AC3）。
+async function retrySummaryTask(summaryId: string) {
+  let targetSession: Session | undefined
+  let targetSummary: SessionSummary | undefined
+  for (const session of await loadSessions()) {
+    const found = session.summaries.find((sum) => sum.id === summaryId)
+    if (!found) continue
+    // 优先选中权威总结记录（session id 与 summary id 一致），避免误改源 session 镜像。
+    if (session.id === summaryId) {
+      targetSession = session
+      targetSummary = found
+      break
+    }
+    if (!targetSession) {
+      targetSession = session
+      targetSummary = found
+    }
+  }
+  if (!targetSession || !targetSummary) {
+    hideSummaryRecoveryBar()
+    return
+  }
+
+  // 平台已确认发送 / 回答已收集后的「重新保存」：只重写历史记录，绝不再次发送（AC9）。
+  // 首次 pending 保存失败（status 为 history-unsaved）不走此分支：
+  // 它需要重跑完整任务，保存成功后由同一任务继续发送（AC8）。
+  if (
+    targetSummary.recovery?.action === 'resave' &&
+    (targetSummary.status === 'sent' || targetSummary.status === 'captured')
+  ) {
+    const resave = await resaveSummaryHistory(targetSession, targetSummary, {
+      now: () => Date.now(),
+      history: { add: addSession, get: getSession, update: updateSession },
+    })
+    if (resave.ok) {
+      hideSummaryRecoveryBar()
+    } else {
+      showToast(t(userSettings.language, 'summary.historyUnsaved'), 'warn', 5000)
+      renderSummaryRecoveryBar(targetSummary.id, targetSummary.recovery)
+    }
+    const savedSession = await getSession(targetSession.id)
+    if (savedSession && currentHistorySessionId === savedSession.id) {
+      renderHistoryDetail(savedSession)
+    }
+    return
+  }
+
+  const input = buildSummaryRetryInput(targetSession, targetSummary)
+  const target = input.target
+  const result = await summaryTaskRunner.start(input, {
+    ...createAnswerCollectionBaseDependencies(),
+    send: async (platform) =>
+      mapPlatformSendToSummary(
+        await platformCommunication.writeAndSend(platform, { text: input.prompt }),
+      ),
+    onSendConfirmed: () => {
+      showToast(
+        uiText('summary.sent', { targetLabel: getPlatformMeta(target)?.label ?? target }),
+        'success',
+        1800,
+      )
+    },
+  })
+
+  if (result === null) {
+    // 已有总结任务在运行（例如另一个总结任务正在进行）。
+    showToast(t(userSettings.language, 'summary.running'), 'warn', 3000)
+    return
+  }
+
+  // 重试可能仍需要继续恢复，也可能已解决；按结果刷新状态条与历史详情。
+  renderSummaryRecoveryFromResult(result)
+  if (result.summary.recovery) {
+    showToast(
+      result.outcome === 'history-unsaved'
+        ? t(userSettings.language, 'summary.resaveStarted')
+        : t(userSettings.language, 'summary.retryStarted'),
+      'info',
+      1800,
+    )
+  }
+  const updated = await getSession(targetSession.id)
+  if (updated && currentHistorySessionId === updated.id) {
+    renderHistoryDetail(updated)
+  }
+}
+
 async function onSummary() {
   if (activePlatforms().length === 0) {
     showToast(t(userSettings.language, 'summary.noTarget'), 'warn')
@@ -3461,5 +3680,6 @@ window.addEventListener('DOMContentLoaded', () => {
       storage: chrome.storage.local,
     }).catch((e) => console.warn('[ChatDuel] failed to show extension update notice', e))
     await bootstrap()
+    // 状态条不在刷新后自动恢复（AC13）：已落盘的失败记录仍可通过历史详情的重试入口恢复。
   })()
 })
