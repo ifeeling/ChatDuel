@@ -28,6 +28,7 @@ export interface AIPlatformMeta {
 
 export interface AIPlatformCapabilities {
   readonly supportsEmbed: boolean
+  readonly usesCommandBridge: boolean
   readonly supportsText: boolean
   readonly supportsImageUpload: boolean
   readonly supportsFileUpload: boolean
@@ -47,6 +48,7 @@ export const AI_PLATFORMS: Record<AIPlatform, AIPlatformMeta> = {
     url: 'https://chatgpt.com/',
     capabilities: {
       supportsEmbed: true,
+      usesCommandBridge: true,
       supportsText: true,
       supportsImageUpload: true,
       supportsFileUpload: false,
@@ -60,6 +62,7 @@ export const AI_PLATFORMS: Record<AIPlatform, AIPlatformMeta> = {
     url: 'https://gemini.google.com/',
     capabilities: {
       supportsEmbed: true,
+      usesCommandBridge: true,
       supportsText: true,
       supportsImageUpload: true,
       supportsFileUpload: true,
@@ -73,6 +76,7 @@ export const AI_PLATFORMS: Record<AIPlatform, AIPlatformMeta> = {
     url: 'https://www.doubao.com/chat/',
     capabilities: {
       supportsEmbed: true,
+      usesCommandBridge: false,
       supportsText: true,
       supportsImageUpload: true,
       supportsFileUpload: false,
@@ -86,6 +90,7 @@ export const AI_PLATFORMS: Record<AIPlatform, AIPlatformMeta> = {
     url: 'https://chat.deepseek.com/',
     capabilities: {
       supportsEmbed: true,
+      usesCommandBridge: false,
       supportsText: true,
       supportsImageUpload: true,
       supportsFileUpload: false,
@@ -99,6 +104,7 @@ export const AI_PLATFORMS: Record<AIPlatform, AIPlatformMeta> = {
     url: 'https://claude.ai/',
     capabilities: {
       supportsEmbed: true,
+      usesCommandBridge: true,
       supportsText: true,
       supportsImageUpload: true,
       supportsFileUpload: false,

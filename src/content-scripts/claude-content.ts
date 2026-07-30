@@ -1,7 +1,5 @@
 import { CLAUDE_SELECTOR_VERSION, createClaudeAdapter } from '../adapters/claude/adapter'
-import type { SwToContent, ContentToSw } from '../shared/messages'
-import type { AIPlatform } from '../types'
-import { createAdapterDiagnostics } from '../lib/diagnostic-client'
+import { installContentScriptCommandBridge } from './content-script-command-bridge'
 import { loadSelectorConfig } from './selector-overrides'
 import selectorsJson from '../adapters/claude/selectors.json'
 
@@ -379,7 +377,7 @@ function dumpSelectorDiagnostics(): void {
 
 // ── 主入口 ───────────────────────────────────────────────────────────
 
-async function boot() {
+async function boot(): Promise<void> {
   // ═══ 阶段 A：修复 lastActiveOrg cookie（最高优先级）═══
   // 这是 "Unsupported model" 的根因——iframe 分区缺少此 cookie。
   // 如果触发了 reload，本次 boot 在这里终止，等 reload 后重新进入。
@@ -408,126 +406,11 @@ async function boot() {
   // 延迟 ~3s 等 Claude 页面渲染完，再诊断 selectors.json 命中情况
   setTimeout(dumpSelectorDiagnostics, 3000)
 
-  adapter.onStreamEvent((event) => {
-    const msg: ContentToSw = { type: 'stream-event', event }
-    chrome.runtime.sendMessage(msg).catch(() => {/* SW may not be ready */})
-  })
-
-  if (window.parent !== window) {
-    try {
-      window.parent.postMessage(
-        { source: 'aichatroom-content', event: 'ready', platform: 'claude' },
-        { targetOrigin: '*' },
-      )
-    } catch {
-      /* ignore */
-    }
-  }
-
-  window.addEventListener('message', (e: MessageEvent) => {
-    const data = e.data as
-      | { source?: string; action?: string; text?: string; imageDataUrl?: string; imageMime?: string; imageName?: string; diagnostics?: unknown }
-      | undefined
-    if (!data || data.source !== 'aichatroom-parent') return
-    if (data.action !== 'write-and-send') {
-      if (data.action === 'get-state') {
-        adapter.getConversationState().then((state) => {
-          e.source?.postMessage(
-            { source: 'aichatroom-content', type: 'state', platform: 'claude', state },
-            { targetOrigin: '*' },
-          )
-        })
-        return
-      }
-      if (data.action === 'get-last-response') {
-        adapter.getLastResponse().then((text) => {
-          e.source?.postMessage(
-            { source: 'aichatroom-content', type: 'last-response', platform: 'claude', text },
-            { targetOrigin: '*' },
-          )
-        })
-        return
-      }
-      if (data.action === 'get-location') {
-        e.source?.postMessage(
-          { source: 'aichatroom-content', type: 'location', platform: 'claude', href: location.href },
-          { targetOrigin: '*' },
-        )
-        return
-      }
-      return
-    }
-
-    const text = data.text ?? ''
-    const file = data.imageDataUrl
-      ? dataUrlToFile(data.imageDataUrl, data.imageMime || 'image/png', data.imageName || 'image.png')
-      : undefined
-
-    void Promise.resolve()
-      .then(() => adapter.sendMessage(text, file, createAdapterDiagnostics('claude', data.diagnostics, selectorConfig.version)))
-      .then(() => {
-        e.source?.postMessage(
-          { source: 'aichatroom-content', event: 'result', action: 'write-and-send', platform: 'claude', ok: true },
-          { targetOrigin: '*' },
-        )
-      })
-      .catch((err: unknown) => {
-        e.source?.postMessage(
-          {
-            source: 'aichatroom-content',
-            event: 'result',
-            action: 'write-and-send',
-            platform: 'claude',
-            ok: false,
-            error: String(err),
-          },
-          { targetOrigin: '*' },
-        )
-      })
-  })
-
-  chrome.runtime.onMessage.addListener((msg: SwToContent, _sender, sendResponse) => {
-    if (msg.type === 'write-and-send') {
-      const file = msg.imageDataUrl
-        ? dataUrlToFile(msg.imageDataUrl, msg.imageMime || 'image/png', msg.imageName || 'image.png')
-        : undefined
-      adapter
-        .sendMessage(msg.text, file, createAdapterDiagnostics('claude', msg.diagnostics, selectorConfig.version))
-        .then(() => sendResponse({ ok: true }))
-        .catch((e: unknown) => sendResponse({ ok: false, error: String(e) }))
-      return true
-    }
-    if (msg.type === 'get-state') {
-      adapter
-        .getConversationState()
-        .then((state) => {
-          const reply: ContentToSw = { type: 'state', platform: 'claude' as AIPlatform, state }
-          sendResponse(reply)
-        })
-      return true
-    }
-    if (msg.type === 'get-last-response') {
-      adapter
-        .getLastResponse()
-        .then((text) => {
-          const reply: ContentToSw = { type: 'last-response', platform: 'claude' as AIPlatform, text }
-          sendResponse(reply)
-        })
-      return true
-    }
-    return false
+  installContentScriptCommandBridge({
+    platform: 'claude',
+    adapter,
+    selectorConfigVersion: selectorConfig.version,
   })
 }
 
 void boot()
-
-// 把父页传过来的 dataURL 还原成 File(给 adapter.sendMessage 第二参数)
-function dataUrlToFile(dataUrl: string, mime: string, name: string): File {
-  const commaIdx = dataUrl.indexOf(',')
-  const b64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl
-  const bin = atob(b64)
-  const len = bin.length
-  const bytes = new Uint8Array(len)
-  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i)
-  return new File([bytes], name, { type: mime })
-}

@@ -668,7 +668,7 @@ const platformCommunication = createPlatformCommunication({
   getFrame: panelIframe,
   getPlatformOrigin: platformOrigin,
   supportsEmbed: (platform) => getPlatformCapabilities(platform).supportsEmbed,
-  usesCommandBridge: (platform) => platform === 'chatgpt',
+  usesCommandBridge: (platform) => getPlatformCapabilities(platform).usesCommandBridge,
   ensureEmbedRules: ensureEmbedRulesEnabled,
   reload: (platform) => {
     panelIframe(platform).src = platformUrl(platform)
