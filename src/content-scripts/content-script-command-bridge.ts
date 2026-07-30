@@ -73,6 +73,19 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function successResult(
+  platform: AIPlatform,
+  command: string,
+  data: unknown,
+): ContentScriptCommandResult {
+  return {
+    platform,
+    command,
+    ok: true,
+    data,
+  }
+}
+
 function decodeImage(
   request: Readonly<Record<string, unknown>>,
   environment: ContentScriptCommandBridgeEnvironment,
@@ -110,12 +123,7 @@ async function executeCommand(
   try {
     const extensionResult = await options.extensionHandler?.({ command, request })
     if (extensionResult?.handled) {
-      return {
-        platform: options.platform,
-        command,
-        ok: true,
-        data: extensionResult.data,
-      }
+      return successResult(options.platform, command, extensionResult.data)
     }
     if (command === 'write-and-send') {
       await options.adapter.sendMessage(
@@ -127,36 +135,24 @@ async function executeCommand(
           options.selectorConfigVersion,
         ),
       )
-      return {
-        platform: options.platform,
-        command,
-        ok: true,
-        data: undefined,
-      }
+      return successResult(options.platform, command, undefined)
     }
     if (command === 'get-state') {
-      return {
-        platform: options.platform,
+      return successResult(
+        options.platform,
         command,
-        ok: true,
-        data: await options.adapter.getConversationState(),
-      }
+        await options.adapter.getConversationState(),
+      )
     }
     if (command === 'get-last-response') {
-      return {
-        platform: options.platform,
+      return successResult(
+        options.platform,
         command,
-        ok: true,
-        data: await options.adapter.getLastResponse(),
-      }
+        await options.adapter.getLastResponse(),
+      )
     }
     if (command === 'get-conversation-url') {
-      return {
-        platform: options.platform,
-        command,
-        ok: true,
-        data: environment.location.href,
-      }
+      return successResult(options.platform, command, environment.location.href)
     }
     return null
   } catch (error) {
