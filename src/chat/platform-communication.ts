@@ -48,7 +48,6 @@ export interface PlatformCommunicationDependencies {
   getFrame(platform: AIPlatform): PlatformFrame
   getPlatformOrigin(platform: AIPlatform): string
   supportsEmbed(platform: AIPlatform): boolean
-  usesCommandBridge?(platform: AIPlatform): boolean
   ensureEmbedRules(): Promise<void>
   reload(platform: AIPlatform): void
   sendRuntimeMessage(message: unknown): Promise<unknown>
@@ -135,21 +134,13 @@ export function createPlatformCommunication(
       data.platform
       && dependencies.platforms.includes(data.platform)
       && event.source === dependencies.getFrame(data.platform).contentWindow
-      && data.event === (
-        dependencies.usesCommandBridge?.(data.platform)
-          ? 'command-bridge-ready'
-          : 'ready'
-      )
+      && data.event === 'command-bridge-ready'
     ) {
       ready[data.platform] = true
       const waiters = readyWaiters[data.platform]
       readyWaiters[data.platform] = []
       for (const waiter of waiters) waiter(true)
       console.log('[AIChatRoom chat] ready:', data.platform)
-    }
-
-    if (data.event === 'result' && data.action === 'write-and-send') {
-      console.log(`[AIChatRoom chat] write-and-send result for ${data.platform}: ok=${data.ok} error=${data.error ?? ''}`)
     }
   })
 
@@ -293,24 +284,6 @@ export function createPlatformCommunication(
     )
   }
 
-  async function sendOfficialTabCommand<T = unknown>(
-    platform: AIPlatform,
-    command: OfficialTabCommand,
-    payload: Record<string, unknown> = {},
-  ): Promise<T | null> {
-    try {
-      const response = await dependencies.sendRuntimeMessage({
-        type: 'official-tab-command',
-        platform,
-        command,
-        ...payload,
-      })
-      return (response ?? null) as T | null
-    } catch {
-      return null
-    }
-  }
-
   function sendOfficialTabCommandWithTimeout<T>(
     platform: AIPlatform,
     command: OfficialTabCommand,
@@ -387,23 +360,17 @@ export function createPlatformCommunication(
   ): Promise<PlatformSendResult> {
     const route = chooseRoute(platform, dependencies)
     if (route === 'official-tab') {
-      const response = dependencies.usesCommandBridge?.(platform)
-        ? (await sendOfficialTabCommandWithTimeout<{
-            ok?: boolean
-            error?: string
-            diagnosticErrorCode?: DiagnosticErrorCode
-          }>(
-            platform,
-            'write-and-send',
-            iframeWriteResultTimeoutMs(payload),
-            payload,
-            'write-and-send',
-          )).response
-        : await sendOfficialTabCommand<{
-            ok?: boolean
-            error?: string
-            diagnosticErrorCode?: DiagnosticErrorCode
-          }>(platform, 'write-and-send', payload)
+      const { response } = await sendOfficialTabCommandWithTimeout<{
+        ok?: boolean
+        error?: string
+        diagnosticErrorCode?: DiagnosticErrorCode
+      }>(
+        platform,
+        'write-and-send',
+        iframeWriteResultTimeoutMs(payload),
+        payload,
+        'write-and-send',
+      )
       return {
         platform,
         ok: !!response?.ok,
@@ -413,242 +380,122 @@ export function createPlatformCommunication(
       }
     }
 
-    if (dependencies.usesCommandBridge?.(platform)) {
-      const result = await waitForCommandBridgeReply(
-        platform,
-        'write-and-send',
-        iframeWriteResultTimeoutMs(payload),
-        payload,
-      )
-      if (!result) {
-        return {
-          platform,
-          ok: false,
-          diagnosticErrorCode: routeTimeoutErrorCode(route),
-        }
-      }
-      return {
-        platform,
-        ok: result.ok,
-        error: result.ok ? undefined : result.error,
-      }
-    }
-
-    return waitForReply<PlatformSendResult>(
+    const result = await waitForCommandBridgeReply(
       platform,
       'write-and-send',
       iframeWriteResultTimeoutMs(payload),
-      (event, data) => (
-        event.source === dependencies.getFrame(platform).contentWindow
-        && data.source === 'aichatroom-content'
-        && data.event === 'result'
-        && data.action === 'write-and-send'
-        && data.platform === platform
-      ),
-      (data) => ({
-        platform,
-        ok: data.ok === true,
-        error: typeof data.error === 'string' ? data.error : undefined,
-      }),
-      {
+      payload,
+    )
+    if (!result) {
+      return {
         platform,
         ok: false,
         diagnosticErrorCode: routeTimeoutErrorCode(route),
-      },
-      undefined,
-      payload,
-    )
+      }
+    }
+    return {
+      platform,
+      ok: result.ok,
+      error: result.ok ? undefined : result.error,
+    }
   }
 
   async function readLastResponse(
     platform: AIPlatform,
     timeoutMs = 3000,
   ): Promise<ResponseReadResult> {
+    let result: CommandBridgeResult | null
+    let timedOut = false
     if (chooseRoute(platform, dependencies) === 'official-tab') {
-      if (dependencies.usesCommandBridge?.(platform)) {
-        const { response: result, timedOut } = await requestReadOnlyOfficialTabCommand<CommandBridgeResult>(
-          platform,
-          'get-last-response',
-          timeoutMs,
-          'request-last-response',
-        )
-        if (!result) {
-          return {
-            text: '',
-            error: '官方标签页命令桥不可用，请刷新对应 AI 官网页面',
-            requestTimedOut: timedOut || undefined,
-            diagnosticErrorCode: routeTimeoutErrorCode('official-tab'),
-          }
-        }
-        if (!result.ok) {
-          return {
-            text: '',
-            error: result.error,
-            diagnosticErrorCode: result.diagnosticErrorCode,
-          }
-        }
-        return typeof result.data === 'string'
-          ? { text: result.data }
-          : { text: '', error: '命令桥返回了无效的回答结果' }
-      }
-      const response = await sendOfficialTabCommand<{
-        text?: string
-        diagnosticErrorCode?: DiagnosticErrorCode
-      }>(platform, 'get-last-response')
-      return {
-        text: response?.text ?? '',
-        diagnosticErrorCode: response?.diagnosticErrorCode,
-      }
-    }
-
-    if (dependencies.usesCommandBridge?.(platform)) {
-      const result = await requestReadOnlyCommandBridge(
+      const response = await requestReadOnlyOfficialTabCommand<CommandBridgeResult>(
         platform,
         'get-last-response',
         timeoutMs,
         'request-last-response',
       )
-      if (!result) {
-        return {
-          text: '',
-          error: '命令桥通信超时，请刷新对应 AI 官网页面',
-          requestTimedOut: true,
-          diagnosticErrorCode: routeTimeoutErrorCode('iframe'),
-        }
-      }
-      if (!result.ok) {
-        return {
-          text: '',
-          error: result.error,
-          diagnosticErrorCode: result.diagnosticErrorCode,
-        }
-      }
-      if (typeof result.data !== 'string') {
-        return {
-          text: '',
-          error: '命令桥返回了无效的回答结果',
-        }
-      }
-      return { text: result.data }
+      result = response.response
+      timedOut = response.timedOut
+    } else {
+      result = await requestReadOnlyCommandBridge(
+        platform,
+        'get-last-response',
+        timeoutMs,
+        'request-last-response',
+      )
     }
-
-    return waitForReply<ResponseReadResult>(
-      platform,
-      'get-last-response',
-      timeoutMs,
-      (event, data) => (
-        event.source === dependencies.getFrame(platform).contentWindow
-        && data.source === 'aichatroom-content'
-        && data.type === 'last-response'
-        && data.platform === platform
-      ),
-      (data) => ({ text: typeof data.text === 'string' ? data.text : '' }),
-      { text: '' },
-      'request-last-response',
-    )
+    if (!result) {
+      const route = chooseRoute(platform, dependencies)
+      return {
+        text: '',
+        error: route === 'official-tab'
+          ? '官方标签页命令桥不可用，请刷新对应 AI 官网页面'
+          : '命令桥通信超时，请刷新对应 AI 官网页面',
+        requestTimedOut: route === 'official-tab' ? timedOut || undefined : true,
+        diagnosticErrorCode: routeTimeoutErrorCode(route),
+      }
+    }
+    if (!result.ok) {
+      return {
+        text: '',
+        error: result.error,
+        diagnosticErrorCode: result.diagnosticErrorCode,
+      }
+    }
+    return typeof result.data === 'string'
+      ? { text: result.data }
+      : { text: '', error: '命令桥返回了无效的回答结果' }
   }
 
   async function readConversationState(
     platform: AIPlatform,
     timeoutMs = 3000,
   ): Promise<ConversationStateResult> {
+    let result: CommandBridgeResult | null
+    let timedOut = false
     if (chooseRoute(platform, dependencies) === 'official-tab') {
-      if (dependencies.usesCommandBridge?.(platform)) {
-        const { response: result, timedOut } = await requestReadOnlyOfficialTabCommand<CommandBridgeResult>(
-          platform,
-          'get-state',
-          timeoutMs,
-          'request-conversation-state',
-        )
-        if (!result) {
-          return {
-            status: 'error',
-            errorMessage: '官方标签页命令桥不可用，请刷新对应 AI 官网页面',
-            requestTimedOut: timedOut || undefined,
-            diagnosticErrorCode: routeTimeoutErrorCode('official-tab'),
-          }
-        }
-        if (!result.ok) {
-          return {
-            status: 'error',
-            errorMessage: result.error,
-            diagnosticErrorCode: result.diagnosticErrorCode,
-          }
-        }
-        return typeof result.data === 'object' && result.data !== null
-          ? result.data as ConversationState
-          : {
-              status: 'error',
-              errorMessage: '命令桥返回了无效的状态结果',
-            }
-      }
-      const response = await sendOfficialTabCommand<{
-        state?: ConversationState
-        ok?: boolean
-        error?: string
-        diagnosticErrorCode?: DiagnosticErrorCode
-      }>(platform, 'get-state')
-      if (response?.ok === false) {
-        return {
-          status: 'error',
-          errorMessage: response.error ?? '官方标签页不可用',
-          diagnosticErrorCode: response.diagnosticErrorCode,
-        }
-      }
-      return response?.state ?? { status: 'idle', requestTimedOut: true }
-    }
-
-    if (dependencies.usesCommandBridge?.(platform)) {
-      const result = await requestReadOnlyCommandBridge(
+      const response = await requestReadOnlyOfficialTabCommand<CommandBridgeResult>(
         platform,
         'get-state',
         timeoutMs,
         'request-conversation-state',
       )
-      if (!result) {
-        return {
-          status: 'error',
-          errorMessage: '命令桥通信超时，请刷新对应 AI 官网页面',
-          requestTimedOut: true,
-          diagnosticErrorCode: routeTimeoutErrorCode('iframe'),
-        }
+      result = response.response
+      timedOut = response.timedOut
+    } else {
+      result = await requestReadOnlyCommandBridge(
+        platform,
+        'get-state',
+        timeoutMs,
+        'request-conversation-state',
+      )
+    }
+    if (!result) {
+      const route = chooseRoute(platform, dependencies)
+      return {
+        status: 'error',
+        errorMessage: route === 'official-tab'
+          ? '官方标签页命令桥不可用，请刷新对应 AI 官网页面'
+          : '命令桥通信超时，请刷新对应 AI 官网页面',
+        requestTimedOut: route === 'official-tab' ? timedOut || undefined : true,
+        diagnosticErrorCode: routeTimeoutErrorCode(route),
       }
-      if (!result.ok) {
-        return {
-          status: 'error',
-          errorMessage: result.error,
-          diagnosticErrorCode: result.diagnosticErrorCode,
-        }
+    }
+    if (!result.ok) {
+      return {
+        status: 'error',
+        errorMessage: result.error,
+        diagnosticErrorCode: result.diagnosticErrorCode,
       }
-      if (typeof result.data !== 'object' || result.data === null) {
-        return {
+    }
+    return typeof result.data === 'object' && result.data !== null
+      ? result.data as ConversationState
+      : {
           status: 'error',
           errorMessage: '命令桥返回了无效的状态结果',
         }
-      }
-      return result.data as ConversationState
-    }
-
-    return waitForReply<ConversationStateResult>(
-      platform,
-      'get-state',
-      timeoutMs,
-      (event, data) => (
-        event.source === dependencies.getFrame(platform).contentWindow
-        && data.source === 'aichatroom-content'
-        && data.type === 'state'
-        && data.platform === platform
-        && typeof data.state === 'object'
-        && data.state !== null
-      ),
-      (data) => data.state as ConversationState,
-      { status: 'idle', requestTimedOut: true },
-      'request-conversation-state',
-    )
   }
 
   async function readConversationUrl(platform: AIPlatform, timeoutMs = 1500): Promise<string> {
-    if (!dependencies.usesCommandBridge?.(platform)) return ''
     if (chooseRoute(platform, dependencies) === 'official-tab') {
       const { response: result } = await sendOfficialTabCommandWithTimeout<CommandBridgeResult>(
         platform,
