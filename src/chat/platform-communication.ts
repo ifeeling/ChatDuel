@@ -404,9 +404,10 @@ export function createPlatformCommunication(
     platform: AIPlatform,
     timeoutMs = 3000,
   ): Promise<ResponseReadResult> {
+    const route = chooseRoute(platform, dependencies)
     let result: CommandBridgeResult | null
     let timedOut = false
-    if (chooseRoute(platform, dependencies) === 'official-tab') {
+    if (route === 'official-tab') {
       const response = await requestReadOnlyOfficialTabCommand<CommandBridgeResult>(
         platform,
         'get-last-response',
@@ -424,7 +425,6 @@ export function createPlatformCommunication(
       )
     }
     if (!result) {
-      const route = chooseRoute(platform, dependencies)
       return {
         text: '',
         error: route === 'official-tab'
@@ -450,9 +450,10 @@ export function createPlatformCommunication(
     platform: AIPlatform,
     timeoutMs = 3000,
   ): Promise<ConversationStateResult> {
+    const route = chooseRoute(platform, dependencies)
     let result: CommandBridgeResult | null
     let timedOut = false
-    if (chooseRoute(platform, dependencies) === 'official-tab') {
+    if (route === 'official-tab') {
       const response = await requestReadOnlyOfficialTabCommand<CommandBridgeResult>(
         platform,
         'get-state',
@@ -470,7 +471,6 @@ export function createPlatformCommunication(
       )
     }
     if (!result) {
-      const route = chooseRoute(platform, dependencies)
       return {
         status: 'error',
         errorMessage: route === 'official-tab'
