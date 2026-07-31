@@ -2324,14 +2324,6 @@ function renderHistoryList() {
     })
     historyList.appendChild(item)
   }
-  // 防御性保证：无论上述循环因何种原因（浏览器事件异常、ID 比较边界等）
-  // 给多个元素加了 active，这里强制只保留一个。
-  const allItems = historyList.querySelectorAll<HTMLButtonElement>('.history-item')
-  for (const el of allItems) el.classList.remove('active')
-  if (selectedHistoryId) {
-    const target = historyList.querySelector<HTMLButtonElement>(`.history-item[data-session-id="${CSS.escape(selectedHistoryId)}"]`)
-    target?.classList.add('active')
-  }
 }
 
 function selectFirstVisibleHistorySession() {
