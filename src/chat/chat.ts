@@ -3216,6 +3216,11 @@ async function retrySummaryTask(summaryId: string) {
 
   const input = buildSummaryRetryInput(targetSession, targetSummary)
   const target = input.target
+
+  // 重试开始时立即隐藏旧恢复条；等任务结束后按结果决定是否需要重新显示。
+  // 避免旧条在重发执行期间持续误导用户（Issue #20 验收发现）。
+  hideSummaryRecoveryBar()
+
   const result = await summaryTaskRunner.start(input, {
     ...createAnswerCollectionBaseDependencies(),
     send: async (platform) =>
