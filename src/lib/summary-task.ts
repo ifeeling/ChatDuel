@@ -65,6 +65,9 @@ export type SummaryTaskDependencies = Pick<
   | 'history'
   | 'createDiagnosticTracker'
   | 'createHistoryReporter'
+  | 'onResponseStarted'
+  | 'onSendComplete'
+  | 'onPlatformSettled'
 > & {
   /**
    * 平台返回真实发送结果后触发一次（无论成败）。
@@ -98,6 +101,15 @@ export interface SummaryTaskResult {
 
 function makeSummaryId(): string {
   return `summary-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+/** 安全调用页面回调：UI 通知失败不得中断总结/收集任务的推进。 */
+function invokeSafely(callback: (() => void) | undefined): void {
+  try {
+    callback?.()
+  } catch {
+    // 页面回调异常不影响任务本身。
+  }
 }
 
 /**
@@ -470,9 +482,17 @@ export async function runSummaryTask(
       },
       onSendComplete: (results) => {
         if (sendConfirmSuppressed) return
+        // 透传发送结果给页面（用于把面板状态从「发送中」切到「等待回答」）。
+        invokeSafely(() => dependencies.onSendComplete?.(results))
         dependencies.onSendConfirmed?.(results)
       },
+      onResponseStarted: (platform) => {
+        // 透传「AI 开始回答」信号（用于把面板状态切到「回答中」）。
+        invokeSafely(() => dependencies.onResponseStarted?.(platform))
+      },
       onPlatformSettled: (platform, result) => {
+        // 透传「回答落定」信号（用于把面板状态切到「已回复 / 失败」）。
+        invokeSafely(() => dependencies.onPlatformSettled?.(platform, result))
         if (platform !== input.target) return
         if (result.status === 'captured' || result.status === 'observed-unsaved') {
           // 迟到回答确认了发送：升级 unknown → sent（不重发），并继续完成回答收集。

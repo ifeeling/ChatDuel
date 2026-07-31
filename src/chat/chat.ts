@@ -2985,6 +2985,9 @@ async function onGenerateSummary() {
   // 总结任务 module 会自行负责 pending 落盘、发送确认与历史更新，调用者不再介入。
   closeSummaryDialog()
 
+  // 让面板状态跟着总结流程走（Issue #21）：先置「发送中」，后续由任务回调接力。
+  setStatus(target, 'warn', t(userSettings.language, 'send.statusSending'))
+
   const result = await summaryTaskRunner.start(
     {
       title: summarySessionTitle(sessions, mode),
@@ -2999,6 +3002,33 @@ async function onGenerateSummary() {
         mapPlatformSendToSummary(
           await platformCommunication.writeAndSend(platform, { text: prompt }),
         ),
+      // 发送结果回执：面板从「发送中」切到「等待回答 / 失败」（与 #20 普通路径一致）。
+      onSendComplete: (results) => {
+        for (const result of results) {
+          if (result.ok) {
+            setStatus(result.platform, 'warn', t(userSettings.language, 'send.statusWaiting'))
+          } else {
+            setStatus(result.platform, 'err', t(userSettings.language, 'send.statusFailed'))
+          }
+        }
+      },
+      // AI 开始生成：面板切到「回答中」。
+      onResponseStarted: (platform) => {
+        setStatus(platform, 'warn', t(userSettings.language, 'send.statusResponding'))
+      },
+      // 回答落定：成功标「完成」，失败/超时标红。
+      onPlatformSettled: (platform, settled) => {
+        if (settled.status === 'captured') {
+          setStatus(platform, 'ok', t(userSettings.language, 'send.statusDone'))
+        } else if (
+          settled.status === 'capture-timeout'
+          || settled.status === 'capture-interrupted'
+          || settled.status === 'uncertain'
+          || settled.status === 'user-stopped'
+        ) {
+          setStatus(platform, 'err', t(userSettings.language, 'send.statusFailed'))
+        }
+      },
       onSendConfirmed: () => {
         showToast(
           uiText('summary.sent', { targetLabel: getPlatformMeta(target)?.label ?? target }),
