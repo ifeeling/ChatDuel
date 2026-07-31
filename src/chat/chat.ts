@@ -2751,10 +2751,7 @@ function renderSummaryList() {
   }
 
   for (const session of summarySessions) {
-    // 用 div 容器 + 显式点击处理，避免 <label> 包裹 <input> 在部分浏览器中
-    // 直接点 checkbox 触发「原生切换 + label 转发」双次抵消，以及内容高度相似时
-    // label 与控件关联错乱导致一次选中多条的问题。
-    const item = document.createElement('div')
+    const item = document.createElement('label')
     item.className = 'summary-item'
 
     const checkbox = document.createElement('input')
@@ -2775,19 +2772,11 @@ function renderSummaryList() {
 
     content.append(title, meta, targets)
     item.append(checkbox, content)
-
-    const sync = () => {
+    checkbox.addEventListener('change', () => {
       if (checkbox.checked) selectedSummaryIds.add(session.id)
       else selectedSummaryIds.delete(session.id)
       resetSummarySourceSelection()
       updateSummarySelectedCount()
-    }
-    checkbox.addEventListener('change', sync)
-    // 整行可点击切换；点 checkbox 本身时交回原生处理，避免重复触发。
-    item.addEventListener('click', (e) => {
-      if (e.target === checkbox) return
-      checkbox.checked = !checkbox.checked
-      sync()
     })
     summaryList.appendChild(item)
   }
