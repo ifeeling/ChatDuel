@@ -329,16 +329,23 @@ async function savePendingWithRetry(
   session: Session,
   dependencies: SummaryTaskDependencies,
 ): Promise<boolean> {
-  try {
+  // 同一总结被重试时 session.id 会复用，必须 upsert：已存在则原地更新，
+  // 避免产生重复历史条目（issue #22 历史列表点一条多条高亮）。
+  const save = async (): Promise<boolean> => {
+    const existing = await dependencies.history.get(session.id).catch(() => undefined)
+    if (existing) {
+      await dependencies.history.update(session)
+      return true
+    }
     await dependencies.history.add(session)
     return true
+  }
+  try {
+    return await save()
   } catch {
     await dependencies.wait(300)
-    const existing = await dependencies.history.get(session.id).catch(() => undefined)
-    if (existing) return true
     try {
-      await dependencies.history.add(session)
-      return true
+      return await save()
     } catch {
       return false
     }
