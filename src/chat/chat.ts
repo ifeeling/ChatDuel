@@ -2915,10 +2915,10 @@ async function openSummaryDialog() {
   syncSummaryModeOptions()
   summaryModeSelect.value = 'final-answer'
 
+  // 注意：不要在这里默认勾选任何条目。之前曾在打开时自动勾选第一条，
+  // 导致用户再点一条时看起来像“点一条误选多条”，且预选状态容易让人误以为
+  // 勾选框失效。由用户显式勾选，初始应为空。
   summarySessions = (await loadSessions()).sort((a, b) => b.createdAt - a.createdAt)
-  if (summarySessions[0]) {
-    selectedSummaryIds.add(summarySessions[0].id)
-  }
   resetSummarySourceSelection()
   renderSummaryList()
 }
