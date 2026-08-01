@@ -340,12 +340,17 @@ export async function runAnswerCollectionTask(
 
   const progress: Partial<Record<AIPlatform, ResponseCaptureProgress>> = {}
   const startedPlatforms = new Set<AIPlatform>()
+  // 通信中断快速检测（Issue #21 断网场景优化）：连续多轮所有待处理平台都返回
+  // 请求超时，说明命令桥已不可达，无需傻等 60 秒无进展超时，提前结束为中断。
+  let consecutiveTimeoutRounds = 0
+  const CAPTURE_INTERRUPT_TIMEOUT_STREAK = 3
   while (pending.size > 0) {
     if (settleUserStoppedPlatforms()) break
     await dependencies.wait(POLL_INTERVAL_MS)
     if (settleUserStoppedPlatforms()) break
     const captured: Partial<Record<AIPlatform, string>> = {}
     const failures: Partial<Record<AIPlatform, string>> = {}
+    const timedOutPlatforms = new Set<AIPlatform>()
 
     await Promise.all([...pending].map(async (platform) => {
       let probe: AnswerCollectionRead
@@ -364,6 +369,10 @@ export async function runAnswerCollectionTask(
           now: dependencies.now(),
         })
         return
+      }
+      if (probe.requestTimedOut === true) {
+        // 本轮该平台命令桥请求超时：累计到专用集合，循环末尾统一判定是否提前结束。
+        timedOutPlatforms.add(platform)
       }
       const observedAt = dependencies.now()
       const text = probe.text.trim()
@@ -462,6 +471,31 @@ export async function runAnswerCollectionTask(
         })
       }
     }))
+
+    // 通信中断快速检测：本轮所有待处理平台都返回请求超时，累计达到阈值即提前结束。
+    // 只要有一轮出现非超时（恢复正常或读到内容），计数重置，避免误杀偶发抖动。
+    if (timedOutPlatforms.size > 0 && timedOutPlatforms.size === pending.size) {
+      consecutiveTimeoutRounds += 1
+      if (consecutiveTimeoutRounds >= CAPTURE_INTERRUPT_TIMEOUT_STREAK) {
+        for (const platform of [...pending]) {
+          const platformResult: AnswerCollectionPlatformResult = {
+            status: 'capture-interrupted',
+            error: 'response capture interrupted (communication timeout)',
+          }
+          platforms[platform] = platformResult
+          pending.delete(platform)
+          invokeObserverSafely(() => dependencies.onPlatformSettled?.(platform, platformResult))
+          finishDiagnostic(platform, {
+            outcome: 'interrupted',
+            errorCode: 'state-request-timeout',
+            now: dependencies.now(),
+          })
+        }
+        break
+      }
+    } else {
+      consecutiveTimeoutRounds = 0
+    }
 
     const capturedSession = applyCapturedResponses(session, captured, dependencies.now())
     const updated = applyCaptureFailures(capturedSession, failures, dependencies.now())

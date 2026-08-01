@@ -152,6 +152,11 @@ function recoveryFor(
     // 平台明确拒绝：可安全重发，无需确认。
     return { action: 'resend', needsConfirm: false, reason: 'send-failed' }
   }
+  if (summary.status === 'failed' && platformResult?.status === 'capture-interrupted') {
+    // 收集阶段命令桥通信中断（断网）：发送已成功，AI 可能已生成或正在生成，
+    // 提供只读「重新检查」而非重发，避免重复发送（#21 断网恢复）。
+    return { action: 'recheck', needsConfirm: false, reason: 'answer-uncertain' }
+  }
   if (historyStatus === 'unsaved' && (summary.status === 'sent' || summary.status === 'captured')) {
     // 已发送/已收集但历史保存失败：只重新保存，不得重发。
     return { action: 'resave', needsConfirm: false, reason: 'history-unsaved' }
