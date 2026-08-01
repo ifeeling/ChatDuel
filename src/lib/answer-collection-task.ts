@@ -472,31 +472,6 @@ export async function runAnswerCollectionTask(
       }
     }))
 
-    // 通信中断快速检测：本轮所有待处理平台都返回请求超时，累计达到阈值即提前结束。
-    // 只要有一轮出现非超时（恢复正常或读到内容），计数重置，避免误杀偶发抖动。
-    if (timedOutPlatforms.size > 0 && timedOutPlatforms.size === pending.size) {
-      consecutiveTimeoutRounds += 1
-      if (consecutiveTimeoutRounds >= CAPTURE_INTERRUPT_TIMEOUT_STREAK) {
-        for (const platform of [...pending]) {
-          const platformResult: AnswerCollectionPlatformResult = {
-            status: 'capture-interrupted',
-            error: 'response capture interrupted (communication timeout)',
-          }
-          platforms[platform] = platformResult
-          pending.delete(platform)
-          invokeObserverSafely(() => dependencies.onPlatformSettled?.(platform, platformResult))
-          finishDiagnostic(platform, {
-            outcome: 'interrupted',
-            errorCode: 'state-request-timeout',
-            now: dependencies.now(),
-          })
-        }
-        break
-      }
-    } else {
-      consecutiveTimeoutRounds = 0
-    }
-
     const capturedSession = applyCapturedResponses(session, captured, dependencies.now())
     const updated = applyCaptureFailures(capturedSession, failures, dependencies.now())
     if (updated !== session) {
@@ -524,6 +499,33 @@ export async function runAnswerCollectionTask(
           historySaved: captureHistory.saved,
         })
       }
+    }
+
+    // 通信中断快速检测：本轮所有待处理平台都返回请求超时，累计达到阈值即提前结束。
+    // 只要有一轮出现非超时（恢复正常或读到内容），计数重置，避免误杀偶发抖动。
+    // 注意：必须放在上面的捕获落盘之后再判定，否则「本轮有平台刚捕获成功、另一平台
+    // 仍超时」时提前 break，会把已捕获的回答一起丢掉。
+    if (timedOutPlatforms.size > 0 && timedOutPlatforms.size === pending.size) {
+      consecutiveTimeoutRounds += 1
+      if (consecutiveTimeoutRounds >= CAPTURE_INTERRUPT_TIMEOUT_STREAK) {
+        for (const platform of [...pending]) {
+          const platformResult: AnswerCollectionPlatformResult = {
+            status: 'capture-interrupted',
+            error: 'response capture interrupted (communication timeout)',
+          }
+          platforms[platform] = platformResult
+          pending.delete(platform)
+          invokeObserverSafely(() => dependencies.onPlatformSettled?.(platform, platformResult))
+          finishDiagnostic(platform, {
+            outcome: 'interrupted',
+            errorCode: 'state-request-timeout',
+            now: dependencies.now(),
+          })
+        }
+        break
+      }
+    } else {
+      consecutiveTimeoutRounds = 0
     }
   }
 
