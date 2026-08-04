@@ -459,7 +459,7 @@ function syncSummaryModeOptions(language: UserLanguage = userSettings.language) 
   }
 }
 
-const HELP_KEYS = ['send', 'attach', 'forward', 'panels', 'summary', 'records', 'officialChats', 'browserCompatibility']
+const HELP_KEYS = ['send', 'queue', 'attach', 'forward', 'panels', 'summary', 'records', 'officialChats', 'shortcuts', 'settings']
 
 function renderHelpContent(language: UserLanguage) {
   setElementText('[data-settings-panel="help"] .settings-lead', t(language, 'help.lead'))
