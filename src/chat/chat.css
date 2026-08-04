@@ -1247,6 +1247,24 @@ body { overflow: hidden; }
 .settings-update-result.fail {
   color: var(--muted);
 }
+.settings-footer-links {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.settings-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: none;
+}
+.settings-link:hover,
+.settings-link:focus-visible {
+  color: var(--accent);
+}
 
 .settings-note {
   margin-top: 18px;
