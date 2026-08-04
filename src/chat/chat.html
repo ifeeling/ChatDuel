@@ -349,6 +349,29 @@
           <button id="btn-settings-save" class="settings-save" type="button">保存</button>
         </main>
       </div>
+      <footer class="settings-footer">
+        <span id="settings-version" class="settings-version"></span>
+        <button id="btn-check-update" class="settings-check-update" type="button" aria-label="检查更新" title="检查更新">⟳</button>
+        <span id="settings-update-result" class="settings-update-result" aria-live="polite" hidden></span>
+      </footer>
+    </section>
+  </div>
+
+  <div class="version-check-overlay" id="version-check-overlay" hidden>
+    <section class="version-check-dialog" role="dialog" aria-modal="true" aria-labelledby="version-check-title">
+      <header class="version-check-header">
+        <h2 id="version-check-title">发现新版本</h2>
+        <button id="btn-version-check-close" class="version-check-close" type="button" title="关闭" aria-label="关闭">×</button>
+      </header>
+      <p id="version-check-summary" class="version-check-summary"></p>
+      <div id="version-check-changelog" class="version-check-changelog"></div>
+      <div class="version-check-actions">
+        <button id="btn-version-check-github" class="version-check-secondary" type="button">去 GitHub</button>
+        <span class="version-check-store-area">
+          <button id="btn-version-check-store" class="version-check-primary" type="button">去应用市场</button>
+          <span id="version-check-store-hint" class="version-check-store-hint">新版本可能在审核中</span>
+        </span>
+      </div>
     </section>
   </div>
 

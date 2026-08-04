@@ -813,7 +813,8 @@ body { overflow: hidden; }
 }
 
 /* ---------- Extension update notice ---------- */
-.update-notice-overlay {
+.update-notice-overlay,
+.version-check-overlay {
   position: fixed;
   inset: 0;
   z-index: 1400;
@@ -861,6 +862,124 @@ body { overflow: hidden; }
 
 #btn-update-notice-acknowledge:hover:not(:disabled) { background: #3d75e0; }
 #btn-update-notice-acknowledge:disabled { cursor: wait; opacity: 0.7; }
+
+/* ---------- Version check dialog ---------- */
+.version-check-dialog {
+  width: min(600px, calc(100vw - 40px));
+  max-height: min(640px, calc(100vh - 40px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(79, 140, 255, 0.55);
+  border-radius: 10px;
+  background: var(--bg-2);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.65);
+}
+.version-check-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 0;
+}
+.version-check-header h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+.version-check-close {
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+.version-check-close:hover {
+  color: var(--fg);
+  background: var(--bg-3);
+}
+.version-check-summary {
+  margin: 10px 20px 0;
+  color: #9bb6ff;
+  font-size: 13px;
+}
+.version-check-changelog {
+  margin: 14px 20px 0;
+  padding: 14px 16px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.12);
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.version-check-changelog h1,
+.version-check-changelog h2,
+.version-check-changelog h3,
+.version-check-changelog h4,
+.version-check-changelog h5,
+.version-check-changelog h6 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.version-check-changelog p {
+  margin: 0 0 8px;
+}
+.version-check-changelog ul {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+.version-check-changelog li {
+  margin-bottom: 4px;
+}
+.version-check-changelog code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-3);
+  font-size: 12px;
+}
+.version-check-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 20px 18px;
+}
+.version-check-actions button {
+  min-width: 120px;
+  height: 38px;
+  padding: 0 18px;
+  border: none;
+  border-radius: 6px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.version-check-secondary {
+  background: var(--bg-3);
+  color: var(--fg);
+}
+.version-check-secondary:hover { background: rgba(255, 255, 255, 0.08); }
+.version-check-primary {
+  background: var(--accent);
+  color: #fff;
+}
+.version-check-primary:hover { background: #3d75e0; }
+.version-check-store-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.version-check-store-hint {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
 
 /* ---------- Settings ---------- */
 .settings-overlay {
@@ -918,7 +1037,7 @@ body { overflow: hidden; }
 .settings-body {
   display: grid;
   grid-template-columns: 210px 1fr;
-  height: calc(100% - 48px);
+  height: calc(100% - 96px);
   min-height: 0;
 }
 .settings-nav {
@@ -1080,6 +1199,54 @@ body { overflow: hidden; }
   cursor: pointer;
 }
 .settings-save:hover { background: #3d75e0; }
+
+.settings-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 18px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+}
+.settings-version {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.3px;
+}
+#btn-check-update {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg-3);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+#btn-check-update:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+#btn-check-update:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+#btn-check-update.spinning {
+  animation: check-update-spin 0.8s linear infinite;
+}
+@keyframes check-update-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.settings-update-result.ok {
+  color: #3fb27f;
+}
+.settings-update-result.fail {
+  color: var(--muted);
+}
 
 .settings-note {
   margin-top: 18px;

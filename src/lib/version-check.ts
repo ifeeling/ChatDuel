@@ -81,10 +81,18 @@ export function renderReleaseMarkdown(body: string): string {
 
 export async function fetchLatestRelease(
   currentVersion: string,
-  fetchFn: typeof fetch | ((input: string) => Promise<Response>),
+  fetchFn: (input: string, init?: { signal?: AbortSignal }) => Promise<Response>,
+  timeoutMs = 8000,
 ): Promise<VersionCheckResult> {
   try {
-    const response = await fetchFn(RELEASE_URL)
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    let response: Response
+    try {
+      response = await fetchFn(RELEASE_URL, { signal: controller.signal })
+    } finally {
+      clearTimeout(timer)
+    }
     if (!response.ok) return { status: 'error' }
     const release = (await response.json()) as Partial<GitHubRelease>
     if (typeof release.tag_name !== 'string') return { status: 'error' }

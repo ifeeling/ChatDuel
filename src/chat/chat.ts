@@ -125,6 +125,11 @@ import {
   type PlatformSendResult,
 } from './platform-communication'
 import { showExtensionUpdateNotice } from './update-notice-dialog'
+import { fetchLatestRelease, REPO, type VersionCheckResult } from '../lib/version-check'
+
+// ---------- 版本检查 ----------
+const GITHUB_RELEASES_URL = `https://github.com/${REPO}/releases`
+const STORE_URL = 'https://chromewebstore.google.com/detail/chatduel/ggddfpmgeppjejfanaloopfpiiakljjl'
 
 // ---------- DOM 引用 ----------
 const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => document.querySelector<T>(sel)!
@@ -165,6 +170,16 @@ const btnUpdateNoticeAcknowledge = $<HTMLButtonElement>('#btn-update-notice-ackn
 const settingsOverlay = $<HTMLDivElement>('#settings-overlay')
 const btnSettingsClose = $<HTMLButtonElement>('#btn-settings-close')
 const btnSettingsSave = $<HTMLButtonElement>('#btn-settings-save')
+const settingsVersion = $<HTMLSpanElement>('#settings-version')
+const btnCheckUpdate = $<HTMLButtonElement>('#btn-check-update')
+const settingsUpdateResult = $<HTMLSpanElement>('#settings-update-result')
+const versionCheckOverlay = $<HTMLDivElement>('#version-check-overlay')
+const btnVersionCheckClose = $<HTMLButtonElement>('#btn-version-check-close')
+const versionCheckSummary = $<HTMLParagraphElement>('#version-check-summary')
+const versionCheckChangelog = $<HTMLDivElement>('#version-check-changelog')
+const btnVersionCheckGithub = $<HTMLButtonElement>('#btn-version-check-github')
+const btnVersionCheckStore = $<HTMLButtonElement>('#btn-version-check-store')
+const versionCheckStoreHint = $<HTMLSpanElement>('#version-check-store-hint')
 const settingLanguage = $<HTMLSelectElement>('#setting-language')
 const settingPromptKind = $<HTMLSelectElement>('#setting-prompt-kind')
 const settingPromptLabel = $<HTMLSpanElement>('#setting-prompt-label')
@@ -360,6 +375,12 @@ function applyStaticUiLanguage(language: UserLanguage) {
   setElementTitle('#btn-refresh', t(language, 'settings.refreshStatusTitle'))
   setElementText('#settings-note-prefix', t(language, 'settings.notePrefix'))
   setElementText('#settings-note-body', t(language, 'settings.noteBody'))
+  setElementTitle('#btn-check-update', t(language, 'versionCheck.check'))
+  setElementText('#version-check-title', t(language, 'versionCheck.title'))
+  setElementText('#btn-version-check-github', t(language, 'versionCheck.goGitHub'))
+  setElementText('#btn-version-check-store', t(language, 'versionCheck.goStore'))
+  setElementText('#version-check-store-hint', t(language, 'versionCheck.storeReviewHint'))
+  setElementTitle('#btn-version-check-close', t(language, 'common.close'))
   document.querySelectorAll<HTMLElement>('[data-site-owner]').forEach((owner) => {
     const platform = owner.dataset.siteOwner
     if (platform) owner.textContent = t(language, `site.owner.${platform}`)
@@ -1050,6 +1071,48 @@ function selectSettingsTab(tab: string) {
   })
   btnSettingsSave.hidden = tab === 'help'
   if (tab === 'diagnostics') void loadDiagnosticSummary()
+}
+
+let checkingUpdate = false
+
+function showVersionCheckDialog(result: Extract<VersionCheckResult, { status: 'update-available' }>) {
+  versionCheckSummary.textContent = formatUiText(userSettings.language, 'versionCheck.newVersion', { version: result.latestVersion })
+  versionCheckChangelog.innerHTML = result.changelog
+  versionCheckOverlay.hidden = false
+  btnVersionCheckGithub.focus()
+}
+
+function closeVersionCheckDialog() {
+  versionCheckOverlay.hidden = true
+  versionCheckChangelog.innerHTML = ''
+}
+
+async function checkForUpdate() {
+  if (checkingUpdate) return
+  checkingUpdate = true
+  btnCheckUpdate.disabled = true
+  btnCheckUpdate.classList.add('spinning')
+  settingsUpdateResult.hidden = false
+  settingsUpdateResult.className = 'settings-update-result'
+  settingsUpdateResult.textContent = t(userSettings.language, 'versionCheck.checking')
+  try {
+    const result = await fetchLatestRelease(chrome.runtime.getManifest().version, fetch)
+    if (result.status === 'update-available') {
+      showVersionCheckDialog(result)
+      settingsUpdateResult.textContent = ''
+      settingsUpdateResult.hidden = true
+    } else if (result.status === 'up-to-date') {
+      settingsUpdateResult.classList.add('ok')
+      settingsUpdateResult.textContent = t(userSettings.language, 'versionCheck.upToDate')
+    } else {
+      settingsUpdateResult.classList.add('fail')
+      settingsUpdateResult.textContent = t(userSettings.language, 'versionCheck.failed')
+    }
+  } finally {
+    checkingUpdate = false
+    btnCheckUpdate.disabled = false
+    btnCheckUpdate.classList.remove('spinning')
+  }
 }
 
 function toggleInputExpanded() {
@@ -3683,6 +3746,13 @@ function bindEvents() {
   btnExpandInput.addEventListener('click', toggleInputExpanded)
   btnSettingsClose.addEventListener('click', closeSettings)
   btnSettingsSave.addEventListener('click', () => void onSaveSettings())
+  btnCheckUpdate.addEventListener('click', () => void checkForUpdate())
+  btnVersionCheckClose.addEventListener('click', closeVersionCheckDialog)
+  btnVersionCheckGithub.addEventListener('click', () => window.open(GITHUB_RELEASES_URL, '_blank', 'noopener'))
+  btnVersionCheckStore.addEventListener('click', () => window.open(STORE_URL, '_blank', 'noopener'))
+  versionCheckOverlay.addEventListener('click', (e) => {
+    if (e.target === versionCheckOverlay) closeVersionCheckDialog()
+  })
   settingLanguage.addEventListener('change', () => {
     syncCurrentPromptDraft()
     const language = settingLanguage.value as UserLanguage
@@ -3728,6 +3798,7 @@ function bindEvents() {
     if (e.key === 'Escape' && !historyOverlay.hidden) closeHistory()
     if (e.key === 'Escape' && !conversationOverlay.hidden) closeConversationHistory()
     if (e.key === 'Escape' && !settingsOverlay.hidden) closeSettings()
+    if (e.key === 'Escape' && !versionCheckOverlay.hidden) closeVersionCheckDialog()
   })
 
   // 图片按钮 + 移除按钮
@@ -3743,6 +3814,7 @@ window.addEventListener('DOMContentLoaded', () => {
   console.log('[AIChatRoom chat] ready')
   void (async () => {
     await initializeSettings()
+    settingsVersion.textContent = `v${chrome.runtime.getManifest().version}`
     setupSplitter()
     setupOpenButtons()
     setupPanelSwitchButtons()

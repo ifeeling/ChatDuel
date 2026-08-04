@@ -37,7 +37,8 @@
     "https://www.doubao.com/*",
     "https://chat.deepseek.com/*",
     "https://claude.ai/*",
-    "https://chatduel.ifeeling.app/*"
+    "https://chatduel.ifeeling.app/*",
+    "https://api.github.com/*"
   ],
   "content_scripts": [
     {
