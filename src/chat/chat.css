@@ -944,7 +944,7 @@ body { overflow: hidden; }
 }
 .version-check-actions {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: flex-end;
   gap: 12px;
   padding: 16px 20px 18px;
