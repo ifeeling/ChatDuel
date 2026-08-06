@@ -84,11 +84,7 @@ import {
 } from '../lib/send-lock'
 import { buildSessionMarkdownExport, formatBytes, formatCapturedMarkdownText, formatSessionMarkdown } from '../lib/history-format'
 import { buildSummaryPrompt } from '../lib/summary-builder'
-import {
-  runAnswerCollectionTask,
-  type AnswerCollectionRead,
-  type AnswerCollectionTaskDependencies,
-} from '../lib/answer-collection-task'
+import { runAnswerCollectionTask } from '../lib/answer-collection-task'
 import { buildTransferContent, buildTransferSourceOptions, type TransferSourceOption } from '../lib/transfer-source'
 import { bindComposerFocusRestorer } from '../lib/focus-restore'
 import { filterSessionsByTitle } from '../lib/history-search'
@@ -118,6 +114,14 @@ import {
   updatePendingQuestionFromView,
 } from './pending-question-composer'
 import { renderPendingQuestionQueue } from './pending-question-queue-view'
+import {
+  createAnswerCollectionBaseDependencies,
+  mapSendResultsToPanelStatuses,
+  mapSettledResultToPanelStatus,
+  panelStatusForSendResult,
+  responseStartedPanelStatus,
+  type AnswerCollectionBaseDependenciesOptions,
+} from './question-send-coordinator'
 import {
   createPlatformCommunication,
   iframeWriteResultTimeoutMs,
@@ -760,6 +764,12 @@ const platformCommunication = createPlatformCommunication({
   },
 })
 
+// 提问发送 / 总结 / 总结重试共用的回答收集基础装配注入参数（装配本体在问题发送协调器模块）。
+const answerCollectionBaseOptions: AnswerCollectionBaseDependenciesOptions = {
+  communication: platformCommunication,
+  history: { add: addSession, get: getSession, update: updateSession },
+}
+
 function platformStatusItem(p: AIPlatform): HTMLElement | null {
   return document.querySelector<HTMLElement>(`.status-item[data-platform="${p}"]`)
 }
@@ -1327,40 +1337,6 @@ async function refreshAllStatuses() {
   }
 }
 
-async function readAnswerCollectionPlatform(platform: AIPlatform): Promise<AnswerCollectionRead> {
-  const state = await platformCommunication.readConversationState(platform, 1500)
-  const responseRead = state.lastResponse
-    ? { text: state.lastResponse }
-    : await platformCommunication.readLastResponse(platform, 1500)
-  return {
-    text: responseRead.text,
-    status: responseRead.error ? 'error' : state.status,
-    stopButtonDetected: state.stopButtonDetected,
-    completionActionBarDetected: state.completionActionBarDetected,
-    requestTimedOut: state.requestTimedOut || responseRead.requestTimedOut,
-    diagnosticErrorCode: state.diagnosticErrorCode ?? responseRead.diagnosticErrorCode,
-  }
-}
-
-function createAnswerCollectionBaseDependencies(): Pick<
-  AnswerCollectionTaskDependencies,
-  'now' | 'wait' | 'captureBaseline' | 'read' | 'history'
-> {
-  return {
-    now: () => Date.now(),
-    wait: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-    captureBaseline: async (platform) => (
-      await platformCommunication.readLastResponse(platform, 1500)
-    ).text,
-    read: readAnswerCollectionPlatform,
-    history: {
-      add: addSession,
-      get: getSession,
-      update: updateSession,
-    },
-  }
-}
-
 // ---------- 发送 ----------
 function resolveComposerTargets(text: string): AIPlatform[] {
   if (atSelected.size > 0) {
@@ -1543,7 +1519,7 @@ async function dispatchQuestion(input: DispatchQuestionInput) {
       signal: abortController.signal,
     },
     {
-      ...createAnswerCollectionBaseDependencies(),
+      ...createAnswerCollectionBaseDependencies(answerCollectionBaseOptions),
       send: async (platform) => {
         const shouldUploadFile = deliveryPlan.autoUploadTargets.includes(platform)
         const diagnosticContext = diagnosticContexts[platform]
@@ -1625,10 +1601,9 @@ async function dispatchQuestion(input: DispatchQuestionInput) {
         markCurrentSendSubmitted()
         renderQueue()
         for (const result of results) {
-          if (result.ok) {
-            setStatus(result.platform, 'warn', t(userSettings.language, 'send.statusWaiting'))
-          } else {
-            setStatus(result.platform, 'err', t(userSettings.language, 'send.statusFailed'))
+          const update = panelStatusForSendResult(result)
+          setStatus(update.platform, update.level, t(userSettings.language, update.messageKey))
+          if (!result.ok) {
             finishSendLockPlatform(result.platform)
           }
         }
@@ -1659,23 +1634,17 @@ async function dispatchQuestion(input: DispatchQuestionInput) {
         }
       },
       onPlatformSettled: (platform, result) => {
-        if (result.status === 'captured') {
-          setStatus(platform, 'ok', t(userSettings.language, 'send.statusDone'))
-          finishSendLockPlatform(platform)
-        } else if (
-          result.status === 'capture-timeout'
-          || result.status === 'capture-interrupted'
-          || result.status === 'uncertain'
-          || result.status === 'user-stopped'
-        ) {
-          setStatus(platform, 'err', t(userSettings.language, 'send.statusFailed'))
+        const update = mapSettledResultToPanelStatus(platform, result)
+        if (update) {
+          setStatus(update.platform, update.level, t(userSettings.language, update.messageKey))
           finishSendLockPlatform(platform)
         }
       },
       // 平台首次进入 streaming，或任务首次观察到区别于发送前 baseline 的新回答文字时，
       // 统一由回答收集任务通知页面切换到「回答中」。
       onResponseStarted: (platform) => {
-        setStatus(platform, 'warn', t(userSettings.language, 'send.statusResponding'))
+        const update = responseStartedPanelStatus(platform)
+        setStatus(update.platform, update.level, t(userSettings.language, update.messageKey))
       },
     },
   ).then((result) => {
@@ -3064,36 +3033,27 @@ async function onGenerateSummary() {
       sourceSessionIds,
     },
     {
-      ...createAnswerCollectionBaseDependencies(),
+      ...createAnswerCollectionBaseDependencies(answerCollectionBaseOptions),
       send: async (platform) =>
         mapPlatformSendToSummary(
           await platformCommunication.writeAndSend(platform, { text: prompt }),
         ),
       // 发送结果回执：面板从「发送中」切到「等待回答 / 失败」（与 #20 普通路径一致）。
       onSendComplete: (results) => {
-        for (const result of results) {
-          if (result.ok) {
-            setStatus(result.platform, 'warn', t(userSettings.language, 'send.statusWaiting'))
-          } else {
-            setStatus(result.platform, 'err', t(userSettings.language, 'send.statusFailed'))
-          }
+        for (const update of mapSendResultsToPanelStatuses(results)) {
+          setStatus(update.platform, update.level, t(userSettings.language, update.messageKey))
         }
       },
       // AI 开始生成：面板切到「回答中」。
       onResponseStarted: (platform) => {
-        setStatus(platform, 'warn', t(userSettings.language, 'send.statusResponding'))
+        const update = responseStartedPanelStatus(platform)
+        setStatus(update.platform, update.level, t(userSettings.language, update.messageKey))
       },
       // 回答落定：成功标「完成」，失败/超时标红。
       onPlatformSettled: (platform, settled) => {
-        if (settled.status === 'captured') {
-          setStatus(platform, 'ok', t(userSettings.language, 'send.statusDone'))
-        } else if (
-          settled.status === 'capture-timeout'
-          || settled.status === 'capture-interrupted'
-          || settled.status === 'uncertain'
-          || settled.status === 'user-stopped'
-        ) {
-          setStatus(platform, 'err', t(userSettings.language, 'send.statusFailed'))
+        const update = mapSettledResultToPanelStatus(platform, settled)
+        if (update) {
+          setStatus(update.platform, update.level, t(userSettings.language, update.messageKey))
         }
       },
       onSendConfirmed: () => {
@@ -3262,7 +3222,7 @@ async function retrySummaryTask(summaryId: string) {
 
   // 已确认发送但回答状态不确定：只读「重新检查」，绝不再次发送（Issue #20）。
   if (targetSummary.recovery?.action === 'recheck') {
-    const base = createAnswerCollectionBaseDependencies()
+    const base = createAnswerCollectionBaseDependencies(answerCollectionBaseOptions)
     showToast(t(userSettings.language, 'summary.recheckStarted'), 'info', 1800)
     const recheck = await summaryTaskRunner.recheck(targetSession, targetSummary, base)
     if (recheck === null) {
@@ -3319,7 +3279,7 @@ async function retrySummaryTask(summaryId: string) {
   hideSummaryRecoveryBar()
 
   const result = await summaryTaskRunner.start(input, {
-    ...createAnswerCollectionBaseDependencies(),
+    ...createAnswerCollectionBaseDependencies(answerCollectionBaseOptions),
     send: async (platform) =>
       mapPlatformSendToSummary(
         await platformCommunication.writeAndSend(platform, { text: input.prompt }),
