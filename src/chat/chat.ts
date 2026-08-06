@@ -27,8 +27,6 @@ import type { AIPlatform, ConversationEntry, ConversationState, Session, Session
 import {
   FileTooLargeError,
   UnsupportedFileTypeError,
-  buildInlineTextPrompt,
-  buildAttachmentDeliveryPlan,
   getUnsupportedFileMessage,
   prepareAttachment,
   type PreparedAttachment,
@@ -66,7 +64,6 @@ import {
 } from '../lib/pending-question-queue'
 import { addSession, deleteSession, getSession, loadSessions, updateSession } from '../lib/session-store'
 import {
-  createSessionRecord,
   normalizeCapturedResponse,
 } from '../lib/session-record'
 import {
@@ -84,11 +81,10 @@ import {
 } from '../lib/send-lock'
 import { buildSessionMarkdownExport, formatBytes, formatCapturedMarkdownText, formatSessionMarkdown } from '../lib/history-format'
 import { buildSummaryPrompt } from '../lib/summary-builder'
-import { runAnswerCollectionTask } from '../lib/answer-collection-task'
 import { buildTransferContent, buildTransferSourceOptions, type TransferSourceOption } from '../lib/transfer-source'
 import { bindComposerFocusRestorer } from '../lib/focus-restore'
 import { filterSessionsByTitle } from '../lib/history-search'
-import { deleteConversation, isSpecificConversationUrl, loadConversations, renameConversation, upsertConversation } from '../lib/conversation-store'
+import { deleteConversation, loadConversations, renameConversation, upsertConversation } from '../lib/conversation-store'
 import { logCaptureDebug, textPreview } from '../lib/capture-debug'
 import { prepareDiagnosticExport, type PreparedDiagnosticExport } from '../lib/diagnostic-export'
 import {
@@ -97,35 +93,23 @@ import {
   type DiagnosticExportPayload,
 } from '../lib/diagnostic-retention'
 import {
-  createDiagnosticBatchId,
-  createDiagnosticContext,
-  createDiagnosticProducerId,
-  createDiagnosticReporter,
-} from '../lib/diagnostic-client'
-import type { DiagnosticContext } from '../lib/diagnostic-types'
-import {
-  createResponseDiagnosticTracker,
-} from './response-diagnostic'
-import {
   bindPendingQuestionPageLifecycle,
   dispatchPendingQuestion,
   enqueuePendingQuestionFromComposer,
-  stopPendingQuestionWaiting,
   updatePendingQuestionFromView,
 } from './pending-question-composer'
 import { renderPendingQuestionQueue } from './pending-question-queue-view'
 import {
   createAnswerCollectionBaseDependencies,
+  createQuestionSendCoordinator,
   mapSendResultsToPanelStatuses,
   mapSettledResultToPanelStatus,
-  panelStatusForSendResult,
   responseStartedPanelStatus,
   type AnswerCollectionBaseDependenciesOptions,
+  type CoordinatorToast,
 } from './question-send-coordinator'
 import {
   createPlatformCommunication,
-  iframeWriteResultTimeoutMs,
-  routeTimeoutErrorCode,
   type PlatformSendResult,
 } from './platform-communication'
 import { showExtensionUpdateNotice } from './update-notice-dialog'
@@ -266,7 +250,6 @@ const summaryTaskRunner = createSummaryTaskRunner({
   },
 })
 const pendingQuestionQueue = new PendingQuestionQueue()
-let activeAnswerCollectionAbortController: AbortController | null = null
 // 恢复闸门：用户是否已通过「重新检查平台状态」确认没有平台仍在生成。
 let queueRecheckPassed = false
 let wasQueuePaused = false
@@ -770,6 +753,55 @@ const answerCollectionBaseOptions: AnswerCollectionBaseDependenciesOptions = {
   history: { add: addSession, get: getSession, update: updateSession },
 }
 
+// 问题发送协调器（Issue #30）：页面提交入口与队列自动补发都走它的两个公开入口。
+// 协调器不触碰 DOM、不查文案：页面把语义事件绑到渲染与文案翻译，
+// 把现有发送锁包装函数以端口形式绑给协调器。
+const questionSendCoordinator = createQuestionSendCoordinator({
+  communication: platformCommunication,
+  history: answerCollectionBaseOptions.history,
+  queue: pendingQuestionQueue,
+  sendLock: {
+    begin: beginSendLock,
+    markSubmitted: markCurrentSendSubmitted,
+    finishPlatform: finishSendLockPlatform,
+    resetUi: resetSendLockUi,
+  },
+  isSummaryRunning: () => summaryTaskRunner.isRunning(),
+  isDiagnosticEnabled: () => userSettings.diagnosticEnabled,
+  supportsEmbed: (platform) => getPlatformCapabilities(platform).supportsEmbed,
+  getPlatformLabel: (platform) => getPlatformMeta(platform)?.label ?? platform,
+  getPlatformOrder: () => userSettings.platformOrder,
+  compactConversationTitle: (title) => compactText(title, 90),
+  saveConversationEntry: upsertConversation,
+  enqueueFromComposer: (draft) => {
+    const result = enqueuePendingQuestionFromComposer(pendingQuestionQueue, inputEl, draft)
+    if (result.ok) clearAttachment()
+    return result
+  },
+  onPanelStatus: (update) => {
+    setStatus(update.platform, update.level, t(userSettings.language, update.messageKey))
+  },
+  onToast: (toast: CoordinatorToast) => {
+    const message = toast.text
+      ?? (toast.params
+        ? uiText(toast.messageKey ?? '', toast.params)
+        : t(userSettings.language, toast.messageKey ?? ''))
+    showToast(message, toast.level, toast.durationMs)
+  },
+  onComposerConsumed: () => {
+    inputEl.value = ''
+    clearAttachment()
+  },
+  onQueueChanged: () => renderQueue(),
+  onHistoryUnsaved: ({ taskId, session }) => {
+    pendingHistoryUnsavedSession = session
+    console.error('[AIChatRoom chat] answer collection completed but history save failed', {
+      taskId,
+      sessionId: session.id,
+    })
+  },
+})
+
 function platformStatusItem(p: AIPlatform): HTMLElement | null {
   return document.querySelector<HTMLElement>(`.status-item[data-platform="${p}"]`)
 }
@@ -1270,16 +1302,6 @@ function clearAttachment() {
 }
 
 
-// File → base64 dataURL(给 iframe 端)
-function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = () => reject(reader.error ?? new Error('FileReader failed'))
-    reader.readAsDataURL(file)
-  })
-}
-
 // ---------- 启动 ----------
 async function ensureEmbedRulesEnabled(): Promise<void> {
   const result = await sendToSw<{ ok?: boolean; error?: string }>({ type: 'enable-embed-rules' })
@@ -1348,59 +1370,8 @@ function resolveComposerTargets(text: string): AIPlatform[] {
   return mentioned.length > 0 ? mentioned : textPlatforms
 }
 
-function queuedQuestionId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID()
-  }
-  return `queued-${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
-
-function enqueueComposerText() {
-  const text = inputEl.value
-  const targets = resolveComposerTargets(text.trim())
-  const id = queuedQuestionId()
-  const enqueueResult = enqueuePendingQuestionFromComposer(pendingQuestionQueue, inputEl, {
-    id,
-    taskId: `answer-collection-${id}`,
-    targetPlatforms: targets,
-    attachment: pendingAttachment,
-  })
-  if (!enqueueResult.ok) {
-    const key = enqueueResult.reason === 'full'
-      ? 'queue.full'
-      : enqueueResult.reason === 'attachments-too-large'
-        ? 'queue.attachmentsTooLargeKept'
-        : enqueueResult.reason === 'no-targets'
-          ? 'send.noTextTarget'
-          : 'send.needTextOrAttachment'
-    showToast(
-      t(userSettings.language, key),
-      'warn',
-      5000,
-    )
-    return
-  }
-
-  clearAttachment()
-  renderQueue()
-  showToast(t(userSettings.language, 'queue.added'), 'success', 1800)
-}
-
 async function onSend() {
-  if (summaryTaskRunner.isRunning()) {
-    showToast(t(userSettings.language, 'summary.running'), 'warn', 4000)
-    return
-  }
-  const queueSnapshot = pendingQuestionQueue.snapshot()
-  if (queueSnapshot.status === 'paused' && queueSnapshot.pauseReason) {
-    showToast(t(userSettings.language, `queue.paused.${queueSnapshot.pauseReason}`), 'warn', 5000)
-    return
-  }
-  if (queueSnapshot.activeTaskId) {
-    enqueueComposerText()
-    return
-  }
-
+  // 纯输入校验留在页面：空内容 / 无文本目标直接拦截，不进协调器。
   const text = inputEl.value.trim()
   if (!text && !pendingAttachment) {
     showToast(t(userSettings.language, 'send.needTextOrAttachment'), 'warn')
@@ -1411,285 +1382,37 @@ async function onSend() {
     showToast(t(userSettings.language, 'send.noTextTarget'), 'warn')
     return
   }
-  await dispatchQuestion({
-    text,
+  // 门禁（总结互斥 / 队列暂停 / 有任务在收集则入队）在协调器内部判断；
+  // 页面只把拒绝原因翻译成既有提示。
+  const outcome = await questionSendCoordinator.submitFromComposer({
+    // 传入输入框原值：入队路径逐字保存，立即发送路径由协调器内部 trim 后投递。
+    text: inputEl.value,
     targets,
     attachment: pendingAttachment,
-    clearComposerOnSendComplete: true,
-    taskAlreadyStarted: false,
   })
+  if (outcome.kind !== 'rejected') return
+  if (outcome.reason === 'summary-running') {
+    showToast(t(userSettings.language, 'summary.running'), 'warn', 4000)
+  } else if (outcome.reason && outcome.reason.startsWith('queue-paused:')) {
+    showToast(
+      t(userSettings.language, `queue.paused.${outcome.reason.slice('queue-paused:'.length)}`),
+      'warn',
+      5000,
+    )
+  }
 }
 
-interface DispatchQuestionInput {
-  text: string
-  targets: AIPlatform[]
-  attachment: PreparedAttachment | null
-  clearComposerOnSendComplete: boolean
-  taskAlreadyStarted: boolean
-  sessionId?: string
-  taskId?: string
-}
-
-async function dispatchQuestion(input: DispatchQuestionInput) {
-  const text = input.text
-  let targets = [...input.targets]
-  const attachment = input.attachment
-
-  const deliveryPlan = buildAttachmentDeliveryPlan(
-    targets,
-    attachment?.classification ?? null,
-    text.length > 0,
-  )
-  targets = deliveryPlan.sendTargets
-  if (attachment?.classification.handling === 'file-upload') {
-    if (deliveryPlan.manualUploadTargets.length > 0) {
-      const labels = deliveryPlan.manualUploadTargets.map((p) => getPlatformMeta(p)?.label ?? p).join(' / ')
-      const message = text.length > 0
-        ? uiText('send.manualUploadWithText', { labels })
-        : uiText('send.manualUploadOnly', { labels })
-      showToast(message, 'warn', 6000)
-    }
-    if (targets.length === 0) {
-      showToast(t(userSettings.language, 'send.noUploadTarget'), 'warn', 6000)
-      return false
-    }
-  }
-
-  const diagnosticContexts: Partial<Record<AIPlatform, DiagnosticContext>> = {}
-  if (userSettings.diagnosticEnabled) {
-    const batchId = createDiagnosticBatchId()
-    for (const platform of targets) diagnosticContexts[platform] = createDiagnosticContext(batchId)
-  }
-
-  beginSendLock(targets)
-  targets.forEach((platform) => setStatus(platform, 'warn', t(userSettings.language, 'send.statusSending')))
-
-  // 1. 准备附件:上传类转 dataURL,文本类拼进 prompt。
-  let imageDataUrl: string | undefined
-  let imageMime: string | undefined
-  let imageName: string | undefined
-  let textToSend = text
-  if (attachment?.classification.handling === 'inline-text') {
-    textToSend = buildInlineTextPrompt(attachment.file.name, attachment.textContent ?? '', text)
-  }
-  if (attachment?.classification.handling === 'file-upload') {
-    try {
-      imageDataUrl = await fileToDataUrl(attachment.file)
-      imageMime = attachment.file.type
-      imageName = attachment.file.name
-    } catch (e) {
-      console.error('[AIChatRoom chat] failed to read file as data URL', e)
-    }
-  }
-
-  const attachments: SessionAttachment[] = attachment
-    ? [{
-      id: `attachment-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      name: attachment.file.name,
-      mime: attachment.file.type,
-      size: attachment.file.size,
-      kind: attachment.classification.kind,
-      handling: attachment.classification.handling,
-      inlinedText: attachment.classification.handling === 'inline-text' ? attachment.textContent : undefined,
-      uploadStatus: attachment.classification.handling === 'file-upload' ? 'pending' : undefined,
-    }]
-    : []
-
-  const currentSession = createSessionRecord({
-    id: input.sessionId,
-    prompt: text,
-    sentPrompt: textToSend,
-    targetPlatforms: targets,
-    attachments,
-  })
-  const taskId = input.taskId ?? `answer-collection-${currentSession.id}`
-  if (!input.taskAlreadyStarted && !pendingQuestionQueue.startTask(taskId, targets)) {
-    resetSendLockUi()
-    return false
-  }
-  const abortController = new AbortController()
-  activeAnswerCollectionAbortController = abortController
-  renderQueue()
-  const sentAttachmentHandling = attachment?.classification.handling
-
-  void runAnswerCollectionTask(
-    {
-      id: taskId,
-      session: currentSession,
-      signal: abortController.signal,
-    },
-    {
-      ...createAnswerCollectionBaseDependencies(answerCollectionBaseOptions),
-      send: async (platform) => {
-        const shouldUploadFile = deliveryPlan.autoUploadTargets.includes(platform)
-        const diagnosticContext = diagnosticContexts[platform]
-        const reporter = diagnosticContext
-          ? createDiagnosticReporter(
-            diagnosticContext,
-            platform,
-            createDiagnosticProducerId('chat-ui'),
-          )
-          : undefined
-        const route = platformCommunication.routeFor(platform)
-        reporter?.emit({
-          component: 'chat-ui',
-          operation: 'route-select',
-          stage: 'routed',
-          eventStatus: 'succeeded',
-          route,
-          inputCharacterCount: textToSend.length,
-          hasAttachment: shouldUploadFile,
-        })
-        const result = await platformCommunication.writeAndSend(platform, {
-          text: textToSend,
-          imageDataUrl: shouldUploadFile ? imageDataUrl : undefined,
-          imageMime: shouldUploadFile ? imageMime : undefined,
-          imageName: shouldUploadFile ? imageName : undefined,
-          diagnostics: diagnosticContext,
-        })
-        if (!result.ok) {
-          const timedOutWithoutReply = !result.error
-          const terminalErrorCode = result.diagnosticErrorCode
-            ?? (timedOutWithoutReply ? routeTimeoutErrorCode(route) : undefined)
-          reporter?.emit({
-            component: route === 'iframe' ? 'iframe-bridge' : 'official-tab',
-            operation: 'result-return',
-            stage: timedOutWithoutReply ? 'timed-out' : 'failed',
-            eventStatus: timedOutWithoutReply ? 'timed-out' : 'failed',
-            route,
-            ...(terminalErrorCode
-              ? {
-                  runOutcome: timedOutWithoutReply ? 'timed-out' : 'failed',
-                  errorCode: terminalErrorCode,
-                  timeoutMs: route === 'iframe'
-                    ? iframeWriteResultTimeoutMs({
-                        imageDataUrl: shouldUploadFile ? imageDataUrl : undefined,
-                      })
-                    : undefined,
-                }
-              : {}),
-          })
-        }
-        return {
-          platform,
-          ok: result.ok,
-          error: result.error,
-        }
-      },
-      createDiagnosticTracker: (platform, startedAt) => {
-        const context = diagnosticContexts[platform]
-        if (!context) return undefined
-        return createResponseDiagnosticTracker(
-          createDiagnosticReporter(
-            context,
-            platform,
-            createDiagnosticProducerId('response-capture'),
-          ),
-          startedAt,
-        )
-      },
-      createHistoryReporter: (platform) => {
-        const context = diagnosticContexts[platform]
-        if (!context) return undefined
-        return createDiagnosticReporter(
-          context,
-          platform,
-          createDiagnosticProducerId('history-store'),
-        )
-      },
-      onSendComplete: (results) => {
-        markCurrentSendSubmitted()
-        renderQueue()
-        for (const result of results) {
-          const update = panelStatusForSendResult(result)
-          setStatus(update.platform, update.level, t(userSettings.language, update.messageKey))
-          if (!result.ok) {
-            finishSendLockPlatform(result.platform)
-          }
-        }
-        scheduleConversationSnapshot(
-          text,
-          results.filter((result) => result.ok).map((result) => result.platform),
-        )
-
-        const okCount = results.filter((result) => result.ok).length
-        const firstError = results.find((result) => !result.ok && result.error)?.error
-        if (sentAttachmentHandling === 'file-upload') {
-          if (okCount === results.length && results.length > 0) {
-            showToast(t(userSettings.language, 'send.fileAllSent'), 'success', 2500)
-          } else if (okCount > 0) {
-            showToast(t(userSettings.language, 'send.filePartial'), 'warn', 6000)
-          } else {
-            showToast(firstError ?? t(userSettings.language, 'send.fileFailed'), 'err', 6000)
-          }
-        } else if (okCount === 0 && results.length > 0) {
-          showToast(firstError ?? t(userSettings.language, 'send.failed'), 'err', 3000)
-        } else {
-          showToast(t(userSettings.language, 'send.success'), 'success', 1200)
-        }
-
-        if (input.clearComposerOnSendComplete) {
-          inputEl.value = ''
-          clearAttachment()
-        }
-      },
-      onPlatformSettled: (platform, result) => {
-        const update = mapSettledResultToPanelStatus(platform, result)
-        if (update) {
-          setStatus(update.platform, update.level, t(userSettings.language, update.messageKey))
-          finishSendLockPlatform(platform)
-        }
-      },
-      // 平台首次进入 streaming，或任务首次观察到区别于发送前 baseline 的新回答文字时，
-      // 统一由回答收集任务通知页面切换到「回答中」。
-      onResponseStarted: (platform) => {
-        const update = responseStartedPanelStatus(platform)
-        setStatus(update.platform, update.level, t(userSettings.language, update.messageKey))
-      },
-    },
-  ).then((result) => {
-    if (activeAnswerCollectionAbortController === abortController) {
-      activeAnswerCollectionAbortController = null
-    }
-    if (result.historyStatus === 'unsaved') {
-      pendingHistoryUnsavedSession = result.session
-      console.error('[AIChatRoom chat] answer collection completed but history save failed', {
-        taskId: result.id,
-        sessionId: result.session.id,
-      })
-    }
-    const transition = pendingQuestionQueue.finishTask(taskId, result)
-    renderQueue()
-    if (transition.kind === 'dispatch') {
-      void dispatchQueuedQuestion(transition.next).catch((error) => {
-        resetSendLockUi()
-        renderQueue()
-        console.error('[AIChatRoom chat] queued question failed to start', error)
-      })
-    }
-  }).catch((error) => {
-    if (activeAnswerCollectionAbortController === abortController) {
-      activeAnswerCollectionAbortController = null
-    }
-    pendingQuestionQueue.pauseForTaskFailure(taskId)
-    resetSendLockUi()
-    renderQueue()
-    console.error('[AIChatRoom chat] answer collection task failed', error)
-  })
-  return true
-}
-
+// 队列补发的薄委托：内部改走协调器的队列补发入口，三个恢复入口（票 3）继续用它。
 async function dispatchQueuedQuestion(question: PendingQuestion) {
-  await dispatchPendingQuestion(pendingQuestionQueue, question, dispatchQuestion)
+  await dispatchPendingQuestion(pendingQuestionQueue, question, () =>
+    questionSendCoordinator.dispatchQueued(question),
+  )
 }
 
 bindPendingQuestionPageLifecycle(pendingQuestionQueue, window)
 
 function stopWaiting() {
-  if (!stopPendingQuestionWaiting(
-    pendingQuestionQueue,
-    activeAnswerCollectionAbortController,
-  )) return
+  if (!questionSendCoordinator.stopWaiting()) return
   renderQueue()
   showToast(t(userSettings.language, 'queue.paused.user-stopped'), 'warn', 5000)
 }
@@ -2579,48 +2302,10 @@ function closeHistory() {
   historyOverlay.hidden = true
 }
 
-function conversationId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
-  return `conversation-${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
-
 function conversationPlatformLabels(entry: ConversationEntry): string {
   return entry.enabledPlatforms
     .map((platform) => getPlatformMeta(platform)?.label ?? platform)
     .join(' / ')
-}
-
-async function saveConversationSnapshot(title: string, platforms: AIPlatform[]) {
-  const entries = await Promise.all(
-    platforms.map(async (platform) => {
-      if (platform === 'deepseek') {
-        const url = await platformCommunication.readConversationUrl('deepseek', 2000)
-        return [platform, url] as const
-      }
-      return [platform, await platformCommunication.readConversationUrl(platform)] as const
-    }),
-  )
-  const platformUrls = Object.fromEntries(
-    entries.filter(([platform, url]) => isSpecificConversationUrl(platform, url)),
-  ) as Partial<Record<AIPlatform, string>>
-  if (Object.keys(platformUrls).length === 0) return
-
-  await upsertConversation({
-    id: conversationId(),
-    title: compactText(title, 90),
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    enabledPlatforms: platforms,
-    platformOrder: userSettings.platformOrder,
-    platformUrls,
-  })
-}
-
-function scheduleConversationSnapshot(title: string, platforms: AIPlatform[]) {
-  const activeTargets = platforms.filter((platform) => getPlatformCapabilities(platform).supportsEmbed)
-  if (activeTargets.length === 0) return
-  setTimeout(() => void saveConversationSnapshot(title, activeTargets), 1500)
-  setTimeout(() => void saveConversationSnapshot(title, activeTargets), 4500)
 }
 
 function renderConversationList() {
