@@ -1,5 +1,5 @@
-import type { AIAdapter, AdapterDiagnostics } from '../base'
-import type { ConversationState, StreamEvent } from '../../types'
+import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
+import type { ConversationState } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 import selectorsJson from './selectors.json'
 
@@ -378,22 +378,18 @@ function hasCompletionActionBar(): boolean {
 // 当 stopButton/continueButton 选择器全部 MISS 时，
 // 用「DOM 最后变化时间」判断是否还在流式输出：
 //   - 最近 ~2s 内有 DOM 变化 → streaming
-//   - 超过 ~3s 无变化且有回答文本 → finished
+//   - 超过 ~2s 无变化且有回答文本 → finished
 //   - 无文本 → idle
+//
+// 观察器在适配器创建时启动，是 getConversationState 的内部实现细节，
+// 不再对外暴露事件流（stream-event 信道已拆除，见 ADR-0004）。
 
-let lastMutationTimestamp = 0
-let isStreaming = false
-
-export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter {
+export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter & AdapterSendInternals {
   const S = mergeSelectorOverrides(DEFAULT_SELECTORS, selectorOverrides)
-  let lastEventHandler: ((e: StreamEvent) => void) | null = null
-  let observer: MutationObserver | null = null
-  let dirty = false
-  let pollTimer: ReturnType<typeof setInterval> | null = null
-  let continuePollTimer: ReturnType<typeof setInterval> | null = null
-  let lastContinueButtonState = false
-  // 追踪上一次轮询时的文本长度，用于检测"文本是否还在增长"
-  let lastPolledTextLength = 0
+  let lastMutationTimestamp = 0
+  new MutationObserver(() => {
+    lastMutationTimestamp = Date.now()
+  }).observe(document.body, { childList: true, subtree: true, characterData: true })
 
   function q<T extends Element = Element>(sel: string): T | null {
     return document.querySelector<T>(sel)
@@ -408,58 +404,7 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
     diagnostics?.reporter.emit({ ...event, selectorConfigVersion: diagnostics.selectorConfigVersion })
   }
 
-  function startObserver() {
-    observer = new MutationObserver(() => {
-      dirty = true
-      lastMutationTimestamp = Date.now()
-    })
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true })
-    pollTimer = setInterval(() => {
-      if (!lastEventHandler) return
-      const now = Date.now()
-      const text = getLatestResponseText()
-      const len = text.length
-
-      // 基于文本增长和 DOM 变化判断流式状态（选择器无关）
-      if (len > lastPolledTextLength && (now - lastMutationTimestamp < 2000)) {
-        if (!isStreaming) {
-          isStreaming = true
-          lastEventHandler({ type: 'started', platform: 'claude', timestamp: now })
-        }
-        dirty = false
-        lastPolledTextLength = len
-        lastEventHandler({ type: 'token', platform: 'claude', text, timestamp: now })
-      } else if (dirty) {
-        // 有 DOM 变化但文本没长（可能在渲染工具调用等非正文内容）
-        dirty = false
-        lastEventHandler({ type: 'token', platform: 'claude', text, timestamp: now })
-      } else if (isStreaming && len > 0 && (now - lastMutationTimestamp > 3000)) {
-        // 超过 3 秒无新 DOM 变化 → 判定流式结束
-        isStreaming = false
-        lastEventHandler({ type: 'finished', platform: 'claude', text, timestamp: now })
-        lastPolledTextLength = len
-      }
-    }, 150)
-  }
-
-  function startContinuePolling() {
-    continuePollTimer = setInterval(() => {
-      const btn = q(S.continueButton)
-      const hasButton = !!btn
-      if (hasButton && !lastContinueButtonState) {
-        lastContinueButtonState = true
-        lastEventHandler?.({ type: 'paused', platform: 'claude', timestamp: Date.now() })
-      } else if (!hasButton) {
-        lastContinueButtonState = false
-      }
-    }, 1000)
-  }
-
   return {
-    isLoggedIn() {
-      return Promise.resolve(!!q(S.loggedIn) || !!document.querySelector("[data-testid='user-menu']"))
-    },
-
     async writeText(text: string) {
       const box = q<HTMLElement>(S.inputBox)
       if (!box) throw new Error('claude input box not found')
@@ -588,31 +533,12 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
       }
       // 选择器无关的兜底：基于 DOM 变化时间戳
       const timeSinceMutation = Date.now() - lastMutationTimestamp
-      if (isStreaming || timeSinceMutation < 2000) {
+      if (timeSinceMutation < 2000) {
         return Promise.resolve({ status: 'streaming', lastResponse: lastText, stopButtonDetected: false })
       }
       if (!lastText) return Promise.resolve({ status: 'idle', stopButtonDetected: false })
-      // 有文本、无停止按钮、最近 3 秒无 DOM 变化 → 判定已完成
+      // 有文本、无停止按钮、最近 2 秒无 DOM 变化 → 判定已完成
       return Promise.resolve({ status: 'finished', lastResponse: lastText, stopButtonDetected: false })
-    },
-
-    onStreamEvent(handler) {
-      lastEventHandler = handler
-      startObserver()
-      startContinuePolling()
-      return () => {
-        observer?.disconnect()
-        observer = null
-        if (pollTimer) clearInterval(pollTimer)
-        pollTimer = null
-        if (continuePollTimer) clearInterval(continuePollTimer)
-        continuePollTimer = null
-        lastEventHandler = null
-      }
-    },
-
-    detectRateLimit() {
-      return Promise.resolve(!!q(S.rateLimitToast))
     },
   }
 }

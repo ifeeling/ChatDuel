@@ -1,5 +1,5 @@
-import type { AIAdapter, AdapterDiagnostics } from '../base'
-import type { ConversationState, StreamEvent } from '../../types'
+import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
+import type { ConversationState } from '../../types'
 import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
 import { elementToMarkdownText } from '../../lib/dom-response-text'
 import { describeCaptureElement, logCaptureDebug } from '../../lib/capture-debug'
@@ -543,9 +543,8 @@ function hasVisibleCompletionActionBar(candidate: DoubaoResponseCandidate, selec
     })
 }
 
-export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter {
+export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter & AdapterSendInternals {
   const selectors = mergeSelectorOverrides(DEFAULT_SELECTORS, selectorOverrides) as DoubaoSelectors
-  let lastEventHandler: ((e: StreamEvent) => void) | null = null
   let activeSend: {
     prompt: string
     candidatesBeforeSend: ReadonlyMap<HTMLElement, string>
@@ -565,10 +564,6 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
   }
 
   return {
-    async isLoggedIn() {
-      return !!queryFirst(selectors.inputBox)
-    },
-
     async writeText(text: string) {
       const box = queryFirst<HTMLElement>(selectors.inputBox)
       if (!box) throw new Error('doubao input box not found')
@@ -744,17 +739,6 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
       }
       if (lastResponse) return { status: 'finished', lastResponse, stopButtonDetected: false }
       return { status: 'idle', stopButtonDetected: false }
-    },
-
-    onStreamEvent(handler) {
-      lastEventHandler = handler
-      return () => {
-        lastEventHandler = null
-      }
-    },
-
-    async detectRateLimit() {
-      return false
     },
   }
 }

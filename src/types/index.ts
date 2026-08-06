@@ -139,14 +139,6 @@ export interface SummaryRecovery {
 export type SummaryRange = 'latest-1' | 'latest-3' | 'latest-5' | 'manual'
 export type SummaryMode = 'final-answer' | 'differences' | 'short-summary' | 'opinion-digest'
 
-export type StreamEvent =
-  | { type: 'started'; platform: AIPlatform; timestamp: number }
-  | { type: 'token'; platform: AIPlatform; text: string; timestamp: number }
-  | { type: 'paused'; platform: AIPlatform; timestamp: number }
-  | { type: 'finished'; platform: AIPlatform; text: string; timestamp: number }
-  | { type: 'error'; platform: AIPlatform; message: string; timestamp: number }
-  | { type: 'rate-limit'; platform: AIPlatform; message: string; timestamp: number }
-
 export interface ConversationState {
   status: StreamStatus
   lastResponse?: string

@@ -1,5 +1,5 @@
-import type { AIAdapter, AdapterDiagnostics } from '../base'
-import type { ConversationState, StreamEvent } from '../../types'
+import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
+import type { ConversationState } from '../../types'
 import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
 import { elementToMarkdownText } from '../../lib/dom-response-text'
 import { describeCaptureElement, logCaptureDebug, textPreview } from '../../lib/capture-debug'
@@ -893,19 +893,14 @@ function getResponseTextWithFallback(selectors: DeepSeekSelectors): string {
   return fallback
 }
 
-export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter {
+export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter & AdapterSendInternals {
   const selectors = mergeSelectorOverrides(DEFAULT_SELECTORS, selectorOverrides) as DeepSeekSelectors
-  let lastEventHandler: ((e: StreamEvent) => void) | null = null
 
   function emit(diagnostics: AdapterDiagnostics | undefined, event: Parameters<AdapterDiagnostics['reporter']['emit']>[0]) {
     diagnostics?.reporter.emit({ ...event, selectorConfigVersion: diagnostics.selectorConfigVersion })
   }
 
   return {
-    async isLoggedIn() {
-      return !!queryFirst(selectors.inputBox)
-    },
-
     async writeText(text: string) {
       const box = queryFirst<HTMLElement>(selectors.inputBox)
       if (!box) throw new Error('deepseek input box not found')
@@ -1089,17 +1084,6 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
         status: state.status,
       })
       return state
-    },
-
-    onStreamEvent(handler) {
-      lastEventHandler = handler
-      return () => {
-        lastEventHandler = null
-      }
-    },
-
-    async detectRateLimit() {
-      return false
     },
   }
 }

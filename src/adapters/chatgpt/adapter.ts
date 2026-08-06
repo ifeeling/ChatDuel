@@ -1,5 +1,5 @@
-import type { AIAdapter, AdapterDiagnostics } from '../base'
-import type { ConversationState, StreamEvent } from '../../types'
+import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
+import type { ConversationState } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 import selectorsJson from './selectors.json'
 
@@ -157,14 +157,8 @@ async function waitForSendAccepted(selectors: ChatGPTSelectors, maxMs = 700): Pr
   return hasStopGeneratingButton(selectors) || !composerHasPendingContent(selectors)
 }
 
-export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter {
+export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter & AdapterSendInternals {
   const S = mergeSelectorOverrides(DEFAULT_SELECTORS, selectorOverrides)
-  let lastEventHandler: ((e: StreamEvent) => void) | null = null
-  let observer: MutationObserver | null = null
-  let dirty = false
-  let pollTimer: ReturnType<typeof setInterval> | null = null
-  let continuePollTimer: ReturnType<typeof setInterval> | null = null
-  let lastContinueButtonState = false
 
   function q<T extends Element = Element>(sel: string): T | null {
     return document.querySelector<T>(sel)
@@ -182,35 +176,7 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
     })
   }
 
-  function startObserver() {
-    observer = new MutationObserver(() => { dirty = true })
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true })
-    pollTimer = setInterval(() => {
-      if (!dirty || !lastEventHandler) return
-      dirty = false
-      const text = last(S.lastResponse)?.textContent ?? ''
-      lastEventHandler({ type: 'token', platform: 'chatgpt', text, timestamp: Date.now() })
-    }, 150)
-  }
-
-  function startContinuePolling() {
-    continuePollTimer = setInterval(() => {
-      const btn = q(S.continueButton)
-      const hasButton = !!btn
-      if (hasButton && !lastContinueButtonState) {
-        lastContinueButtonState = true
-        lastEventHandler?.({ type: 'paused', platform: 'chatgpt', timestamp: Date.now() })
-      } else if (!hasButton) {
-        lastContinueButtonState = false
-      }
-    }, 1000)
-  }
-
   return {
-    isLoggedIn() {
-      return Promise.resolve(!!q(S.loggedIn))
-    },
-
     async writeText(text: string) {
       const box = q<HTMLElement>(S.inputBox)
       if (!box) throw new Error('input box not found')
@@ -359,25 +325,6 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
       if (q(S.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText, stopButtonDetected: false })
       if (!lastText) return Promise.resolve({ status: 'idle', stopButtonDetected: false })
       return Promise.resolve({ status: 'finished', lastResponse: lastText, stopButtonDetected: false })
-    },
-
-    onStreamEvent(handler) {
-      lastEventHandler = handler
-      startObserver()
-      startContinuePolling()
-      return () => {
-        observer?.disconnect()
-        observer = null
-        if (pollTimer) clearInterval(pollTimer)
-        pollTimer = null
-        if (continuePollTimer) clearInterval(continuePollTimer)
-        continuePollTimer = null
-        lastEventHandler = null
-      }
-    },
-
-    detectRateLimit() {
-      return Promise.resolve(!!q(S.rateLimitToast))
     },
   }
 }

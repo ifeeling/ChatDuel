@@ -226,22 +226,10 @@ export function installContentScriptCommandBridge(
   }
   environment.runtime.onMessage.addListener(onRuntimeMessage)
 
-  const unsubscribeFromStreamEvents = options.adapter.onStreamEvent((event) => {
-    try {
-      void Promise.resolve(environment.runtime.sendMessage({
-        type: 'stream-event',
-        event,
-      })).catch(() => {})
-    } catch {
-      // 扩展更新会让 runtime 暂时失效，事件转发不能影响平台页面。
-    }
-  })
-
   return () => {
     if (isEmbedded) {
       environment.window.removeEventListener('message', onIframeMessage)
     }
     environment.runtime.onMessage.removeListener(onRuntimeMessage)
-    unsubscribeFromStreamEvents()
   }
 }
