@@ -822,25 +822,18 @@ function enabledPlatformKeys(settings: UserSettings = userSettings): AIPlatform[
 }
 
 function syncSplitters() {
-  const hasVisiblePanelBefore = (el: HTMLElement): boolean => {
-    let current = el.previousElementSibling
-    while (current) {
-      if (current instanceof HTMLElement && current.classList.contains('panel') && !current.hidden) return true
-      current = current.previousElementSibling
-    }
-    return false
-  }
-  const hasVisiblePanelAfter = (el: HTMLElement): boolean => {
-    let current = el.nextElementSibling
-    while (current) {
-      if (current instanceof HTMLElement && current.classList.contains('panel') && !current.hidden) return true
-      current = current.nextElementSibling
-    }
-    return false
-  }
-
-  document.querySelectorAll<HTMLElement>('.splitter').forEach((splitterEl) => {
-    splitterEl.hidden = !hasVisiblePanelBefore(splitterEl) || !hasVisiblePanelAfter(splitterEl)
+  // 只保留每个可见面板（除最后一个可见面板）紧随其后的一条分割线；
+  // 连续隐藏多个面板时，夹在中间的分割线不再叠成粗线。
+  const children = [...panelsContainer.children] as HTMLElement[]
+  const visiblePanels = children.filter((el) => el.classList.contains('panel') && !el.hidden)
+  const kept = new Set<HTMLElement>()
+  visiblePanels.forEach((panel, index) => {
+    if (index === visiblePanels.length - 1) return
+    const next = panel.nextElementSibling
+    if (next instanceof HTMLElement && next.classList.contains('splitter')) kept.add(next)
+  })
+  children.forEach((el) => {
+    if (el.classList.contains('splitter')) el.hidden = !kept.has(el)
   })
 }
 
