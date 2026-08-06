@@ -1396,13 +1396,6 @@ async function onSend() {
   }
 }
 
-// 队列补发的薄委托：内部改走协调器的队列补发入口，三个恢复入口（票 3）继续用它。
-async function dispatchQueuedQuestion(question: PendingQuestion) {
-  await dispatchPendingQuestion(pendingQuestionQueue, question, () =>
-    questionSendCoordinator.dispatchQueued(question),
-  )
-}
-
 bindPendingQuestionPageLifecycle(pendingQuestionQueue, window)
 
 function stopWaiting() {
@@ -1459,7 +1452,9 @@ function resumeFromPause() {
   queueRecheckPassed = false
   renderQueue()
   if (transition.kind === 'dispatch') {
-    void dispatchQueuedQuestion(transition.next).catch((error) => {
+    void dispatchPendingQuestion(pendingQuestionQueue, transition.next, () =>
+      questionSendCoordinator.dispatchQueued(transition.next),
+    ).catch((error) => {
       resetSendLockUi()
       renderQueue()
       console.error('[AIChatRoom chat] queued question failed to start on resume', error)
@@ -1477,7 +1472,9 @@ async function retryHistorySave() {
     const transition = pendingQuestionQueue.resume(Date.now())
     renderQueue()
     if (transition.kind === 'dispatch') {
-      void dispatchQueuedQuestion(transition.next).catch((error) => {
+      void dispatchPendingQuestion(pendingQuestionQueue, transition.next, () =>
+        questionSendCoordinator.dispatchQueued(transition.next),
+      ).catch((error) => {
         resetSendLockUi()
         renderQueue()
         console.error('[AIChatRoom chat] queued question failed to start on history retry', error)
@@ -1496,7 +1493,9 @@ function continueWithoutSave() {
   const transition = pendingQuestionQueue.resume(Date.now())
   renderQueue()
   if (transition.kind === 'dispatch') {
-    void dispatchQueuedQuestion(transition.next).catch((error) => {
+    void dispatchPendingQuestion(pendingQuestionQueue, transition.next, () =>
+      questionSendCoordinator.dispatchQueued(transition.next),
+    ).catch((error) => {
       resetSendLockUi()
       renderQueue()
       console.error('[AIChatRoom chat] queued question failed to start on continue without save', error)
