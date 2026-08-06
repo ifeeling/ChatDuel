@@ -1,5 +1,11 @@
 import type { AIPlatform, ConversationState } from '../types'
-import type { DiagnosticContext, DiagnosticErrorCode } from '../lib/diagnostic-types'
+import type { DiagnosticErrorCode } from '../lib/diagnostic-types'
+import {
+  OFFICIAL_TAB_COMMAND_MESSAGE_TYPE,
+  type PlatformCommand,
+  type PlatformCommandResult,
+  type WriteAndSendPayload,
+} from '../shared/messages'
 
 export type PlatformMessageRoute = 'iframe' | 'official-tab'
 
@@ -15,13 +21,8 @@ export interface PlatformMessageHost {
   removeEventListener(type: 'message', listener: (event: MessageEvent) => void): void
 }
 
-export interface PlatformWritePayload extends Record<string, unknown> {
-  text: string
-  imageDataUrl?: string
-  imageMime?: string
-  imageName?: string
-  diagnostics?: DiagnosticContext
-}
+/** 写入并发送的参数；字段定义以 shared/messages.ts 的 WriteAndSendPayload 为准。 */
+export type PlatformWritePayload = WriteAndSendPayload & Record<string, unknown>
 
 export interface PlatformSendResult {
   platform: AIPlatform
@@ -68,27 +69,6 @@ export interface PlatformCommunication {
   readConversationState(platform: AIPlatform, timeoutMs?: number): Promise<ConversationStateResult>
   readConversationUrl(platform: AIPlatform, timeoutMs?: number): Promise<string>
 }
-
-type OfficialTabCommand =
-  | 'write-and-send'
-  | 'get-state'
-  | 'get-last-response'
-  | 'get-conversation-url'
-
-type CommandBridgeResult =
-  | {
-      platform: AIPlatform
-      command: string
-      ok: true
-      data: unknown
-    }
-  | {
-      platform: AIPlatform
-      command: string
-      ok: false
-      error: string
-      diagnosticErrorCode?: DiagnosticErrorCode
-    }
 
 function chooseRoute(
   platform: AIPlatform,
@@ -167,13 +147,14 @@ export function createPlatformCommunication(
 
   function postToIframe(
     platform: AIPlatform,
-    action: string,
-    payload: Record<string, unknown> = {},
+    command: PlatformCommand,
+    payload: Record<string, unknown>,
+    requestId: string,
   ): boolean {
     const target = dependencies.getFrame(platform).contentWindow
     if (!target) return false
     target.postMessage(
-      { source: 'aichatroom-parent', action, ...payload },
+      { source: 'aichatroom-parent', platform, command, payload, requestId },
       dependencies.getPlatformOrigin(platform),
     )
     return true
@@ -181,7 +162,7 @@ export function createPlatformCommunication(
 
   function waitForReply<T>(
     platform: AIPlatform,
-    action: string,
+    command: PlatformCommand,
     timeoutMs: number,
     matches: (
       event: MessageEvent,
@@ -219,17 +200,17 @@ export function createPlatformCommunication(
         finish(fallback)
       }, timeoutMs)
       dependencies.messageHost.addEventListener('message', onMessage)
-      if (!postToIframe(platform, action, { ...payload, requestId })) finish(fallback)
+      if (!postToIframe(platform, command, payload, requestId)) finish(fallback)
     })
   }
 
   function waitForCommandBridgeReply(
     platform: AIPlatform,
-    command: string,
+    command: PlatformCommand,
     timeoutMs: number,
     payload: Record<string, unknown> = {},
     timeoutOperation?: string,
-  ): Promise<CommandBridgeResult | null> {
+  ): Promise<PlatformCommandResult | null> {
     return waitForReply(
       platform,
       command,
@@ -242,7 +223,7 @@ export function createPlatformCommunication(
         && data.command === command
         && data.requestId === requestId
       ),
-      (data) => data as CommandBridgeResult,
+      (data) => data as PlatformCommandResult,
       null,
       timeoutOperation,
       payload,
@@ -262,10 +243,10 @@ export function createPlatformCommunication(
 
   async function requestReadOnlyCommandBridge(
     platform: AIPlatform,
-    command: string,
+    command: PlatformCommand,
     timeoutMs: number,
     timeoutOperation: string,
-  ): Promise<CommandBridgeResult | null> {
+  ): Promise<PlatformCommandResult | null> {
     const firstResult = await waitForCommandBridgeReply(
       platform,
       command,
@@ -286,7 +267,7 @@ export function createPlatformCommunication(
 
   function sendOfficialTabCommandWithTimeout<T>(
     platform: AIPlatform,
-    command: OfficialTabCommand,
+    command: PlatformCommand,
     timeoutMs: number,
     payload: Record<string, unknown> = {},
     timeoutOperation?: string,
@@ -310,10 +291,10 @@ export function createPlatformCommunication(
         finish(null, true)
       }, timeoutMs)
       Promise.resolve(dependencies.sendRuntimeMessage({
-        type: 'official-tab-command',
+        type: OFFICIAL_TAB_COMMAND_MESSAGE_TYPE,
         platform,
         command,
-        ...payload,
+        payload,
       })).then(
         (response) => finish((response ?? null) as T | null, false),
         () => finish(null, false),
@@ -405,10 +386,10 @@ export function createPlatformCommunication(
     timeoutMs = 3000,
   ): Promise<ResponseReadResult> {
     const route = chooseRoute(platform, dependencies)
-    let result: CommandBridgeResult | null
+    let result: PlatformCommandResult | null
     let timedOut = false
     if (route === 'official-tab') {
-      const response = await requestReadOnlyOfficialTabCommand<CommandBridgeResult>(
+      const response = await requestReadOnlyOfficialTabCommand<PlatformCommandResult>(
         platform,
         'get-last-response',
         timeoutMs,
@@ -451,10 +432,10 @@ export function createPlatformCommunication(
     timeoutMs = 3000,
   ): Promise<ConversationStateResult> {
     const route = chooseRoute(platform, dependencies)
-    let result: CommandBridgeResult | null
+    let result: PlatformCommandResult | null
     let timedOut = false
     if (route === 'official-tab') {
-      const response = await requestReadOnlyOfficialTabCommand<CommandBridgeResult>(
+      const response = await requestReadOnlyOfficialTabCommand<PlatformCommandResult>(
         platform,
         'get-state',
         timeoutMs,
@@ -497,7 +478,7 @@ export function createPlatformCommunication(
 
   async function readConversationUrl(platform: AIPlatform, timeoutMs = 1500): Promise<string> {
     if (chooseRoute(platform, dependencies) === 'official-tab') {
-      const { response: result } = await sendOfficialTabCommandWithTimeout<CommandBridgeResult>(
+      const { response: result } = await sendOfficialTabCommandWithTimeout<PlatformCommandResult>(
         platform,
         'get-conversation-url',
         timeoutMs,

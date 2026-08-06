@@ -1,5 +1,9 @@
 import type { AIAdapter } from '../adapters/base'
 import { createAdapterDiagnostics } from '../lib/diagnostic-client'
+import {
+  OFFICIAL_TAB_COMMAND_MESSAGE_TYPE,
+  type PlatformCommandResult,
+} from '../shared/messages'
 import type { AIPlatform } from '../types'
 
 export interface ContentScriptMessageTarget {
@@ -41,7 +45,7 @@ export interface ContentScriptCommandExtensionResult {
 }
 
 export type ContentScriptCommandExtensionHandler = (
-  context: { command: string; request: Readonly<Record<string, unknown>> },
+  context: { command: string; payload: Readonly<Record<string, unknown>> },
 ) => ContentScriptCommandExtensionResult | Promise<ContentScriptCommandExtensionResult>
 
 export interface InstallContentScriptCommandBridgeOptions {
@@ -50,20 +54,6 @@ export interface InstallContentScriptCommandBridgeOptions {
   selectorConfigVersion: string
   extensionHandler?: ContentScriptCommandExtensionHandler
 }
-
-export type ContentScriptCommandResult =
-  | {
-      platform: AIPlatform
-      command: string
-      ok: true
-      data: unknown
-    }
-  | {
-      platform: AIPlatform
-      command: string
-      ok: false
-      error: string
-    }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -77,7 +67,7 @@ function successResult(
   platform: AIPlatform,
   command: string,
   data: unknown,
-): ContentScriptCommandResult {
+): PlatformCommandResult {
   return {
     platform,
     command,
@@ -87,14 +77,14 @@ function successResult(
 }
 
 function decodeImage(
-  request: Readonly<Record<string, unknown>>,
+  payload: Readonly<Record<string, unknown>>,
   environment: ContentScriptCommandBridgeEnvironment,
 ): File | undefined {
-  if (typeof request.imageDataUrl !== 'string' || !request.imageDataUrl) return undefined
-  const separatorIndex = request.imageDataUrl.indexOf(',')
+  if (typeof payload.imageDataUrl !== 'string' || !payload.imageDataUrl) return undefined
+  const separatorIndex = payload.imageDataUrl.indexOf(',')
   const base64 = separatorIndex >= 0
-    ? request.imageDataUrl.slice(separatorIndex + 1)
-    : request.imageDataUrl
+    ? payload.imageDataUrl.slice(separatorIndex + 1)
+    : payload.imageDataUrl
   let bytes: Uint8Array
   try {
     if (!base64) throw new Error('empty image data')
@@ -103,11 +93,11 @@ function decodeImage(
   } catch {
     throw new Error('图片数据无法解码')
   }
-  const mime = typeof request.imageMime === 'string' && request.imageMime
-    ? request.imageMime
+  const mime = typeof payload.imageMime === 'string' && payload.imageMime
+    ? payload.imageMime
     : 'image/png'
-  const name = typeof request.imageName === 'string' && request.imageName
-    ? request.imageName
+  const name = typeof payload.imageName === 'string' && payload.imageName
+    ? payload.imageName
     : 'image.png'
   const fileBytes = new Uint8Array(bytes.byteLength)
   fileBytes.set(bytes)
@@ -116,22 +106,22 @@ function decodeImage(
 
 async function executeCommand(
   command: string,
-  request: Readonly<Record<string, unknown>>,
+  payload: Readonly<Record<string, unknown>>,
   options: InstallContentScriptCommandBridgeOptions,
   environment: ContentScriptCommandBridgeEnvironment,
-): Promise<ContentScriptCommandResult | null> {
+): Promise<PlatformCommandResult | null> {
   try {
-    const extensionResult = await options.extensionHandler?.({ command, request })
+    const extensionResult = await options.extensionHandler?.({ command, payload })
     if (extensionResult?.handled) {
       return successResult(options.platform, command, extensionResult.data)
     }
     if (command === 'write-and-send') {
       await options.adapter.sendMessage(
-        typeof request.text === 'string' ? request.text : '',
-        decodeImage(request, environment),
+        typeof payload.text === 'string' ? payload.text : '',
+        decodeImage(payload, environment),
         createAdapterDiagnostics(
           options.platform,
-          request.diagnostics,
+          payload.diagnostics,
           options.selectorConfigVersion,
         ),
       )
@@ -192,15 +182,16 @@ export function installContentScriptCommandBridge(
       || event.origin !== environment.extensionOrigin
       || !isRecord(event.data)
       || event.data.source !== 'aichatroom-parent'
-      || typeof event.data.action !== 'string'
+      || typeof event.data.command !== 'string'
       || typeof event.data.requestId !== 'string'
     ) {
       return
     }
 
-    const command = event.data.action
+    const command = event.data.command
     const requestId = event.data.requestId
-    void executeCommand(command, event.data, options, environment).then((result) => {
+    const payload = isRecord(event.data.payload) ? event.data.payload : {}
+    void executeCommand(command, payload, options, environment).then((result) => {
       if (!result) return
       environment.window.parent.postMessage({
         source: 'aichatroom-content',
@@ -211,9 +202,10 @@ export function installContentScriptCommandBridge(
     })
   }
   const onRuntimeMessage: ContentScriptRuntimeMessageListener = (message, _sender, sendResponse) => {
-    if (!isRecord(message) || typeof message.type !== 'string') return false
-    const command = message.type
-    void executeCommand(command, message, options, environment).then((result) => {
+    if (!isRecord(message) || message.type !== OFFICIAL_TAB_COMMAND_MESSAGE_TYPE) return false
+    const command = typeof message.command === 'string' ? message.command : ''
+    const payload = isRecord(message.payload) ? message.payload : {}
+    void executeCommand(command, payload, options, environment).then((result) => {
       sendResponse(result ?? {
         platform: options.platform,
         command,

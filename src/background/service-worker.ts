@@ -13,8 +13,8 @@
 import { enableEmbedRules, disableEmbedRules, getEmbedRuleCleanupIds } from './dnr-rules'
 import { removeTrackedChatTab } from './embed-rule-lifecycle'
 import { createDiagnosticWriter, handleDiagnosticWriterMessage } from './diagnostic-writer'
+import { routeOfficialTabCommand } from './official-tab-router'
 import { SUPPORTED_PLATFORMS } from '../lib/ai-platforms'
-import { mapDiagnosticError } from '../lib/diagnostic-types'
 import { recordExtensionUpdate } from '../lib/extension-update-notice'
 import {
   REMOTE_SELECTOR_CONFIG_STORAGE_KEY,
@@ -80,14 +80,6 @@ async function findOfficialTab(platform: AIPlatform): Promise<chrome.tabs.Tab | 
     if (tabs[0]) return tabs[0]
   }
   return null
-}
-
-async function sendOfficialTabMessage(platform: AIPlatform, message: unknown): Promise<unknown> {
-  const tab = await findOfficialTab(platform)
-  if (!tab?.id) {
-    throw new Error(`${platform} 官方标签页没有打开`)
-  }
-  return chrome.tabs.sendMessage(tab.id, message)
 }
 
 async function broadcastToChatTabs(msg: unknown): Promise<void> {
@@ -228,46 +220,12 @@ chrome.runtime.onMessage.addListener((msg: { type: string; [k: string]: unknown 
     return true
   }
   if (msg.type === 'official-tab-command') {
-    const platform = msg.platform as AIPlatform
-    const command = msg.command as string
-    const text = typeof msg.text === 'string' ? msg.text : ''
-    const imageDataUrl = typeof msg.imageDataUrl === 'string' ? msg.imageDataUrl : undefined
-    const imageMime = typeof msg.imageMime === 'string' ? msg.imageMime : undefined
-    const imageName = typeof msg.imageName === 'string' ? msg.imageName : undefined
-    const diagnostics = msg.diagnostics
-    const contentMessage =
-      command === 'write-and-send'
-        ? { type: 'write-and-send', text, imageDataUrl, imageMime, imageName, diagnostics }
-        : command === 'get-state'
-          ? { type: 'get-state' }
-          : command === 'get-last-response'
-            ? { type: 'get-last-response' }
-            : command === 'get-conversation-url'
-              ? { type: 'get-conversation-url' }
-            : null
-    if (!contentMessage) {
-      sendResponse({
-        platform,
-        command,
-        ok: false,
-        error: `unknown official-tab-command: ${command}`,
-      })
-      return false
-    }
-    sendOfficialTabMessage(platform, contentMessage)
-      .then((response) => sendResponse(response ?? { ok: true }))
-      .catch((e) => {
-        const mappedError = mapDiagnosticError(e)
-        sendResponse({
-          platform,
-          command,
-          ok: false,
-          error: String(e),
-          diagnosticErrorCode: mappedError === 'unexpected-error'
-            ? 'official-tab-unavailable'
-            : mappedError,
-        })
-      })
+    routeOfficialTabCommand(msg, {
+      findOfficialTab,
+      sendToTab: (tabId, message) => chrome.tabs.sendMessage(tabId, message),
+    })
+      .then((result) => sendResponse(result))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }))
     return true
   }
   if (msg.type === 'selector-config:get') {
