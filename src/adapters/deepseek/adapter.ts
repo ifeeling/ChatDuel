@@ -1,4 +1,5 @@
 import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
+import { emitDiagnostic } from '../shared/diagnostics'
 import type { ConversationState } from '../../types'
 import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
 import { elementToMarkdownText } from '../../lib/dom-response-text'
@@ -896,10 +897,6 @@ function getResponseTextWithFallback(selectors: DeepSeekSelectors): string {
 export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter & AdapterSendInternals {
   const selectors = mergeSelectorOverrides(DEFAULT_SELECTORS, selectorOverrides) as DeepSeekSelectors
 
-  function emit(diagnostics: AdapterDiagnostics | undefined, event: Parameters<AdapterDiagnostics['reporter']['emit']>[0]) {
-    diagnostics?.reporter.emit({ ...event, selectorConfigVersion: diagnostics.selectorConfigVersion })
-  }
-
   return {
     async writeText(text: string) {
       const box = queryFirst<HTMLElement>(selectors.inputBox)
@@ -935,13 +932,13 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
 
     async sendMessage(text: string, image?: File, diagnostics?: AdapterDiagnostics) {
       if (image) {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'attachment-prepare', stage: 'preparing', eventStatus: 'observed', hasAttachment: true,
         })
         try {
           assertCanSendImageInCurrentMode()
         } catch {
-          emit(diagnostics, {
+          emitDiagnostic(diagnostics, {
             component: 'platform-adapter', operation: 'attachment-prepare', stage: 'failed', eventStatus: 'failed',
             runOutcome: 'failed', errorCode: 'adapter-unsupported-page', hasAttachment: true,
           })
@@ -950,26 +947,26 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
       }
       const box = queryFirst<HTMLElement>(selectors.inputBox)
       if (!box) {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'input-locate', stage: 'failed', eventStatus: 'failed',
           runOutcome: 'failed', errorCode: 'input-box-not-found', inputCharacterCount: text.length,
         })
         throw new Error('deepseek input box not found')
       }
-      emit(diagnostics, {
+      emitDiagnostic(diagnostics, {
         component: 'platform-adapter', operation: 'input-locate', stage: 'located', eventStatus: 'succeeded', inputCharacterCount: text.length,
       })
       try {
         if (box instanceof HTMLTextAreaElement) writeNativeTextareaValue(box, text)
         else writeEditableValue(box, text)
       } catch {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'input-write', stage: 'failed', eventStatus: 'failed',
           runOutcome: 'failed', errorCode: 'input-write-failed', inputCharacterCount: text.length,
         })
         throw new Error('input write failed')
       }
-      emit(diagnostics, {
+      emitDiagnostic(diagnostics, {
         component: 'platform-adapter', operation: 'input-write', stage: 'written', eventStatus: 'succeeded', inputCharacterCount: text.length,
       })
       await new Promise((resolve) => setTimeout(resolve, 80))
@@ -977,17 +974,17 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
         try {
           await this.attachImage(image)
         } catch {
-          emit(diagnostics, {
+          emitDiagnostic(diagnostics, {
             component: 'platform-adapter', operation: 'attachment-prepare', stage: 'failed', eventStatus: 'failed',
             runOutcome: 'failed', errorCode: 'attachment-preparation-timeout', hasAttachment: true,
           })
           throw new Error('deepseek image upload failed')
         }
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'attachment-prepare', stage: 'prepared', eventStatus: 'succeeded', hasAttachment: true,
         })
       } else {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'attachment-prepare', stage: 'skipped', eventStatus: 'skipped', hasAttachment: false,
         })
       }
@@ -996,7 +993,7 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
       await new Promise((resolve) => setTimeout(resolve, image ? 3000 : 200))
       const currentBox = queryFirst<HTMLElement>(selectors.inputBox)
       if (!currentBox) {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'input-locate', stage: 'failed', eventStatus: 'failed',
           runOutcome: 'failed', errorCode: 'input-box-not-found', inputCharacterCount: text.length,
         })
@@ -1013,11 +1010,11 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
       await new Promise((resolve) => setTimeout(resolve, 50))
       for (let attempt = 1; attempt <= 3; attempt += 1) {
         dispatchEnter(currentBox)
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber: attempt,
         })
         if (await waitForSendAccepted(selectors)) {
-          emit(diagnostics, {
+          emitDiagnostic(diagnostics, {
             component: 'platform-adapter', operation: 'send-ack', stage: 'accepted', eventStatus: 'succeeded',
             retryNumber: attempt, retryCount: attempt,
           })
@@ -1028,21 +1025,21 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
       const btn = findSendControl(selectors)
       if (btn) {
         activateControl(btn)
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber: 4,
         })
         if (hasStopGeneratingButton(selectors) || !hasPendingContent(selectors)) {
-          emit(diagnostics, {
+          emitDiagnostic(diagnostics, {
             component: 'platform-adapter', operation: 'send-ack', stage: 'accepted', eventStatus: 'succeeded', retryNumber: 4, retryCount: 4,
           })
         } else {
-          emit(diagnostics, {
+          emitDiagnostic(diagnostics, {
             component: 'platform-adapter', operation: 'send-ack', stage: 'waiting', eventStatus: 'observed', retryNumber: 4, retryCount: 4,
           })
         }
         return
       }
-      emit(diagnostics, {
+      emitDiagnostic(diagnostics, {
         component: 'platform-adapter', operation: 'send-click', stage: 'failed', eventStatus: 'failed',
         runOutcome: 'failed', errorCode: 'send-button-not-found', retryCount: 3,
       })

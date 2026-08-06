@@ -1,4 +1,5 @@
 import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
+import { emitDiagnostic } from '../shared/diagnostics'
 import type { ConversationState } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 import { elementToMarkdownText } from '../../lib/dom-response-text'
@@ -203,10 +204,6 @@ export function createGeminiAdapter(selectorOverrides?: SelectorOverrideMap): AI
     return nodes.length > 0 ? nodes[nodes.length - 1] : null
   }
 
-  function emit(diagnostics: AdapterDiagnostics | undefined, event: Parameters<AdapterDiagnostics['reporter']['emit']>[0]) {
-    diagnostics?.reporter.emit({ ...event, selectorConfigVersion: diagnostics.selectorConfigVersion })
-  }
-
   return {
     async writeText(text: string) {
       const box = q<HTMLElement>(S.inputBox)
@@ -234,48 +231,48 @@ export function createGeminiAdapter(selectorOverrides?: SelectorOverrideMap): AI
     async sendMessage(text: string, image?: File, diagnostics?: AdapterDiagnostics) {
       const box = q<HTMLElement>(S.inputBox)
       if (!box) {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'input-locate', stage: 'failed', eventStatus: 'failed',
           runOutcome: 'failed', errorCode: 'input-box-not-found', inputCharacterCount: text.length,
         })
         throw new Error('input box not found')
       }
-      emit(diagnostics, {
+      emitDiagnostic(diagnostics, {
         component: 'platform-adapter', operation: 'input-locate', stage: 'located', eventStatus: 'succeeded', inputCharacterCount: text.length,
       })
       try {
         writeQuillValue(box, text)
       } catch {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'input-write', stage: 'failed', eventStatus: 'failed',
           runOutcome: 'failed', errorCode: 'input-write-failed', inputCharacterCount: text.length,
         })
         throw new Error('input write failed')
       }
-      emit(diagnostics, {
+      emitDiagnostic(diagnostics, {
         component: 'platform-adapter', operation: 'input-write', stage: 'written', eventStatus: 'succeeded', inputCharacterCount: text.length,
       })
       // 写完文字再附加图片(等 React/Quill 状态稳定)
       await sleep(50)
       if (image) {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'attachment-prepare', stage: 'preparing', eventStatus: 'observed', hasAttachment: true,
         })
         try {
           await this.attachImage(image)
           await waitForUploadReady()
         } catch {
-          emit(diagnostics, {
+          emitDiagnostic(diagnostics, {
             component: 'platform-adapter', operation: 'attachment-prepare', stage: 'failed', eventStatus: 'failed',
             runOutcome: 'failed', errorCode: 'attachment-preparation-timeout', hasAttachment: true,
           })
           throw new Error('attachment preparation failed')
         }
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'attachment-prepare', stage: 'prepared', eventStatus: 'succeeded', hasAttachment: true,
         })
       } else {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'attachment-prepare', stage: 'skipped', eventStatus: 'skipped', hasAttachment: false,
         })
       }
@@ -283,14 +280,14 @@ export function createGeminiAdapter(selectorOverrides?: SelectorOverrideMap): AI
       await sleep(200)
       for (let attempt = 1; attempt <= 3; attempt += 1) {
         dispatchEnterKey(box)
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber: attempt,
         })
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'send-ack', stage: 'waiting', eventStatus: 'observed', retryNumber: attempt,
         })
         if (await waitForSendAccepted(box, S)) {
-          emit(diagnostics, {
+          emitDiagnostic(diagnostics, {
             component: 'platform-adapter', operation: 'send-ack', stage: 'accepted', eventStatus: 'succeeded',
             retryNumber: attempt, retryCount: attempt,
           })
@@ -298,7 +295,7 @@ export function createGeminiAdapter(selectorOverrides?: SelectorOverrideMap): AI
         }
         await sleep(250)
       }
-      emit(diagnostics, {
+      emitDiagnostic(diagnostics, {
         component: 'platform-adapter', operation: 'send-ack', stage: 'failed', eventStatus: 'failed',
         runOutcome: 'failed', errorCode: 'message-not-accepted', retryCount: 3,
       })

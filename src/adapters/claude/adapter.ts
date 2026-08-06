@@ -1,4 +1,5 @@
 import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
+import { emitDiagnostic } from '../shared/diagnostics'
 import type { ConversationState } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 import selectorsJson from './selectors.json'
@@ -400,10 +401,6 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
     return nodes.length > 0 ? nodes[nodes.length - 1] : null
   }
 
-  function emit(diagnostics: AdapterDiagnostics | undefined, event: Parameters<AdapterDiagnostics['reporter']['emit']>[0]) {
-    diagnostics?.reporter.emit({ ...event, selectorConfigVersion: diagnostics.selectorConfigVersion })
-  }
-
   return {
     async writeText(text: string) {
       const box = q<HTMLElement>(S.inputBox)
@@ -419,47 +416,47 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
     async sendMessage(text: string, image?: File, diagnostics?: AdapterDiagnostics) {
       const box = q<HTMLElement>(S.inputBox)
       if (!box) {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'input-locate', stage: 'failed', eventStatus: 'failed',
           runOutcome: 'failed', errorCode: 'input-box-not-found', inputCharacterCount: text.length,
         })
         throw new Error('claude input box not found')
       }
-      emit(diagnostics, {
+      emitDiagnostic(diagnostics, {
         component: 'platform-adapter', operation: 'input-locate', stage: 'located', eventStatus: 'succeeded', inputCharacterCount: text.length,
       })
       try {
         writeEditableValue(box, text)
       } catch {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'input-write', stage: 'failed', eventStatus: 'failed',
           runOutcome: 'failed', errorCode: 'input-write-failed', inputCharacterCount: text.length,
         })
         throw new Error('input write failed')
       }
-      emit(diagnostics, {
+      emitDiagnostic(diagnostics, {
         component: 'platform-adapter', operation: 'input-write', stage: 'written', eventStatus: 'succeeded', inputCharacterCount: text.length,
       })
       await new Promise((r) => setTimeout(r, 50))
       if (image) {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'attachment-prepare', stage: 'preparing', eventStatus: 'observed', hasAttachment: true,
         })
         try {
           await this.attachImage(image)
           await waitForUploadReady()
         } catch {
-          emit(diagnostics, {
+          emitDiagnostic(diagnostics, {
             component: 'platform-adapter', operation: 'attachment-prepare', stage: 'failed', eventStatus: 'failed',
             runOutcome: 'failed', errorCode: 'attachment-preparation-timeout', hasAttachment: true,
           })
           throw new Error('attachment preparation failed')
         }
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'attachment-prepare', stage: 'prepared', eventStatus: 'succeeded', hasAttachment: true,
         })
       } else {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'attachment-prepare', stage: 'skipped', eventStatus: 'skipped', hasAttachment: false,
         })
       }
@@ -469,19 +466,19 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
         try {
           await this.triggerSend()
         } catch {
-          emit(diagnostics, {
+          emitDiagnostic(diagnostics, {
             component: 'platform-adapter', operation: 'send-click', stage: 'timed-out', eventStatus: 'timed-out',
             runOutcome: 'timed-out', errorCode: 'send-button-not-ready', retryNumber, timeoutMs: 8_000,
           })
           throw new Error('send button is not ready')
         }
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber,
         })
         await new Promise((r) => setTimeout(r, 350))
         if (composerRemainingText().length === 0) {
           submitted = true
-          emit(diagnostics, {
+          emitDiagnostic(diagnostics, {
             component: 'platform-adapter', operation: 'send-ack', stage: 'accepted', eventStatus: 'succeeded',
             retryNumber, retryCount: retryNumber,
           })
@@ -492,7 +489,7 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
         await new Promise((r) => setTimeout(r, 350))
         if (composerRemainingText().length === 0) {
           submitted = true
-          emit(diagnostics, {
+          emitDiagnostic(diagnostics, {
             component: 'platform-adapter', operation: 'send-ack', stage: 'accepted', eventStatus: 'succeeded',
             retryNumber, retryCount: retryNumber,
           })
@@ -500,7 +497,7 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
         }
       }
       if (!submitted) {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'send-ack', stage: 'failed', eventStatus: 'failed',
           runOutcome: 'failed', errorCode: 'message-not-accepted', retryCount: 3,
         })

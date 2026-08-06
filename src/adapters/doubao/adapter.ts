@@ -1,4 +1,5 @@
 import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
+import { emitDiagnostic } from '../shared/diagnostics'
 import type { ConversationState } from '../../types'
 import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
 import { elementToMarkdownText } from '../../lib/dom-response-text'
@@ -559,10 +560,6 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
     return activeSend?.prompt ? new Set([activeSend.prompt]) : new Set()
   }
 
-  function emit(diagnostics: AdapterDiagnostics | undefined, event: Parameters<AdapterDiagnostics['reporter']['emit']>[0]) {
-    diagnostics?.reporter.emit({ ...event, selectorConfigVersion: diagnostics.selectorConfigVersion })
-  }
-
   return {
     async writeText(text: string) {
       const box = queryFirst<HTMLElement>(selectors.inputBox)
@@ -590,47 +587,47 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
       const candidatesBeforeSend = snapshotResponseCandidates(selectors)
       const box = queryFirst<HTMLElement>(selectors.inputBox)
       if (!box) {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'input-locate', stage: 'failed', eventStatus: 'failed',
           runOutcome: 'failed', errorCode: 'input-box-not-found', inputCharacterCount: text.length,
         })
         throw new Error('doubao input box not found')
       }
-      emit(diagnostics, {
+      emitDiagnostic(diagnostics, {
         component: 'platform-adapter', operation: 'input-locate', stage: 'located', eventStatus: 'succeeded', inputCharacterCount: text.length,
       })
       try {
         if (box instanceof HTMLTextAreaElement) writeNativeTextareaValue(box, text)
         else writeEditableValue(box, text)
       } catch {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'input-write', stage: 'failed', eventStatus: 'failed',
           runOutcome: 'failed', errorCode: 'input-write-failed', inputCharacterCount: text.length,
         })
         throw new Error('input write failed')
       }
-      emit(diagnostics, {
+      emitDiagnostic(diagnostics, {
         component: 'platform-adapter', operation: 'input-write', stage: 'written', eventStatus: 'succeeded', inputCharacterCount: text.length,
       })
       await new Promise((resolve) => setTimeout(resolve, 80))
       if (image) {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'attachment-prepare', stage: 'preparing', eventStatus: 'observed', hasAttachment: true,
         })
         try {
           await this.attachImage(image)
         } catch {
-          emit(diagnostics, {
+          emitDiagnostic(diagnostics, {
             component: 'platform-adapter', operation: 'attachment-prepare', stage: 'failed', eventStatus: 'failed',
             runOutcome: 'failed', errorCode: 'attachment-preparation-timeout', hasAttachment: true,
           })
           throw new Error('attachment preparation failed')
         }
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'attachment-prepare', stage: 'prepared', eventStatus: 'succeeded', hasAttachment: true,
         })
       } else {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'attachment-prepare', stage: 'skipped', eventStatus: 'skipped', hasAttachment: false,
         })
       }
@@ -638,7 +635,7 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
       try {
         await this.triggerSend()
       } catch {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'send-click', stage: 'failed', eventStatus: 'failed',
           runOutcome: 'failed', errorCode: 'send-click-failed', retryNumber: 1,
         })
@@ -653,15 +650,15 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
         completionActionBarDetected: false,
         completionActionBarStableCount: 0,
       }
-      emit(diagnostics, {
+      emitDiagnostic(diagnostics, {
         component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber: 1,
       })
       if (hasStopGeneratingButton(selectors) || !hasPendingContent(selectors)) {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'send-ack', stage: 'accepted', eventStatus: 'succeeded', retryNumber: 1, retryCount: 1,
         })
       } else {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'send-ack', stage: 'waiting', eventStatus: 'observed', retryNumber: 1, retryCount: 1,
         })
       }

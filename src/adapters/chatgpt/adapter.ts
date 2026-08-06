@@ -1,4 +1,5 @@
 import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
+import { emitDiagnostic } from '../shared/diagnostics'
 import type { ConversationState } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 import selectorsJson from './selectors.json'
@@ -169,13 +170,6 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
     return nodes.length > 0 ? nodes[nodes.length - 1] : null
   }
 
-  function emit(diagnostics: AdapterDiagnostics | undefined, event: Parameters<AdapterDiagnostics['reporter']['emit']>[0]) {
-    diagnostics?.reporter.emit({
-      ...event,
-      selectorConfigVersion: diagnostics.selectorConfigVersion,
-    })
-  }
-
   return {
     async writeText(text: string) {
       const box = q<HTMLElement>(S.inputBox)
@@ -192,7 +186,7 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
       const inputCharacterCount = text.length
       const box = q<HTMLElement>(S.inputBox)
       if (!box) {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter',
           operation: 'input-locate',
           stage: 'failed',
@@ -203,7 +197,7 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
         })
         throw new Error('input box not found')
       }
-      emit(diagnostics, {
+      emitDiagnostic(diagnostics, {
         component: 'platform-adapter',
         operation: 'input-locate',
         stage: 'located',
@@ -212,7 +206,7 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
       })
       try {
         writeEditableValue(box, text)
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter',
           operation: 'input-write',
           stage: 'written',
@@ -220,7 +214,7 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
           inputCharacterCount,
         })
       } catch {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter',
           operation: 'input-write',
           stage: 'failed',
@@ -234,18 +228,18 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
       // 写完文字再附加图片(等 React/Quill 状态稳定)
       await new Promise((r) => setTimeout(r, 50))
       if (image) {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'attachment-prepare', stage: 'preparing', eventStatus: 'observed', hasAttachment: true,
         })
         try {
           await this.attachImage(image)
           // 等上传组件把缩略图渲染进 input,并等 AI 网站自己的图片处理流水线跑完
           await waitForUploadReady()
-          emit(diagnostics, {
+          emitDiagnostic(diagnostics, {
             component: 'platform-adapter', operation: 'attachment-prepare', stage: 'prepared', eventStatus: 'succeeded', hasAttachment: true,
           })
         } catch {
-          emit(diagnostics, {
+          emitDiagnostic(diagnostics, {
             component: 'platform-adapter',
             operation: 'attachment-prepare',
             stage: 'failed',
@@ -257,7 +251,7 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
           throw new Error('attachment preparation failed')
         }
       } else {
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'attachment-prepare', stage: 'skipped', eventStatus: 'skipped', hasAttachment: false,
         })
       }
@@ -267,7 +261,7 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
         try {
           await this.triggerSend()
         } catch {
-          emit(diagnostics, {
+          emitDiagnostic(diagnostics, {
             component: 'platform-adapter',
             operation: 'send-click',
             stage: 'timed-out',
@@ -279,14 +273,14 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
           })
           throw new Error('send button is not ready')
         }
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber,
         })
-        emit(diagnostics, {
+        emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'send-ack', stage: 'waiting', eventStatus: 'observed', retryNumber,
         })
         if (await waitForSendAccepted(S)) {
-          emit(diagnostics, {
+          emitDiagnostic(diagnostics, {
             component: 'platform-adapter',
             operation: 'send-ack',
             stage: 'accepted',
@@ -298,7 +292,7 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
         }
         await sleep(250)
       }
-      emit(diagnostics, {
+      emitDiagnostic(diagnostics, {
         component: 'platform-adapter',
         operation: 'send-ack',
         stage: 'failed',
