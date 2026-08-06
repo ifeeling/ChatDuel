@@ -1371,19 +1371,9 @@ function resolveComposerTargets(text: string): AIPlatform[] {
 }
 
 async function onSend() {
-  // 纯输入校验留在页面：空内容 / 无文本目标直接拦截，不进协调器。
-  const text = inputEl.value.trim()
-  if (!text && !pendingAttachment) {
-    showToast(t(userSettings.language, 'send.needTextOrAttachment'), 'warn')
-    return
-  }
-  const targets = resolveComposerTargets(text)
-  if (targets.length === 0) {
-    showToast(t(userSettings.language, 'send.noTextTarget'), 'warn')
-    return
-  }
-  // 门禁（总结互斥 / 队列暂停 / 有任务在收集则入队）在协调器内部判断；
-  // 页面只把拒绝原因翻译成既有提示。
+  // @ 目标解析是页面纯界面动作；门禁、空内容拦截的顺序与分支
+  // 全部由协调器按原页面顺序判断，页面只把拒绝原因翻译成既有提示。
+  const targets = resolveComposerTargets(inputEl.value.trim())
   const outcome = await questionSendCoordinator.submitFromComposer({
     // 传入输入框原值：入队路径逐字保存，立即发送路径由协调器内部 trim 后投递。
     text: inputEl.value,
@@ -1399,6 +1389,10 @@ async function onSend() {
       'warn',
       5000,
     )
+  } else if (outcome.reason === 'empty-composer') {
+    showToast(t(userSettings.language, 'send.needTextOrAttachment'), 'warn')
+  } else if (outcome.reason === 'no-text-targets') {
+    showToast(t(userSettings.language, 'send.noTextTarget'), 'warn')
   }
 }
 

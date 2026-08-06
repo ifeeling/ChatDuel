@@ -181,6 +181,8 @@ export type QuestionSubmitRejectionReason =
   | 'summary-running'
   | `queue-paused:${QueuePauseReason}`
   | 'enqueue-failed'
+  | 'empty-composer'
+  | 'no-text-targets'
   | 'dispatch-not-started'
 
 export type QuestionSubmitOutcome =
@@ -647,8 +649,17 @@ export function createQuestionSendCoordinator(
         return { kind: 'enqueued' }
       }
 
+      // 与原页面顺序一致：空内容 / 无文本目标在门禁与入队分支之后才检查。
+      const trimmedText = input.text.trim()
+      if (!trimmedText && !input.attachment) {
+        return { kind: 'rejected', reason: 'empty-composer' }
+      }
+      if (input.targets.length === 0) {
+        return { kind: 'rejected', reason: 'no-text-targets' }
+      }
+
       const dispatched = await dispatch({
-        text: input.text.trim(),
+        text: trimmedText,
         targets: input.targets,
         attachment: input.attachment,
         clearComposerOnSendComplete: true,
