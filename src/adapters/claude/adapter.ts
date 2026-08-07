@@ -1,6 +1,7 @@
 import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
 import { emitDiagnostic } from '../shared/diagnostics'
 import { attachImageToFileInput, findFileInput } from '../shared/file-input'
+import { writeEditableValue } from '../shared/dom-write'
 import type { ConversationState } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 import selectorsJson from './selectors.json'
@@ -24,11 +25,8 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // Claude 输入框是 contenteditable（ProseMirror/TipTap 风格），和 ChatGPT 类似：
 // 直接改 textContent + 派发 input/beforeinput，框架靠 MutationObserver 感知。
-function writeEditableValue(el: HTMLElement, text: string): void {
-  el.textContent = text
-  el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }))
-  el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }))
-}
+// 写值逻辑已抽进共享原语 writeEditableValue（派发顺序取与 ChatGPT 一致的
+// input-then-beforeinput）。
 
 function isButtonDisabled(btn: HTMLButtonElement): boolean {
   return btn.disabled || btn.getAttribute('aria-disabled') === 'true' || btn.dataset.disabled === 'true'
@@ -358,7 +356,7 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
     async writeText(text: string) {
       const box = q<HTMLElement>(S.inputBox)
       if (!box) throw new Error('claude input box not found')
-      writeEditableValue(box, text)
+      writeEditableValue(box, text, 'input-then-beforeinput')
     },
 
     async triggerSend() {
@@ -379,7 +377,7 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
         component: 'platform-adapter', operation: 'input-locate', stage: 'located', eventStatus: 'succeeded', inputCharacterCount: text.length,
       })
       try {
-        writeEditableValue(box, text)
+        writeEditableValue(box, text, 'input-then-beforeinput')
       } catch {
         emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'input-write', stage: 'failed', eventStatus: 'failed',

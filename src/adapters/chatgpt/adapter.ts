@@ -1,6 +1,7 @@
 import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
 import { emitDiagnostic } from '../shared/diagnostics'
 import { attachImageToFileInput } from '../shared/file-input'
+import { writeEditableValue, waitForSendAccepted } from '../shared/dom-write'
 import type { ConversationState } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 import selectorsJson from './selectors.json'
@@ -19,22 +20,6 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 // btn.click() 即可工作(React 18 通过 document 上的事件委托接收原生
 // click 并派发合成事件;对 click 事件 isTrusted 不严格检查)。
 // 详见 docs/postmortems/2026-06-09-gemini-send-button.md §4
-//
-// ⚠️ 不能调 el.focus():跑在跨源 iframe 子 frame 里时 Chrome 会拒绝
-// 跨源子 frame 的 textarea 主动 focus,抛 "Blocked autofocusing on a
-// <textarea> element in a cross-origin subframe"。详见
-// docs/postmortems/2026-06-09-iframe-no-response.md §2.3
-function writeEditableValue(el: HTMLElement, text: string): void {
-  // 清空并写入新文本
-  el.textContent = text
-  // contenteditable 需要 input 事件 + 可选 blur 来让内部框架感知变化
-  el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }))
-  // ProseMirror/TipTap 还会监听 beforeinput,补一发
-  const beforeInput = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: text })
-  el.dispatchEvent(beforeInput)
-}
-
-
 
 
 // 等 ChatGPT 上传流水线跑完(没图时不做事)。
@@ -84,15 +69,6 @@ async function waitForSendButtonReady(selectors: ChatGPTSelectors, maxMs = 8000)
   throw new Error('send button is not ready')
 }
 
-async function waitForSendAccepted(selectors: ChatGPTSelectors, maxMs = 700): Promise<boolean> {
-  const start = Date.now()
-  while (Date.now() - start < maxMs) {
-    if (hasStopGeneratingButton(selectors) || !composerHasPendingContent(selectors)) return true
-    await sleep(100)
-  }
-  return hasStopGeneratingButton(selectors) || !composerHasPendingContent(selectors)
-}
-
 export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter & AdapterSendInternals {
   const S = mergeSelectorOverrides(DEFAULT_SELECTORS, selectorOverrides)
 
@@ -109,7 +85,7 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
     async writeText(text: string) {
       const box = q<HTMLElement>(S.inputBox)
       if (!box) throw new Error('input box not found')
-      writeEditableValue(box, text)
+      writeEditableValue(box, text, 'input-then-beforeinput')
     },
 
     async triggerSend() {
@@ -140,7 +116,7 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
         inputCharacterCount,
       })
       try {
-        writeEditableValue(box, text)
+        writeEditableValue(box, text, 'input-then-beforeinput')
         emitDiagnostic(diagnostics, {
           component: 'platform-adapter',
           operation: 'input-write',
@@ -214,7 +190,7 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
         emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'send-ack', stage: 'waiting', eventStatus: 'observed', retryNumber,
         })
-        if (await waitForSendAccepted(S)) {
+        if (await waitForSendAccepted(() => hasStopGeneratingButton(S) || !composerHasPendingContent(S))) {
           emitDiagnostic(diagnostics, {
             component: 'platform-adapter',
             operation: 'send-ack',

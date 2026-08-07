@@ -1,6 +1,7 @@
 import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
 import { emitDiagnostic } from '../shared/diagnostics'
 import { findFileInput } from '../shared/file-input'
+import { writeEditableValue } from '../shared/dom-write'
 import type { ConversationState } from '../../types'
 import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
 import { elementToMarkdownText } from '../../lib/dom-response-text'
@@ -182,12 +183,6 @@ async function pasteImageIntoComposer(file: File, selectors: DoubaoSelectors): P
 function writeNativeTextareaValue(el: HTMLTextAreaElement, text: string): void {
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
   setter?.call(el, text)
-  el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }))
-}
-
-function writeEditableValue(el: HTMLElement, text: string): void {
-  el.textContent = text
-  el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }))
   el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }))
 }
 
@@ -553,7 +548,7 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
       if (box instanceof HTMLTextAreaElement) {
         writeNativeTextareaValue(box, text)
       } else {
-        writeEditableValue(box, text)
+        writeEditableValue(box, text, 'beforeinput-then-input')
       }
     },
 
@@ -584,7 +579,7 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
       })
       try {
         if (box instanceof HTMLTextAreaElement) writeNativeTextareaValue(box, text)
-        else writeEditableValue(box, text)
+        else writeEditableValue(box, text, 'beforeinput-then-input')
       } catch {
         emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'input-write', stage: 'failed', eventStatus: 'failed',

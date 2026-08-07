@@ -1,6 +1,7 @@
 import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
 import { emitDiagnostic } from '../shared/diagnostics'
 import { findFileInput } from '../shared/file-input'
+import { writeEditableValue, waitForSendAccepted } from '../shared/dom-write'
 import type { ConversationState } from '../../types'
 import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
 import { elementToMarkdownText } from '../../lib/dom-response-text'
@@ -403,12 +404,6 @@ function writeNativeTextareaValue(el: HTMLTextAreaElement, text: string): void {
   el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }))
 }
 
-function writeEditableValue(el: HTMLElement, text: string): void {
-  el.textContent = text
-  el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }))
-  el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }))
-}
-
 function findSendControl(selectors: DeepSeekSelectors): HTMLElement | null {
   const direct = queryFirst<HTMLElement>(selectors.sendButton)
   if (direct) return direct
@@ -487,12 +482,9 @@ function hasPendingContent(selectors: DeepSeekSelectors): boolean {
   return text.length > 0
 }
 
-async function waitForSendAccepted(selectors: DeepSeekSelectors, maxMs = 700): Promise<boolean> {
-  const start = Date.now()
-  while (Date.now() - start < maxMs) {
-    if (hasStopGeneratingButton(selectors) || !hasPendingContent(selectors)) return true
-    await new Promise((resolve) => setTimeout(resolve, 100))
-  }
+// 「发送已被接受」判定：出现停止生成按钮，或输入框已清空（无待发内容）。
+// 供 triggerSend / sendMessage 的轮询与最终检查复用，避免两处写法漂移。
+function isSendAccepted(selectors: DeepSeekSelectors): boolean {
   return hasStopGeneratingButton(selectors) || !hasPendingContent(selectors)
 }
 
@@ -890,7 +882,7 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
       if (box instanceof HTMLTextAreaElement) {
         writeNativeTextareaValue(box, text)
       } else {
-        writeEditableValue(box, text)
+        writeEditableValue(box, text, 'beforeinput-then-input')
       }
     },
 
@@ -902,7 +894,7 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
         // 尝试 Enter 键发送（参考 Gemini 的 waitForSendAccepted 检测）
         for (let attempt = 0; attempt < 3; attempt += 1) {
           dispatchEnter(box)
-          if (await waitForSendAccepted(selectors)) return
+          if (await waitForSendAccepted(() => isSendAccepted(selectors))) return
           await new Promise((resolve) => setTimeout(resolve, 250))
         }
         // Enter 方案失败，回退到按钮点击
@@ -944,7 +936,7 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
       })
       try {
         if (box instanceof HTMLTextAreaElement) writeNativeTextareaValue(box, text)
-        else writeEditableValue(box, text)
+        else writeEditableValue(box, text, 'beforeinput-then-input')
       } catch {
         emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'input-write', stage: 'failed', eventStatus: 'failed',
@@ -990,7 +982,7 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
         : currentBox.textContent ?? ''
       if (currentText !== text) {
         if (currentBox instanceof HTMLTextAreaElement) writeNativeTextareaValue(currentBox, text)
-        else writeEditableValue(currentBox, text)
+        else writeEditableValue(currentBox, text, 'beforeinput-then-input')
       }
       currentBox.focus()
       await new Promise((resolve) => setTimeout(resolve, 50))
@@ -999,7 +991,7 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
         emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber: attempt,
         })
-        if (await waitForSendAccepted(selectors)) {
+        if (await waitForSendAccepted(() => isSendAccepted(selectors))) {
           emitDiagnostic(diagnostics, {
             component: 'platform-adapter', operation: 'send-ack', stage: 'accepted', eventStatus: 'succeeded',
             retryNumber: attempt, retryCount: attempt,
@@ -1014,7 +1006,7 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
         emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber: 4,
         })
-        if (hasStopGeneratingButton(selectors) || !hasPendingContent(selectors)) {
+        if (isSendAccepted(selectors)) {
           emitDiagnostic(diagnostics, {
             component: 'platform-adapter', operation: 'send-ack', stage: 'accepted', eventStatus: 'succeeded', retryNumber: 4, retryCount: 4,
           })

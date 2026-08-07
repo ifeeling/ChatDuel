@@ -1,6 +1,7 @@
 import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
 import { emitDiagnostic } from '../shared/diagnostics'
 import { attachImageToFileInput } from '../shared/file-input'
+import { waitForSendAccepted } from '../shared/dom-write'
 import type { ConversationState } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 import { elementToMarkdownText } from '../../lib/dom-response-text'
@@ -118,12 +119,9 @@ function editorHasPendingContent(editor: HTMLElement): boolean {
   return text.length > 0 || !!editor.querySelector('img')
 }
 
-async function waitForSendAccepted(editor: HTMLElement, selectors: GeminiSelectors, maxMs = 700): Promise<boolean> {
-  const start = Date.now()
-  while (Date.now() - start < maxMs) {
-    if (hasStopGeneratingButton(selectors) || !editorHasPendingContent(editor)) return true
-    await sleep(100)
-  }
+// 「发送已被接受」判定：出现停止生成按钮，或输入框已清空（无待发内容）。
+// 供 triggerSend / sendMessage 的轮询复用，避免两处写法漂移。
+function isSendAccepted(editor: HTMLElement, selectors: GeminiSelectors): boolean {
   return hasStopGeneratingButton(selectors) || !editorHasPendingContent(editor)
 }
 
@@ -152,7 +150,7 @@ export function createGeminiAdapter(selectorOverrides?: SelectorOverrideMap): AI
       if (box) {
         for (let attempt = 0; attempt < 3; attempt += 1) {
           dispatchEnterKey(box)
-          if (await waitForSendAccepted(box, S)) return
+          if (await waitForSendAccepted(() => isSendAccepted(box, S))) return
           await sleep(250)
         }
         throw new Error('message was not accepted by Gemini editor')
@@ -221,7 +219,7 @@ export function createGeminiAdapter(selectorOverrides?: SelectorOverrideMap): AI
         emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'send-ack', stage: 'waiting', eventStatus: 'observed', retryNumber: attempt,
         })
-        if (await waitForSendAccepted(box, S)) {
+        if (await waitForSendAccepted(() => isSendAccepted(box, S))) {
           emitDiagnostic(diagnostics, {
             component: 'platform-adapter', operation: 'send-ack', stage: 'accepted', eventStatus: 'succeeded',
             retryNumber: attempt, retryCount: attempt,
