@@ -55,9 +55,11 @@ export function findFileInput(): HTMLInputElement | null {
  *
  * 行为与现状一致：命中即挂载、派发 change 事件、异步等待延迟插入。
  */
-export async function attachImageToFileInput(file: File): Promise<boolean> {
-  const start = Date.now()
-  while (Date.now() - start < 5000) {
+// maxMs：找不到文件输入框时的最长重试等待。默认 5000ms，兼容 chatgpt / gemini / claude
+// 等「点完按钮才出现」输入框的平台；传入 0 则只尝试一次、立即返回（豆包走粘贴兜底，无需等待）。
+export async function attachImageToFileInput(file: File, maxMs = 5000): Promise<boolean> {
+  const deadline = Date.now() + maxMs
+  for (;;) {
     const input = findFileInput()
     if (input) {
       const dt = new DataTransfer()
@@ -72,7 +74,7 @@ export async function attachImageToFileInput(file: File): Promise<boolean> {
       input.dispatchEvent(new Event('change', { bubbles: true }))
       return true
     }
+    if (Date.now() >= deadline) return false
     await new Promise((resolve) => setTimeout(resolve, 250))
   }
-  return false
 }

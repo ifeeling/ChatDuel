@@ -1,6 +1,6 @@
 import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
 import { emitDiagnostic } from '../shared/diagnostics'
-import { findFileInput } from '../shared/file-input'
+import { attachImageToFileInput as sharedAttachImageToFileInput } from '../shared/file-input'
 import { writeEditableValue } from '../shared/dom-write'
 import {
   queryFirst,
@@ -158,17 +158,13 @@ async function waitForAttachmentEvidence(scope: HTMLElement, file: File, baselin
   return false
 }
 
+// 豆包文件输入路径：保留体积上限校验（与抽取前一致），且不重试——
+// 与 chatgpt / gemini / claude 默认 5s 重试不同，豆包走粘贴兜底，无需等待文件输入框出现。
+// 注：buildDataTransferFromFile 此处仅借用其「超体积抛 ImageTooLargeError」的校验副作用，
+// 返回值由共享原语内部重建（new DataTransfer + items.add），挂载行为不变。
 async function attachImageToFileInput(file: File): Promise<boolean> {
-  const input = findFileInput()
-  if (!input) return false
-  const dt = buildDataTransferFromFile(file)
-  try {
-    input.files = dt.files
-  } catch {
-    Object.defineProperty(input, 'files', { value: dt.files, configurable: true })
-  }
-  input.dispatchEvent(new Event('change', { bubbles: true }))
-  return true
+  buildDataTransferFromFile(file)
+  return sharedAttachImageToFileInput(file, 0)
 }
 
 async function pasteImageIntoComposer(file: File, selectors: DoubaoSelectors): Promise<boolean> {
