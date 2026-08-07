@@ -1,6 +1,5 @@
 import { CLAUDE_SELECTOR_VERSION, createClaudeAdapter } from '../adapters/claude/adapter'
-import { installContentScriptCommandBridge } from './content-script-command-bridge'
-import { loadSelectorConfig } from './selector-overrides'
+import { bootContentScript } from '../adapters/shared/content-script-bootstrap'
 import selectorsJson from '../adapters/claude/selectors.json'
 
 // selectors.json 是「最佳猜测」，以下诊断用于在实页确认每个选择器是否命中。
@@ -400,17 +399,14 @@ async function boot(): Promise<void> {
     console.log(`${LOG_PREFIX} Post-cache-reload init (cache was cleared in previous load)`)
   }
 
-  const selectorConfig = await loadSelectorConfig('claude', CLAUDE_SELECTOR_VERSION)
-  const adapter = createClaudeAdapter(selectorConfig.selectors)
+  await bootContentScript({
+    platform: 'claude',
+    selectorVersion: CLAUDE_SELECTOR_VERSION,
+    createAdapter: createClaudeAdapter,
+  })
 
   // 延迟 ~3s 等 Claude 页面渲染完，再诊断 selectors.json 命中情况
   setTimeout(dumpSelectorDiagnostics, 3000)
-
-  installContentScriptCommandBridge({
-    platform: 'claude',
-    adapter,
-    selectorConfigVersion: selectorConfig.version,
-  })
 }
 
 void boot()
