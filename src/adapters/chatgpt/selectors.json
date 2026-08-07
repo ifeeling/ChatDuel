@@ -10,7 +10,6 @@
     "rateLimitToast": "[role='alert']",
     "continueButton": "button[data-testid='continue-generation-button']",
     "stopButton": "button[data-testid='stop-button'], button[aria-label*='stop' i], button[aria-label*='停止' i]",
-    "loggedIn": "[data-testid='user-menu-button']",
-    "fileInput": "input[type=\"file\"]"
+    "loggedIn": "[data-testid='user-menu-button']"
   }
 }

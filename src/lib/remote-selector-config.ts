@@ -28,7 +28,6 @@ const ALLOWED_SELECTOR_KEYS: Record<AIPlatform, Set<string>> = {
     'continueButton',
     'stopButton',
     'loggedIn',
-    'fileInput',
   ]),
   gemini: new Set([
     'inputBox',
@@ -40,7 +39,6 @@ const ALLOWED_SELECTOR_KEYS: Record<AIPlatform, Set<string>> = {
     'continueButton',
     'stopButton',
     'loggedIn',
-    'fileInput',
   ]),
   doubao: new Set(['inputBox', 'sendButton', 'response']),
   deepseek: new Set(['inputBox', 'sendButton', 'response']),
@@ -54,7 +52,6 @@ const ALLOWED_SELECTOR_KEYS: Record<AIPlatform, Set<string>> = {
     'continueButton',
     'stopButton',
     'loggedIn',
-    'fileInput',
   ]),
 }
 
