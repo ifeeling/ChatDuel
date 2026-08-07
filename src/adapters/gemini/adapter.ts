@@ -1,5 +1,6 @@
 import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
 import { emitDiagnostic } from '../shared/diagnostics'
+import { attachImageToFileInput } from '../shared/file-input'
 import type { ConversationState } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 import { elementToMarkdownText } from '../../lib/dom-response-text'
@@ -92,72 +93,6 @@ async function pasteImageIntoEditor(file: File): Promise<boolean> {
   } catch {/* ignore */}
   editor.dispatchEvent(evt)
   return true
-}
-
-// 在所有 frame(同源子 frame)里递归找 file input。
-// Gemini 主页的 input 可能嵌在子 frame;ChatGPT 早期版本也有过类似情况。
-function findFileInput(): HTMLInputElement | null {
-  const candidates = [
-    "input[type='file'][accept*='image']",
-    "input[type='file'][data-testid*='upload' i]",
-    "input[type='file'][aria-label*='upload' i]",
-    "input[type='file'][aria-label*='image' i]",
-    "input[type='file'][aria-label*='附件' i]",
-    "input[type='file'][aria-label*='图片' i]",
-    "input[type='file']",
-  ]
-  function search(doc: Document): HTMLInputElement | null {
-    for (const sel of candidates) {
-      const el = doc.querySelector<HTMLInputElement>(sel)
-      if (el) return el
-    }
-    // 递归子 frame
-    const frames = doc.querySelectorAll<HTMLIFrameElement>('iframe')
-    for (const f of frames) {
-      try {
-        const cw = f.contentWindow
-        if (!cw) continue
-        const r = search(cw.document)
-        if (r) return r
-      } catch {
-        // 跨源子 frame 不能访问 document,跳过
-      }
-    }
-    return null
-  }
-  const result = search(document)
-  if (!result) {
-    // 诊断:扫所有能进的 frame,把 file input 个数报出来,帮排查 selector
-    function countInputs(doc: Document, depth: number): number {
-      let n = doc.querySelectorAll('input[type=file]').length
-      const frames = doc.querySelectorAll('iframe')
-      for (const fr of frames) {
-        try {
-          n += countInputs(fr.contentWindow!.document, depth + 1)
-        } catch {/* 跨源 */}
-      }
-      return n
-    }
-    console.warn('[AIChatRoom] no file input found. frames inspected, total file inputs =', countInputs(document, 0))
-  }
-  return result
-}
-
-async function attachImageToFileInput(_unusedSel: string, file: File): Promise<boolean> {
-  // file input 可能是延迟插入的(点完按钮才出现),重试 5 秒
-  const start = Date.now()
-  while (Date.now() - start < 5000) {
-    const input = findFileInput()
-    if (input) {
-      const dt = new DataTransfer()
-      dt.items.add(file)
-      input.files = dt.files
-      input.dispatchEvent(new Event('change', { bubbles: true }))
-      return true
-    }
-    await sleep(250)
-  }
-  return false
 }
 
 // 等 Gemini 上传流水线跑完。
@@ -304,7 +239,7 @@ export function createGeminiAdapter(selectorOverrides?: SelectorOverrideMap): AI
 
     async attachImage(file: File) {
       // 路径 1: 找原生 file input 并注入(ChatGPT 走这条)
-      if (await attachImageToFileInput(S.fileInput, file)) return
+      if (await attachImageToFileInput(file)) return
       // 路径 2: Gemini 2026+ 把上传按钮封在 Angular xapfileselectortrigger 组件里,DOM 不暴露 file input。
       //   退而求其次:派发 paste 事件到 ql-editor,Quill 的 paste handler 会把图片作为 base64 嵌入。
       if (await pasteImageIntoEditor(file)) return

@@ -1,5 +1,6 @@
 import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
 import { emitDiagnostic } from '../shared/diagnostics'
+import { attachImageToFileInput, findFileInput } from '../shared/file-input'
 import type { ConversationState } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 import selectorsJson from './selectors.json'
@@ -31,54 +32,6 @@ function writeEditableValue(el: HTMLElement, text: string): void {
 
 function isButtonDisabled(btn: HTMLButtonElement): boolean {
   return btn.disabled || btn.getAttribute('aria-disabled') === 'true' || btn.dataset.disabled === 'true'
-}
-
-// 在所有 frame 里递归找 file input（Claude 的图片/附件上传）。
-function findFileInput(): HTMLInputElement | null {
-  const candidates = [
-    "input[type='file'][accept*='image']",
-    "input[type='file'][data-testid*='upload' i]",
-    "input[type='file'][aria-label*='upload' i]",
-    "input[type='file'][aria-label*='image' i]",
-    "input[type='file'][aria-label*='附件' i]",
-    "input[type='file'][aria-label*='图片' i]",
-    "input[type='file']",
-  ]
-  function search(doc: Document): HTMLInputElement | null {
-    for (const sel of candidates) {
-      const el = doc.querySelector<HTMLInputElement>(sel)
-      if (el) return el
-    }
-    const frames = doc.querySelectorAll<HTMLIFrameElement>('iframe')
-    for (const f of frames) {
-      try {
-        const cw = f.contentWindow
-        if (!cw) continue
-        const r = search(cw.document)
-        if (r) return r
-      } catch {
-        // 跨源子 frame 不能访问 document,跳过
-      }
-    }
-    return null
-  }
-  return search(document)
-}
-
-async function attachImageToFileInput(_unusedSel: string, file: File): Promise<boolean> {
-  const start = Date.now()
-  while (Date.now() - start < 5000) {
-    const input = findFileInput()
-    if (input) {
-      const dt = new DataTransfer()
-      dt.items.add(file)
-      input.files = dt.files
-      input.dispatchEvent(new Event('change', { bubbles: true }))
-      return true
-    }
-    await new Promise((r) => setTimeout(r, 250))
-  }
-  return false
 }
 
 // 等 Claude 上传流水线跑完（没图时不做事）。Claude 不一定用 data: 缩略图，
@@ -506,7 +459,7 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
     },
 
     async attachImage(file: File) {
-      if (await attachImageToFileInput(S.fileInput, file)) return
+      if (await attachImageToFileInput(file)) return
       throw new Error('file input not found for claude image upload')
     },
 

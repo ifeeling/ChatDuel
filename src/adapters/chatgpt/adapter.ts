@@ -1,5 +1,6 @@
 import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
 import { emitDiagnostic } from '../shared/diagnostics'
+import { attachImageToFileInput } from '../shared/file-input'
 import type { ConversationState } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 import selectorsJson from './selectors.json'
@@ -35,72 +36,6 @@ function writeEditableValue(el: HTMLElement, text: string): void {
 
 
 
-
-// 在所有 frame(同源子 frame)里递归找 file input。
-// Gemini 主页的 input 可能嵌在子 frame;ChatGPT 早期版本也有过类似情况。
-function findFileInput(): HTMLInputElement | null {
-  const candidates = [
-    "input[type='file'][accept*='image']",
-    "input[type='file'][data-testid*='upload' i]",
-    "input[type='file'][aria-label*='upload' i]",
-    "input[type='file'][aria-label*='image' i]",
-    "input[type='file'][aria-label*='附件' i]",
-    "input[type='file'][aria-label*='图片' i]",
-    "input[type='file']",
-  ]
-  function search(doc: Document): HTMLInputElement | null {
-    for (const sel of candidates) {
-      const el = doc.querySelector<HTMLInputElement>(sel)
-      if (el) return el
-    }
-    // 递归子 frame
-    const frames = doc.querySelectorAll<HTMLIFrameElement>('iframe')
-    for (const f of frames) {
-      try {
-        const cw = f.contentWindow
-        if (!cw) continue
-        const r = search(cw.document)
-        if (r) return r
-      } catch {
-        // 跨源子 frame 不能访问 document,跳过
-      }
-    }
-    return null
-  }
-  const result = search(document)
-  if (!result) {
-    // 诊断:扫所有能进的 frame,把 file input 个数报出来,帮排查 selector
-    function countInputs(doc: Document, depth: number): number {
-      let n = doc.querySelectorAll('input[type=file]').length
-      const frames = doc.querySelectorAll('iframe')
-      for (const fr of frames) {
-        try {
-          n += countInputs(fr.contentWindow!.document, depth + 1)
-        } catch {/* 跨源 */}
-      }
-      return n
-    }
-    console.warn('[AIChatRoom] no file input found. frames inspected, total file inputs =', countInputs(document, 0))
-  }
-  return result
-}
-
-async function attachImageToFileInput(_unusedSel: string, file: File): Promise<boolean> {
-  // file input 可能是延迟插入的(点完按钮才出现),重试 5 秒
-  const start = Date.now()
-  while (Date.now() - start < 5000) {
-    const input = findFileInput()
-    if (input) {
-      const dt = new DataTransfer()
-      dt.items.add(file)
-      input.files = dt.files
-      input.dispatchEvent(new Event('change', { bubbles: true }))
-      return true
-    }
-    await new Promise((r) => setTimeout(r, 250))
-  }
-  return false
-}
 
 // 等 ChatGPT 上传流水线跑完(没图时不做事)。
 // 标志: send 按钮变 enabled + input 旁边出现缩略图(图片 input dataURL)
@@ -305,7 +240,7 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
     },
 
     async attachImage(file: File) {
-      if (await attachImageToFileInput(S.fileInput, file)) return  // S.fileInput 保留以备后续精确化
+      if (await attachImageToFileInput(file)) return
       throw new Error('file input not found for image upload')
     },
 

@@ -1,5 +1,6 @@
 import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
 import { emitDiagnostic } from '../shared/diagnostics'
+import { findFileInput } from '../shared/file-input'
 import type { ConversationState } from '../../types'
 import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
 import { elementToMarkdownText } from '../../lib/dom-response-text'
@@ -134,21 +135,6 @@ function queryFirst<T extends Element = Element>(selectors: string[]): T | null 
   for (const selector of selectors) {
     const el = document.querySelector<T>(selector)
     if (el) return el
-  }
-  return null
-}
-
-function findFileInput(): HTMLInputElement | null {
-  const candidates = [
-    "input[type='file'][accept*='image']",
-    "input[type='file'][aria-label*='upload' i]",
-    "input[type='file'][aria-label*='附件' i]",
-    "input[type='file'][aria-label*='图片' i]",
-    "input[type='file']",
-  ]
-  for (const selector of candidates) {
-    const input = document.querySelector<HTMLInputElement>(selector)
-    if (input) return input
   }
   return null
 }
