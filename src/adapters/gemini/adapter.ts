@@ -2,6 +2,7 @@ import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../bas
 import { emitDiagnostic } from '../shared/diagnostics'
 import { attachImageToFileInput } from '../shared/file-input'
 import { waitForSendAccepted } from '../shared/dom-write'
+import { hasStopGeneratingButton } from '../shared/ds-doubao-shared'
 import type { ConversationState } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 import { elementToMarkdownText } from '../../lib/dom-response-text'
@@ -110,10 +111,6 @@ async function waitForUploadReady(maxMs = 3000): Promise<void> {
   }
 }
 
-function hasStopGeneratingButton(selectors: GeminiSelectors): boolean {
-  return !!document.querySelector(selectors.stopButton)
-}
-
 function editorHasPendingContent(editor: HTMLElement): boolean {
   const text = editor.textContent?.replace(/\u200b/g, '').trim() ?? ''
   return text.length > 0 || !!editor.querySelector('img')
@@ -122,7 +119,7 @@ function editorHasPendingContent(editor: HTMLElement): boolean {
 // 「发送已被接受」判定：出现停止生成按钮，或输入框已清空（无待发内容）。
 // 供 triggerSend / sendMessage 的轮询复用，避免两处写法漂移。
 function isSendAccepted(editor: HTMLElement, selectors: GeminiSelectors): boolean {
-  return hasStopGeneratingButton(selectors) || !editorHasPendingContent(editor)
+  return hasStopGeneratingButton(selectors, { requireVisible: false, textFallback: false }) || !editorHasPendingContent(editor)
 }
 
 export function createGeminiAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter & AdapterSendInternals {
@@ -252,7 +249,7 @@ export function createGeminiAdapter(selectorOverrides?: SelectorOverrideMap): AI
     getConversationState(): Promise<ConversationState> {
       const responseEl = last<HTMLElement>(S.lastResponse)
       const lastText = responseEl ? elementToMarkdownText(responseEl) : ''
-      if (hasStopGeneratingButton(S)) return Promise.resolve({ status: 'streaming', lastResponse: lastText, stopButtonDetected: true })
+      if (hasStopGeneratingButton(S, { requireVisible: false, textFallback: false })) return Promise.resolve({ status: 'streaming', lastResponse: lastText, stopButtonDetected: true })
       if (q(S.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText, stopButtonDetected: false })
       if (!lastText) return Promise.resolve({ status: 'idle', stopButtonDetected: false })
       return Promise.resolve({ status: 'finished', lastResponse: lastText, stopButtonDetected: false })

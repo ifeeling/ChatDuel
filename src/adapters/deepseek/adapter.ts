@@ -221,8 +221,18 @@ function assertCanSendImageInCurrentMode(): void {
   throw new Error(IMAGE_MODE_REQUIRED_ERROR)
 }
 
+// DeepSeek 原版 findFileInput 用的选择器子集（不含 data-testid='upload' / aria-label*='image'，
+// 且不递归子 frame）。抽取到共享原语后，显式传回原版行为，避免无意的行为扩张。
+const DEEPSEEK_FILE_INPUT_CANDIDATES = [
+  "input[type='file'][accept*='image']",
+  "input[type='file'][aria-label*='upload' i]",
+  "input[type='file'][aria-label*='附件' i]",
+  "input[type='file'][aria-label*='图片' i]",
+  "input[type='file']",
+]
+
 async function attachFileToInput(file: File): Promise<boolean> {
-  const input = findFileInput()
+  const input = findFileInput({ candidates: DEEPSEEK_FILE_INPUT_CANDIDATES, recurseIframes: false })
   if (!input) {
     logUploadAttempt('file-input', file, { ok: false, reason: 'file input not found' })
     return false

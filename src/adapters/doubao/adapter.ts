@@ -158,13 +158,27 @@ async function waitForAttachmentEvidence(scope: HTMLElement, file: File, baselin
   return false
 }
 
+// 豆包原版 findFileInput 用的选择器子集（不含 data-testid='upload' / aria-label*='image'，
+// 且不递归子 frame）。抽取到共享原语后，显式传回原版行为，避免无意的行为扩张。
+const DOUBAO_FILE_INPUT_CANDIDATES = [
+  "input[type='file'][accept*='image']",
+  "input[type='file'][aria-label*='upload' i]",
+  "input[type='file'][aria-label*='图片' i]",
+  "input[type='file'][aria-label*='附件' i]",
+  "input[type='file']",
+]
+
 // 豆包文件输入路径：保留体积上限校验（与抽取前一致），且不重试——
 // 与 chatgpt / gemini / claude 默认 5s 重试不同，豆包走粘贴兜底，无需等待文件输入框出现。
 // 注：buildDataTransferFromFile 此处仅借用其「超体积抛 ImageTooLargeError」的校验副作用，
 // 返回值由共享原语内部重建（new DataTransfer + items.add），挂载行为不变。
 async function attachImageToFileInput(file: File): Promise<boolean> {
   buildDataTransferFromFile(file)
-  return sharedAttachImageToFileInput(file, 0)
+  return sharedAttachImageToFileInput(file, {
+    maxMs: 0,
+    candidates: DOUBAO_FILE_INPUT_CANDIDATES,
+    recurseIframes: false,
+  })
 }
 
 async function pasteImageIntoComposer(file: File, selectors: DoubaoSelectors): Promise<boolean> {

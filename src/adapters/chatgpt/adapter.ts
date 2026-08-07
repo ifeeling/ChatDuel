@@ -2,6 +2,7 @@ import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../bas
 import { emitDiagnostic } from '../shared/diagnostics'
 import { attachImageToFileInput } from '../shared/file-input'
 import { writeEditableValue, waitForSendAccepted } from '../shared/dom-write'
+import { hasStopGeneratingButton } from '../shared/ds-doubao-shared'
 import type { ConversationState } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 import selectorsJson from './selectors.json'
@@ -34,10 +35,6 @@ async function waitForUploadReady(maxMs = 3000): Promise<void> {
     if (hasThumb && sendBtn && !sendBtn.disabled) return
     await sleep(100)
   }
-}
-
-function hasStopGeneratingButton(selectors: ChatGPTSelectors): boolean {
-  return !!document.querySelector(selectors.stopButton)
 }
 
 function isButtonDisabled(btn: HTMLButtonElement): boolean {
@@ -190,7 +187,7 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
         emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'send-ack', stage: 'waiting', eventStatus: 'observed', retryNumber,
         })
-        if (await waitForSendAccepted(() => hasStopGeneratingButton(S) || !composerHasPendingContent(S))) {
+        if (await waitForSendAccepted(() => hasStopGeneratingButton(S, { requireVisible: false, textFallback: false }) || !composerHasPendingContent(S))) {
           emitDiagnostic(diagnostics, {
             component: 'platform-adapter',
             operation: 'send-ack',
@@ -226,7 +223,7 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
 
     getConversationState(): Promise<ConversationState> {
       const lastText = last(S.lastResponse)?.textContent ?? ''
-      if (hasStopGeneratingButton(S)) return Promise.resolve({ status: 'streaming', lastResponse: lastText, stopButtonDetected: true })
+      if (hasStopGeneratingButton(S, { requireVisible: false, textFallback: false })) return Promise.resolve({ status: 'streaming', lastResponse: lastText, stopButtonDetected: true })
       if (q(S.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText, stopButtonDetected: false })
       if (!lastText) return Promise.resolve({ status: 'idle', stopButtonDetected: false })
       return Promise.resolve({ status: 'finished', lastResponse: lastText, stopButtonDetected: false })

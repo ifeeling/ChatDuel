@@ -2,6 +2,7 @@ import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../bas
 import { emitDiagnostic } from '../shared/diagnostics'
 import { attachImageToFileInput, findFileInput } from '../shared/file-input'
 import { writeEditableValue } from '../shared/dom-write'
+import { hasStopGeneratingButton, isVisibleElement } from '../shared/ds-doubao-shared'
 import type { ConversationState } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 import selectorsJson from './selectors.json'
@@ -300,21 +301,6 @@ function getLatestResponseText(): string {
   return ''
 }
 
-function isVisibleElement(el: HTMLElement): boolean {
-  let current: HTMLElement | null = el
-  while (current) {
-    if (current.hidden || current.getAttribute('aria-hidden') === 'true') return false
-    const style = getComputedStyle(current)
-    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false
-    current = current.parentElement
-  }
-  return true
-}
-
-function hasStopGeneratingButton(selectors = DEFAULT_SELECTORS): boolean {
-  return Array.from(document.querySelectorAll<HTMLElement>(selectors.stopButton)).some(isVisibleElement)
-}
-
 function hasCompletionActionBar(): boolean {
   const latestArticle = findLatestAiResponseArticle()
   if (!latestArticle) return false
@@ -468,7 +454,7 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
     getConversationState(): Promise<ConversationState> {
       const lastText = getLatestResponseText()
       // 优先用选择器检测（最准确）
-      if (hasStopGeneratingButton(S)) return Promise.resolve({ status: 'streaming', lastResponse: lastText, stopButtonDetected: true })
+      if (hasStopGeneratingButton(S, { requireVisible: true, textFallback: false })) return Promise.resolve({ status: 'streaming', lastResponse: lastText, stopButtonDetected: true })
       if (q(S.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText, stopButtonDetected: false })
       // Claude 完成后会在最新回答内部提供可见操作栏；优先于 DOM 变化兜底。
       if (lastText && hasCompletionActionBar()) {

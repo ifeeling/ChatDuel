@@ -76,12 +76,45 @@ export function hasDirectResponseActions(el: HTMLElement): boolean {
   return [...el.children].some((child) => child instanceof HTMLElement && isResponseActionBar(child))
 }
 
-// 是否出现「停止生成」按钮：先按显式 stopButton 选择器命中，未命中再用「停止/中止/
-// 取消/stop/cancel」文案兜底扫描所有 button。两平台副本逐字相同。
-export function hasStopGeneratingButton(selectors: { stopButton: string[] }): boolean {
-  if (queryFirst<HTMLElement>(selectors.stopButton)) return true
-  return [...document.querySelectorAll<HTMLElement>('button, [role="button"]')]
-    .some((button) => {
+export interface HasStopGeneratingButtonOptions {
+  /** 是否要求按钮可见（向上遍历祖先检查 hidden/aria-hidden/display/visibility/opacity）。默认 false。 */
+  requireVisible?: boolean
+  /** 显式选择器未命中时，是否用「停止/中止/取消/stop/cancel」文案兜底扫描所有 button。默认 true（与 DeepSeek/豆包原版一致）。 */
+  textFallback?: boolean
+}
+
+// 元素是否可见：向上遍历祖先，遇 hidden / aria-hidden / display:none / visibility:hidden / opacity:0 即判不可见。
+// 平台无关；claude 原先内联一份相同实现，已上提至此共用。
+export function isVisibleElement(el: HTMLElement): boolean {
+  let current: HTMLElement | null = el
+  while (current) {
+    if (current.hidden || current.getAttribute('aria-hidden') === 'true') return false
+    const style = getComputedStyle(current)
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false
+    current = current.parentElement
+  }
+  return true
+}
+
+// 是否出现「停止生成」按钮。stopButton 接受 string | string[]，兼容各平台选择器字段类型。
+// - 默认先按显式 stopButton 选择器命中（textFallback 默认 true，未命中再用「停止/中止/取消/stop/cancel」
+//   文案兜底扫描所有 button，与 DeepSeek/豆包原版一致）；
+// - requireVisible 默认 false：chatgpt/gemini 传默认即可（与它们原版「仅查询选择器」一致）；
+//   claude 须传 requireVisible:true，否则会把隐藏的停止按钮误判为「已停止」。
+export function hasStopGeneratingButton(
+  selectors: { stopButton: string | string[] },
+  options: HasStopGeneratingButtonOptions = {},
+): boolean {
+  const { requireVisible = false, textFallback = true } = options
+  const stopButtons = typeof selectors.stopButton === 'string' ? [selectors.stopButton] : selectors.stopButton
+
+  for (const sel of stopButtons) {
+    const matches = Array.from(document.querySelectorAll<HTMLElement>(sel))
+    if (requireVisible ? matches.some(isVisibleElement) : matches.length > 0) return true
+  }
+
+  if (textFallback) {
+    return [...document.querySelectorAll<HTMLElement>('button, [role="button"]')].some((button) => {
       const marker = [
         button.getAttribute('aria-label') ?? '',
         button.getAttribute('title') ?? '',
@@ -91,6 +124,8 @@ export function hasStopGeneratingButton(selectors: { stopButton: string[] }): bo
       ].join(' ')
       return /停止|中止|取消|stop|cancel/i.test(marker)
     })
+  }
+  return false
 }
 
 // 元素是否为用户消息。两平台都基于 elementMarker 的 user/question 等词判断，

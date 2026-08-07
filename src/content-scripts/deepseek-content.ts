@@ -1,6 +1,7 @@
-import type { AIPlatform, ConversationState } from '../types'
+import type { AIPlatform } from '../types'
 import { DEEPSEEK_SELECTOR_VERSION, createDeepSeekAdapter, ensureDeepSeekVisionMode } from '../adapters/deepseek/adapter'
 import { bootContentScript } from '../adapters/shared/content-script-bootstrap'
+import { createLoginProbe } from '../adapters/shared/login-probe'
 
 const PLATFORM: AIPlatform = 'deepseek'
 
@@ -10,38 +11,18 @@ async function boot(): Promise<void> {
     selectorVersion: DEEPSEEK_SELECTOR_VERSION,
     createAdapter: createDeepSeekAdapter,
     createExtensionHandler: (adapter) => {
-      function hasUsableComposer(): boolean {
-        return !!document.querySelector([
-          'textarea',
-          '[contenteditable="true"]',
-          '[role="textbox"]',
-        ].join(','))
-      }
-
-      function looksLikeLoginPage(): boolean {
-        const url = location.href.toLowerCase()
-        if (url.includes('login') || url.includes('sign')) return true
-
-        const bodyText = (document.body?.innerText ?? '').slice(0, 2000)
-        return /登录|log in|sign in/i.test(bodyText) && !hasUsableComposer()
-      }
-
-      function getProbeState(): ConversationState {
-        if (looksLikeLoginPage()) {
-          return { status: 'error', errorMessage: '可能未登录 DeepSeek' }
-        }
-        if (hasUsableComposer()) {
-          return { status: 'idle' }
-        }
-        return { status: 'queued', errorMessage: 'DeepSeek 页面已注入，但尚未识别到输入框' }
-      }
+      const probe = createLoginProbe({
+        platformName: 'DeepSeek',
+        loginUrlKeywords: ['login', 'sign'],
+        loginBodyPattern: /登录|log in|sign in/i,
+      })
 
       return async ({ command }) => {
         if (command === 'get-state') {
-          const state = await adapter.getConversationState().catch(() => getProbeState())
+          const state = await adapter.getConversationState().catch(() => probe.getProbeState())
           return {
             handled: true,
-            data: state.status === 'error' ? getProbeState() : state,
+            data: state.status === 'error' ? probe.getProbeState() : state,
           }
         }
         if (command === 'get-conversation-url') {

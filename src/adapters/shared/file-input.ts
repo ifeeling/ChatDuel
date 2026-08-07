@@ -21,16 +21,27 @@ const FILE_INPUT_CANDIDATES = [
   "input[type='file']",
 ]
 
+export interface FindFileInputOptions {
+  /** 候选选择器，按优先级排列、命中即返回。默认用五平台并集 FILE_INPUT_CANDIDATES。 */
+  candidates?: string[]
+  /** 是否递归进入同源子 frame 查找。默认 true（与 chatgpt/gemini/claude 原版一致）。 */
+  recurseIframes?: boolean
+}
+
 /**
- * 在所有 frame（同源子 frame）里递归查找 file input。
- * 找不到时递归进入子 frame；跨源子 frame 无法访问 document，自动跳过。
+ * 查找 file input。
+ * 默认在主文档与所有同源子 frame 里递归查找（与 chatgpt/gemini/claude 原版行为一致）；
+ * deepseek/doubao 原版不递归 frame、且只用自己的选择器子集，可显式传
+ * { candidates: <原版子集>, recurseIframes: false } 恢复原版行为，避免无意的行为扩张。
  */
-export function findFileInput(): HTMLInputElement | null {
+export function findFileInput(options: FindFileInputOptions = {}): HTMLInputElement | null {
+  const { candidates = FILE_INPUT_CANDIDATES, recurseIframes = true } = options
   function search(doc: Document): HTMLInputElement | null {
-    for (const sel of FILE_INPUT_CANDIDATES) {
+    for (const sel of candidates) {
       const el = doc.querySelector<HTMLInputElement>(sel)
       if (el) return el
     }
+    if (!recurseIframes) return null
     // 递归子 frame
     const frames = doc.querySelectorAll<HTMLIFrameElement>('iframe')
     for (const f of frames) {
@@ -55,12 +66,23 @@ export function findFileInput(): HTMLInputElement | null {
  *
  * 行为与现状一致：命中即挂载、派发 change 事件、异步等待延迟插入。
  */
+export interface AttachImageOptions {
+  /** 找不到文件输入框时的最长重试等待（毫秒）。默认 5000，兼容 chatgpt/gemini/claude「点完按钮才出现」的场景。 */
+  maxMs?: number
+  /** 转发给 findFileInput 的候选选择器。默认五平台并集。 */
+  candidates?: string[]
+  /** 转发给 findFileInput 的递归开关。默认 true。 */
+  recurseIframes?: boolean
+}
+
 // maxMs：找不到文件输入框时的最长重试等待。默认 5000ms，兼容 chatgpt / gemini / claude
 // 等「点完按钮才出现」输入框的平台；传入 0 则只尝试一次、立即返回（豆包走粘贴兜底，无需等待）。
-export async function attachImageToFileInput(file: File, maxMs = 5000): Promise<boolean> {
+// candidates / recurseIframes 原样转发给 findFileInput，便于各平台恢复原版查找行为。
+export async function attachImageToFileInput(file: File, options: AttachImageOptions = {}): Promise<boolean> {
+  const { maxMs = 5000, candidates, recurseIframes } = options
   const deadline = Date.now() + maxMs
   for (;;) {
-    const input = findFileInput()
+    const input = findFileInput({ candidates, recurseIframes })
     if (input) {
       const dt = new DataTransfer()
       dt.items.add(file)
