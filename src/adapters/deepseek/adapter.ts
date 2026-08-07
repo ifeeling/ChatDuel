@@ -2,6 +2,19 @@ import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../bas
 import { emitDiagnostic } from '../shared/diagnostics'
 import { findFileInput } from '../shared/file-input'
 import { writeEditableValue, waitForSendAccepted } from '../shared/dom-write'
+import {
+  queryFirst,
+  writeNativeTextareaValue,
+  activateControl,
+  normalizeText,
+  isHidden,
+  elementMarker,
+  hasDirectResponseActions,
+  hasStopGeneratingButton,
+  isUserMessage,
+  dispatchEnter,
+  hasPendingContent,
+} from '../shared/ds-doubao-shared'
 import type { ConversationState } from '../../types'
 import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
 import { elementToMarkdownText } from '../../lib/dom-response-text'
@@ -110,6 +123,13 @@ const DEFAULT_SELECTORS: DeepSeekSelectors = {
 }
 export const DEEPSEEK_SELECTOR_VERSION = 'builtin-1'
 
+// DeepSeek 混淆 class 上的用户消息标记（提取自原私有 isUserMessage 副本）。
+const DEEPSEEK_USER_MESSAGE_CLASS = /\b(_9663006|d29f3d7d)\b/
+
+// 绑定 DeepSeek 专属 class 标记的 isUserMessage 封装，避免四处重复传参。
+const isDeepSeekUserMessage = (el: HTMLElement): boolean =>
+  isUserMessage(el, { extraClassPattern: DEEPSEEK_USER_MESSAGE_CLASS })
+
 const PASTE_ATTACHMENT_EVIDENCE_TIMEOUT_MS = 700
 const DROP_ATTACHMENT_EVIDENCE_TIMEOUT_MS = 2300
 const ATTACHMENT_FAILURE_SETTLE_MS = 900
@@ -131,14 +151,6 @@ const ATTACHMENT_FAILURE_CONTEXT_SELECTOR = [
   '[aria-live="assertive"]',
 ].join(',')
 const IMAGE_MODE_REQUIRED_ERROR = 'DeepSeek 仅识图模式支持图片，请新建或切换到识图模式后重试'
-
-function queryFirst<T extends Element = Element>(selectors: string[]): T | null {
-  for (const selector of selectors) {
-    const el = document.querySelector<T>(selector)
-    if (el) return el
-  }
-  return null
-}
 
 function attachmentDebugScope(scope: ParentNode): string {
   if (scope instanceof HTMLElement) {
@@ -398,12 +410,6 @@ async function waitForAttachmentFailure(file: File, scope: ParentNode, baseline:
   return null
 }
 
-function writeNativeTextareaValue(el: HTMLTextAreaElement, text: string): void {
-  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-  setter?.call(el, text)
-  el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }))
-}
-
 function findSendControl(selectors: DeepSeekSelectors): HTMLElement | null {
   const direct = queryFirst<HTMLElement>(selectors.sendButton)
   if (direct) return direct
@@ -460,65 +466,10 @@ function findSendControl(selectors: DeepSeekSelectors): HTMLElement | null {
   return null
 }
 
-function hasStopGeneratingButton(selectors: DeepSeekSelectors): boolean {
-  if (queryFirst<HTMLElement>(selectors.stopButton)) return true
-  return [...document.querySelectorAll<HTMLElement>('button, [role="button"]')]
-    .some((button) => {
-      const marker = [
-        button.getAttribute('aria-label') ?? '',
-        button.getAttribute('title') ?? '',
-        button.getAttribute('data-testid') ?? '',
-        button.className?.toString() ?? '',
-        button.textContent ?? '',
-      ].join(' ')
-      return /停止|中止|取消|stop|cancel/i.test(marker)
-    })
-}
-
-function hasPendingContent(selectors: DeepSeekSelectors): boolean {
-  const box = queryFirst<HTMLElement>(selectors.inputBox)
-  if (!box) return false
-  const text = (box as HTMLTextAreaElement).value?.trim() ?? ''
-  return text.length > 0
-}
-
 // 「发送已被接受」判定：出现停止生成按钮，或输入框已清空（无待发内容）。
 // 供 triggerSend / sendMessage 的轮询与最终检查复用，避免两处写法漂移。
 function isSendAccepted(selectors: DeepSeekSelectors): boolean {
-  return hasStopGeneratingButton(selectors) || !hasPendingContent(selectors)
-}
-
-function activateControl(button: HTMLElement): void {
-  const mouseInit: MouseEventInit = { bubbles: true, cancelable: true, composed: true }
-  button.dispatchEvent(new MouseEvent('mousedown', mouseInit))
-  button.dispatchEvent(new MouseEvent('mouseup', mouseInit))
-  button.click()
-}
-
-function dispatchEnter(el: HTMLElement): void {
-  const init: KeyboardEventInit = {
-    key: 'Enter',
-    code: 'Enter',
-    keyCode: 13,
-    which: 13,
-    bubbles: true,
-    cancelable: true,
-    composed: true,
-  }
-  // 触发完整的键盘事件序列，确保 React 等框架能正确响应
-  el.dispatchEvent(new KeyboardEvent('keydown', init))
-  el.dispatchEvent(new KeyboardEvent('keypress', init))
-  el.dispatchEvent(new KeyboardEvent('keyup', init))
-}
-
-function normalizeText(text: string): string {
-  return text
-    .replace(/\u00a0/g, ' ')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n[ \t]+/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/[ \t]{2,}/g, ' ')
-    .trim()
+  return hasStopGeneratingButton(selectors) || !hasPendingContent(selectors, false)
 }
 
 const VISION_MODE_BUTTON_SELECTORS = 'button, [role="button"], [role="tab"], [role="radio"]'
@@ -643,43 +594,6 @@ function cleanDeepSeekResponseText(text: string): string {
     .trim()
 }
 
-function isHidden(el: HTMLElement): boolean {
-  if (el.hidden || el.getAttribute('aria-hidden') === 'true') return true
-  const style = window.getComputedStyle?.(el)
-  return style?.display === 'none' || style?.visibility === 'hidden'
-}
-
-function isUserMessage(el: HTMLElement): boolean {
-  const marker = [
-    el.getAttribute('data-testid') ?? '',
-    el.getAttribute('data-role') ?? '',
-    el.className?.toString() ?? '',
-    el.getAttribute('aria-label') ?? '',
-  ].join(' ')
-  if (/\b(_9663006|d29f3d7d)\b/.test(marker)) return true
-  return /\b(user|human|question|query)\b/i.test(marker) && !/\b(assistant|answer)\b/i.test(marker)
-}
-
-function elementMarker(el: HTMLElement): string {
-  return [
-    el.getAttribute('data-testid') ?? '',
-    el.getAttribute('data-role') ?? '',
-    el.className?.toString() ?? '',
-    el.getAttribute('aria-label') ?? '',
-  ].join(' ')
-}
-
-function isResponseActionBar(el: HTMLElement): boolean {
-  const marker = elementMarker(el)
-  if (/\b(action|toolbar|operate|feedback|copy|regenerate)\b/i.test(marker)) return true
-  const buttonText = normalizeText(el.textContent ?? '')
-  return /复制|重新生成|点赞|点踩|分享|copy|regenerate/i.test(buttonText)
-}
-
-function hasDirectResponseActions(el: HTMLElement): boolean {
-  return [...el.children].some((child) => child instanceof HTMLElement && isResponseActionBar(child))
-}
-
 function responseCandidateScore(el: HTMLElement, text: string): number {
   const marker = elementMarker(el)
   let score = 0
@@ -706,14 +620,14 @@ function hasOtherResponseCandidate(root: HTMLElement, current: HTMLElement, resp
   return [...root.querySelectorAll<HTMLElement>(responseSelector)]
     .some((candidate) => {
       if (candidate === current || current.contains(candidate) || candidate.contains(current)) return false
-      if (isHidden(candidate) || candidate.closest(RESPONSE_EXCLUDE_ANCESTORS) || isUserMessage(candidate)) return false
+      if (isHidden(candidate) || candidate.closest(RESPONSE_EXCLUDE_ANCESTORS) || isDeepSeekUserMessage(candidate)) return false
       return elementToMarkdownText(candidate).length > 0
     })
 }
 
 function canUseExpandedResponseRoot(el: HTMLElement, text: string, current: HTMLElement, responseSelector: string): boolean {
-  if (isHidden(el) || el.closest(RESPONSE_EXCLUDE_ANCESTORS) || isUserMessage(el)) return false
-  if ([...el.querySelectorAll<HTMLElement>('*')].some(isUserMessage)) return false
+  if (isHidden(el) || el.closest(RESPONSE_EXCLUDE_ANCESTORS) || isDeepSeekUserMessage(el)) return false
+  if ([...el.querySelectorAll<HTMLElement>('*')].some((child) => isDeepSeekUserMessage(child))) return false
   if (el.querySelector('textarea, input, [contenteditable="true"], [role="textbox"]')) return false
   if (hasOtherResponseCandidate(el, current, responseSelector) && !hasDirectResponseActions(el)) return false
   const expandedText = elementToMarkdownText(el)
@@ -751,7 +665,7 @@ function getMainFallbackText(): string {
   // 在 main 中找最后一个非用户消息、非隐藏、有实质内容的可见元素
   const candidates = [...main.querySelectorAll<HTMLElement>('div, p')]
     .filter((el) => !isHidden(el))
-    .filter((el) => !isUserMessage(el))
+    .filter((el) => !isDeepSeekUserMessage(el))
     .filter((el) => !el.closest(RESPONSE_EXCLUDE_ANCESTORS))
 
   for (let i = candidates.length - 1; i >= 0; i--) {
@@ -769,7 +683,7 @@ function getLatestResponseText(selectors: DeepSeekSelectors): string {
   const candidates = [...document.querySelectorAll<HTMLElement>(responseSelector)]
     .filter((el) => !isHidden(el))
     .filter((el) => !el.closest(RESPONSE_EXCLUDE_ANCESTORS))
-    .filter((el) => !isUserMessage(el))
+    .filter((el) => !isDeepSeekUserMessage(el))
     .map((el, index) => {
       const text = elementToMarkdownText(el)
       const expanded = expandResponseCandidate(el, text, responseSelector)
@@ -893,7 +807,7 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
         await new Promise((resolve) => setTimeout(resolve, 50))
         // 尝试 Enter 键发送（参考 Gemini 的 waitForSendAccepted 检测）
         for (let attempt = 0; attempt < 3; attempt += 1) {
-          dispatchEnter(box)
+          dispatchEnter(box, 'keydown-keypress-keyup')
           if (await waitForSendAccepted(() => isSendAccepted(selectors))) return
           await new Promise((resolve) => setTimeout(resolve, 250))
         }
@@ -987,7 +901,7 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
       currentBox.focus()
       await new Promise((resolve) => setTimeout(resolve, 50))
       for (let attempt = 1; attempt <= 3; attempt += 1) {
-        dispatchEnter(currentBox)
+        dispatchEnter(currentBox, 'keydown-keypress-keyup')
         emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber: attempt,
         })

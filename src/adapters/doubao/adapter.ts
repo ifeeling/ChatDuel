@@ -2,6 +2,19 @@ import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../bas
 import { emitDiagnostic } from '../shared/diagnostics'
 import { findFileInput } from '../shared/file-input'
 import { writeEditableValue } from '../shared/dom-write'
+import {
+  queryFirst,
+  writeNativeTextareaValue,
+  activateControl,
+  normalizeText,
+  isHidden,
+  elementMarker,
+  hasDirectResponseActions,
+  hasStopGeneratingButton,
+  isUserMessage,
+  dispatchEnter,
+  hasPendingContent,
+} from '../shared/ds-doubao-shared'
 import type { ConversationState } from '../../types'
 import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
 import { elementToMarkdownText } from '../../lib/dom-response-text'
@@ -108,14 +121,6 @@ export interface DoubaoAttachmentProbeResult {
   reason: string
 }
 
-function queryFirst<T extends Element = Element>(selectors: string[]): T | null {
-  for (const selector of selectors) {
-    const el = document.querySelector<T>(selector)
-    if (el) return el
-  }
-  return null
-}
-
 function composerScope(input: HTMLElement): HTMLElement {
   let best: HTMLElement | null = null
   let scope: HTMLElement = input
@@ -180,12 +185,6 @@ async function pasteImageIntoComposer(file: File, selectors: DoubaoSelectors): P
   return waitForAttachmentEvidence(scope, file, baseline)
 }
 
-function writeNativeTextareaValue(el: HTMLTextAreaElement, text: string): void {
-  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-  setter?.call(el, text)
-  el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }))
-}
-
 function findSendControl(selectors: DoubaoSelectors): HTMLElement | null {
   const direct = queryFirst<HTMLElement>(selectors.sendButton)
   if (direct) return direct
@@ -208,60 +207,6 @@ function findSendControl(selectors: DoubaoSelectors): HTMLElement | null {
     if (afterInput.length > 0) return afterInput[afterInput.length - 1]
   }
   return null
-}
-
-function hasStopGeneratingButton(selectors: DoubaoSelectors): boolean {
-  if (queryFirst<HTMLElement>(selectors.stopButton)) return true
-  return [...document.querySelectorAll<HTMLElement>('button, [role="button"]')]
-    .some((button) => {
-      const marker = [
-        button.getAttribute('aria-label') ?? '',
-        button.getAttribute('title') ?? '',
-        button.getAttribute('data-testid') ?? '',
-        button.className?.toString() ?? '',
-        button.textContent ?? '',
-      ].join(' ')
-      return /停止|中止|取消|stop|cancel/i.test(marker)
-    })
-}
-
-function hasPendingContent(selectors: DoubaoSelectors): boolean {
-  const box = queryFirst<HTMLElement>(selectors.inputBox)
-  if (!box) return false
-  const text = box instanceof HTMLTextAreaElement || box instanceof HTMLInputElement
-    ? box.value
-    : box.textContent ?? ''
-  return text.trim().length > 0
-}
-
-function activateControl(button: HTMLElement): void {
-  const mouseInit: MouseEventInit = { bubbles: true, cancelable: true, composed: true }
-  button.dispatchEvent(new MouseEvent('mousedown', mouseInit))
-  button.dispatchEvent(new MouseEvent('mouseup', mouseInit))
-  button.click()
-}
-
-function dispatchEnter(el: HTMLElement): void {
-  const init: KeyboardEventInit = {
-    key: 'Enter',
-    code: 'Enter',
-    keyCode: 13,
-    which: 13,
-    bubbles: true,
-    cancelable: true,
-    composed: true,
-  }
-  el.dispatchEvent(new KeyboardEvent('keydown', init))
-}
-
-function normalizeText(text: string): string {
-  return text
-    .replace(/\u00a0/g, ' ')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n[ \t]+/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/[ \t]{2,}/g, ' ')
-    .trim()
 }
 
 function fileInputAccepts(input: HTMLInputElement, patterns: RegExp[]): boolean {
@@ -290,26 +235,6 @@ export function probeDoubaoAttachmentControls(selectorOverrides?: SelectorOverri
     canAutoUploadFile: false,
     reason: imageFileInputFound ? '发现图片上传入口' : '未发现豆包可自动使用的上传入口',
   }
-}
-
-function isHidden(el: HTMLElement): boolean {
-  if (el.hidden || el.getAttribute('aria-hidden') === 'true') return true
-  const style = window.getComputedStyle?.(el)
-  return style?.display === 'none' || style?.visibility === 'hidden'
-}
-
-function isUserMessage(el: HTMLElement): boolean {
-  const marker = elementMarker(el)
-  return /\b(user|human|question|query)\b/i.test(marker) && !/\b(assistant|answer)\b/i.test(marker)
-}
-
-function elementMarker(el: HTMLElement): string {
-  return [
-    el.getAttribute('data-testid') ?? '',
-    el.getAttribute('data-role') ?? '',
-    el.className?.toString() ?? '',
-    el.getAttribute('aria-label') ?? '',
-  ].join(' ')
 }
 
 function isSuggestionNode(el: HTMLElement): boolean {
@@ -342,17 +267,6 @@ function cleanDoubaoResponseText(text: string): string {
 
 function elementText(el: HTMLElement): string {
   return cleanDoubaoResponseText(elementToMarkdownText(cloneWithoutSuggestionNodes(el)))
-}
-
-function isResponseActionBar(el: HTMLElement): boolean {
-  const marker = elementMarker(el)
-  if (/\b(action|toolbar|operate|feedback|copy|regenerate)\b/i.test(marker)) return true
-  const buttonText = normalizeText(el.textContent ?? '')
-  return /复制|重新生成|点赞|点踩|分享|copy|regenerate/i.test(buttonText)
-}
-
-function hasDirectResponseActions(el: HTMLElement): boolean {
-  return [...el.children].some((child) => child instanceof HTMLElement && isResponseActionBar(child))
 }
 
 function isLikelySuggestionLine(line: string): boolean {
@@ -451,7 +365,7 @@ function getLatestResponseCandidate(
     .filter((el) => !isHidden(el))
     .filter((el) => !el.closest(RESPONSE_EXCLUDE_ANCESTORS))
     .filter((el) => !isConversationListContainer(el))
-    .filter((el) => !isUserMessage(el))
+    .filter((el) => !isUserMessage(el, {}))
     .map((el, index) => ({ el, text: elementText(el), score: responseCandidateScore(el), index }))
     .filter((candidate) => candidate.text.length > 0)
     .filter((candidate) => !excludedTexts.has(normalizeText(candidate.text)))
@@ -561,7 +475,7 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
       }
       const box = queryFirst<HTMLElement>(selectors.inputBox)
       if (!box) throw new Error('doubao send button not found')
-      dispatchEnter(box)
+      dispatchEnter(box, 'keydown-only')
     },
 
     async sendMessage(text: string, image?: File, diagnostics?: AdapterDiagnostics) {
@@ -634,7 +548,7 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
       emitDiagnostic(diagnostics, {
         component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber: 1,
       })
-      if (hasStopGeneratingButton(selectors) || !hasPendingContent(selectors)) {
+      if (hasStopGeneratingButton(selectors) || !hasPendingContent(selectors, true)) {
         emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'send-ack', stage: 'accepted', eventStatus: 'succeeded', retryNumber: 1, retryCount: 1,
         })
