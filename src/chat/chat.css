@@ -585,6 +585,14 @@ body { overflow: hidden; }
   opacity: 0.4;
   cursor: not-allowed;
 }
+.input-action-btn.optimizing:disabled {
+  cursor: wait;
+  animation: prompt-optimization-pulse 1s ease-in-out infinite;
+}
+@keyframes prompt-optimization-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.85; }
+}
 .input-tool-btn {
   color: var(--muted);
   font-size: 20px;
@@ -814,6 +822,94 @@ body { overflow: hidden; }
 
 /* ---------- Extension update notice ---------- */
 .update-notice-overlay,
+/* ---------- Prompt optimization preview dialog ---------- */
+.prompt-optimization-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.68);
+  backdrop-filter: blur(5px);
+}
+.prompt-optimization-dialog {
+  width: min(560px, calc(100vw - 40px));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(79, 140, 255, 0.55);
+  border-radius: 10px;
+  background: var(--bg-2);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.65);
+}
+.prompt-optimization-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 0;
+}
+.prompt-optimization-header h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+.prompt-optimization-close {
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+.prompt-optimization-close:hover {
+  color: var(--fg);
+  background: var(--bg-3);
+}
+.prompt-optimization-preview {
+  margin: 14px 20px 0;
+  padding: 12px 14px;
+  height: 220px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.12);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.prompt-optimization-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 20px 18px;
+}
+.prompt-optimization-actions button {
+  min-width: 100px;
+  height: 38px;
+  padding: 0 18px;
+  border: none;
+  border-radius: 6px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.prompt-optimization-secondary {
+  background: var(--bg-3);
+  color: var(--fg);
+}
+.prompt-optimization-secondary:hover { background: rgba(255, 255, 255, 0.08); }
+.prompt-optimization-primary {
+  background: var(--accent);
+  color: #fff;
+}
+.prompt-optimization-primary:hover { background: #3d75e0; }
+
 .version-check-overlay {
   position: fixed;
   inset: 0;

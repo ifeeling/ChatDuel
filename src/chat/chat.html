@@ -125,6 +125,7 @@
       <div class="composer-input">
         <button id="btn-settings" class="input-tool-btn" title="设置" type="button" aria-label="设置">⚙</button>
         <button id="btn-image" class="input-add-btn" title="支持：图片、TXT、Markdown、CSV、PDF、Excel（XLSX）。暂不支持 Word。">+</button>
+        <button id="btn-optimize-prompt" class="input-action-btn" title="优化提示词" type="button" hidden>优化</button>
         <button id="btn-summary" class="input-action-btn" title="对比总结" type="button">总结</button>
         <button id="btn-history" class="input-action-btn" title="查看已保存的问答记录" type="button">记录</button>
         <button id="btn-conversations" class="input-action-btn" title="打开官网会话链接继续聊" type="button">官网会话</button>
@@ -386,6 +387,20 @@
           </a>
         </span>
       </footer>
+    </section>
+  </div>
+
+  <div class="prompt-optimization-overlay" id="prompt-optimization-overlay" hidden>
+    <section class="prompt-optimization-dialog" role="dialog" aria-modal="true" aria-labelledby="prompt-optimization-title-dialog">
+      <header class="prompt-optimization-header">
+        <h2 id="prompt-optimization-title-dialog">优化后的提示词</h2>
+        <button id="btn-prompt-optimization-close" class="prompt-optimization-close" type="button" title="关闭" aria-label="关闭">×</button>
+      </header>
+      <textarea id="prompt-optimization-preview" class="prompt-optimization-preview" spellcheck="false"></textarea>
+      <div class="prompt-optimization-actions">
+        <button id="btn-prompt-optimization-revert" class="prompt-optimization-secondary" type="button">恢复原文</button>
+        <button id="btn-prompt-optimization-confirm" class="prompt-optimization-primary" type="button">发送</button>
+      </div>
     </section>
   </div>
 

@@ -114,6 +114,18 @@ import {
 } from './platform-communication'
 import { showExtensionUpdateNotice } from './update-notice-dialog'
 import { fetchLatestRelease, REPO, type VersionCheckResult } from '../lib/version-check'
+import {
+  getStoredPromptOptimizationConfig,
+  REMOTE_SELECTOR_CONFIG_STORAGE_KEY,
+  type PromptOptimizationClientConfig,
+} from '../lib/remote-selector-config'
+import { getAnonymousDeviceId } from '../lib/anonymous-device-id'
+import { requestPromptOptimization } from '../lib/prompt-optimization-client'
+import { isPromptOptimizationAvailable } from '../lib/prompt-optimization-availability'
+import {
+  createPromptOptimizationCoordinator,
+  PROMPT_OPTIMIZATION_QUOTA_STORAGE_KEY,
+} from './prompt-optimization-coordinator'
 
 // ---------- 版本检查 ----------
 const GITHUB_RELEASES_URL = `https://github.com/${REPO}/releases`
@@ -144,6 +156,12 @@ const btnAddPanel = $<HTMLButtonElement>('#btn-add-panel')
 const btnSettings = $<HTMLButtonElement>('#btn-settings')
 const btnExpandInput = $<HTMLButtonElement>('#btn-expand-input')
 const btnImage = $<HTMLButtonElement>('#btn-image')
+const btnOptimizePrompt = $<HTMLButtonElement>('#btn-optimize-prompt')
+const promptOptimizationOverlay = $<HTMLDivElement>('#prompt-optimization-overlay')
+const promptOptimizationPreview = $<HTMLTextAreaElement>('#prompt-optimization-preview')
+const btnPromptOptimizationClose = $<HTMLButtonElement>('#btn-prompt-optimization-close')
+const btnPromptOptimizationRevert = $<HTMLButtonElement>('#btn-prompt-optimization-revert')
+const btnPromptOptimizationConfirm = $<HTMLButtonElement>('#btn-prompt-optimization-confirm')
 const fileInput = $<HTMLInputElement>('#file-input')
 const imagePreview = $<HTMLDivElement>('#image-preview')
 const previewImg = $<HTMLImageElement>('#preview-img')
@@ -225,6 +243,27 @@ const transferPreview = $<HTMLDivElement>('#transfer-preview')
 
 // ---------- 状态 ----------
 let userSettings: UserSettings = DEFAULT_USER_SETTINGS
+let promptOptimizationConfig: PromptOptimizationClientConfig | undefined
+
+const promptOptimizationCoordinator = createPromptOptimizationCoordinator({
+  requestOptimize: async (prompt) => {
+    const deviceId = await getAnonymousDeviceId()
+    return requestPromptOptimization({
+      prompt,
+      deviceId,
+      extensionVersion: chrome.runtime.getManifest().version,
+    })
+  },
+  loadQuotaState: async () => {
+    const result = await chrome.storage.local.get(PROMPT_OPTIMIZATION_QUOTA_STORAGE_KEY)
+    return result[PROMPT_OPTIMIZATION_QUOTA_STORAGE_KEY]
+  },
+  saveQuotaState: async (state) => {
+    await chrome.storage.local.set({ [PROMPT_OPTIMIZATION_QUOTA_STORAGE_KEY]: state })
+  },
+  onStateChange: () => renderPromptOptimizationDialog(),
+})
+
 let diagnosticEventCount = 0
 let preparedDiagnosticExport: PreparedDiagnosticExport | null = null
 let preparedDiagnosticExportScope: 'all' | 'latest-failure' | null = null
@@ -375,6 +414,12 @@ function applyStaticUiLanguage(language: UserLanguage) {
   setElementText('#btn-version-check-store', t(language, 'versionCheck.goStore'))
   setElementText('#version-check-store-hint', t(language, 'versionCheck.storeReviewHint'))
   setElementTitle('#btn-version-check-close', t(language, 'common.close'))
+  setElementText('#btn-optimize-prompt', t(language, 'promptOptimization.button'))
+  setElementTitle('#btn-optimize-prompt', t(language, 'promptOptimization.button'))
+  setElementText('#prompt-optimization-title-dialog', t(language, 'promptOptimization.dialogTitle'))
+  setElementTitle('#btn-prompt-optimization-close', t(language, 'common.close'))
+  setElementText('#btn-prompt-optimization-revert', t(language, 'promptOptimization.revert'))
+  setElementText('#btn-prompt-optimization-confirm', t(language, 'promptOptimization.confirm'))
   document.querySelectorAll<HTMLElement>('[data-site-owner]').forEach((owner) => {
     const platform = owner.dataset.siteOwner
     if (platform) owner.textContent = t(language, `site.owner.${platform}`)
@@ -522,6 +567,57 @@ function updateSendButtonState() {
   const title = sendButtonTitle(state.kind)
   sendBtn.title = title
   sendBtn.setAttribute('aria-label', title)
+}
+
+function updatePromptOptimizationButtonState() {
+  btnOptimizePrompt.hidden = !userSettings.promptOptimizationEnabled
+  if (btnOptimizePrompt.hidden) return
+
+  const { phase, remainingToday } = promptOptimizationCoordinator.getState()
+  const maxPromptLength = promptOptimizationConfig?.maxPromptLength
+  const available = maxPromptLength !== undefined && isPromptOptimizationAvailable({
+    draftLength: inputEl.value.trim().length,
+    maxPromptLength,
+    remainingToday,
+  })
+  btnOptimizePrompt.disabled = !available || phase.kind === 'optimizing'
+  btnOptimizePrompt.classList.toggle('optimizing', phase.kind === 'optimizing')
+}
+
+function renderPromptOptimizationDialog() {
+  const { phase } = promptOptimizationCoordinator.getState()
+  updatePromptOptimizationButtonState()
+
+  if (phase.kind === 'previewing') {
+    promptOptimizationPreview.value = phase.suggestion
+    promptOptimizationOverlay.hidden = false
+    btnPromptOptimizationConfirm.focus()
+  } else {
+    promptOptimizationOverlay.hidden = true
+  }
+
+  if (phase.kind === 'error') {
+    showToast(t(userSettings.language, 'promptOptimization.error'), 'err', 4000)
+  }
+}
+
+async function onOptimizePromptClick() {
+  const draft = inputEl.value.trim()
+  if (!draft) return
+  await promptOptimizationCoordinator.optimize(draft)
+}
+
+function onPromptOptimizationConfirm() {
+  const finalText = promptOptimizationCoordinator.confirm(promptOptimizationPreview.value)
+  if (finalText === null) return
+  inputEl.value = finalText
+  updateSendButtonState()
+  updatePromptOptimizationButtonState()
+  inputEl.focus()
+}
+
+function onPromptOptimizationRevert() {
+  promptOptimizationCoordinator.revert()
 }
 
 function renderQueue() {
@@ -887,6 +983,7 @@ function applyUserSettings(settings: UserSettings) {
   btnSummary.disabled = platformsWithCapability('supportsText').length < 2
     || summaryTaskRunner.isRunning()
   renderChips()
+  updatePromptOptimizationButtonState()
 }
 
 function syncCurrentPromptDraft() {
@@ -3318,6 +3415,16 @@ function bindEvents() {
     ),
   })
 
+  // 远程 selector 配置（含 promptOptimization 字段）在后台每 24 小时自动刷新一次；
+  // 页面常驻打开时不重新加载也要感知到新的字数上限/开关状态。
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local' || !changes[REMOTE_SELECTOR_CONFIG_STORAGE_KEY]) return
+    void getStoredPromptOptimizationConfig().then((config) => {
+      promptOptimizationConfig = config
+      updatePromptOptimizationButtonState()
+    })
+  })
+
   sendBtn.addEventListener('click', () => void onSend())
   btnStopWaiting.addEventListener('click', stopWaiting)
   inputEl.addEventListener('keydown', (e) => {
@@ -3329,6 +3436,7 @@ function bindEvents() {
   // @ 弹层监听
   inputEl.addEventListener('input', onAtInput)
   inputEl.addEventListener('input', updateSendButtonState)
+  inputEl.addEventListener('input', updatePromptOptimizationButtonState)
   inputEl.addEventListener('keydown', onAtKeydown)
   inputEl.addEventListener('blur', () => {
     // 失焦关弹层(等 100ms 给 click 事件先到达)
@@ -3396,6 +3504,13 @@ function bindEvents() {
   versionCheckOverlay.addEventListener('click', (e) => {
     if (e.target === versionCheckOverlay) closeVersionCheckDialog()
   })
+  btnOptimizePrompt.addEventListener('click', () => void onOptimizePromptClick())
+  btnPromptOptimizationClose.addEventListener('click', onPromptOptimizationRevert)
+  btnPromptOptimizationRevert.addEventListener('click', onPromptOptimizationRevert)
+  btnPromptOptimizationConfirm.addEventListener('click', onPromptOptimizationConfirm)
+  promptOptimizationOverlay.addEventListener('click', (e) => {
+    if (e.target === promptOptimizationOverlay) onPromptOptimizationRevert()
+  })
   settingLanguage.addEventListener('change', () => {
     syncCurrentPromptDraft()
     const language = settingLanguage.value as UserLanguage
@@ -3442,6 +3557,7 @@ function bindEvents() {
     if (e.key === 'Escape' && !conversationOverlay.hidden) closeConversationHistory()
     if (e.key === 'Escape' && !settingsOverlay.hidden) closeSettings()
     if (e.key === 'Escape' && !versionCheckOverlay.hidden) closeVersionCheckDialog()
+    if (e.key === 'Escape' && !promptOptimizationOverlay.hidden) onPromptOptimizationRevert()
   })
 
   // 图片按钮 + 移除按钮
@@ -3457,6 +3573,8 @@ window.addEventListener('DOMContentLoaded', () => {
   console.log('[AIChatRoom chat] ready')
   void (async () => {
     await initializeSettings()
+    promptOptimizationConfig = await getStoredPromptOptimizationConfig()
+    updatePromptOptimizationButtonState()
     settingsVersion.textContent = `v${chrome.runtime.getManifest().version}`
     setupSplitter()
     setupOpenButtons()

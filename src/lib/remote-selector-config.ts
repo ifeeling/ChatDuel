@@ -6,10 +6,15 @@ export const REMOTE_SELECTOR_CONFIG_STORAGE_KEY = 'remoteSelectorConfig'
 type SelectorValue = string | string[]
 export type SelectorOverrideMap = Record<string, SelectorValue>
 
+export interface PromptOptimizationClientConfig {
+  maxPromptLength: number
+}
+
 export interface RemoteSelectorConfig {
   version: string
   expiresAt: string
   platforms: Partial<Record<AIPlatform, { selectors: SelectorOverrideMap }>>
+  promptOptimization?: PromptOptimizationClientConfig
 }
 
 export interface StoredSelectorConfig {
@@ -83,6 +88,13 @@ function sanitizeSelectorValue(value: unknown, allowArray: boolean): SelectorVal
   return selectors as string[]
 }
 
+function sanitizePromptOptimizationConfig(value: unknown): PromptOptimizationClientConfig | undefined {
+  if (!isPlainObject(value)) return undefined
+  const { maxPromptLength } = value
+  if (typeof maxPromptLength !== 'number' || !Number.isInteger(maxPromptLength) || maxPromptLength <= 0) return undefined
+  return { maxPromptLength }
+}
+
 export function sanitizeRemoteSelectorConfig(value: unknown, now = Date.now()): RemoteSelectorConfig | null {
   if (!isPlainObject(value)) return null
   if (typeof value.version !== 'string' || !/^\d{4}\.\d{2}(\.\d+)?$/.test(value.version)) return null
@@ -115,10 +127,12 @@ export function sanitizeRemoteSelectorConfig(value: unknown, now = Date.now()): 
   }
 
   if (validSelectorCount === 0) return null
+  const promptOptimization = sanitizePromptOptimizationConfig(value.promptOptimization)
   return {
     version: value.version,
     expiresAt: new Date(expiresAt).toISOString(),
     platforms,
+    ...(promptOptimization ? { promptOptimization } : {}),
   }
 }
 
@@ -132,6 +146,15 @@ export function mergeSelectorOverrides<T extends Record<string, SelectorValue>>(
 
 export async function getStoredSelectorOverrides(platform: AIPlatform): Promise<SelectorOverrideMap | undefined> {
   return (await getStoredSelectorConfig(platform)).selectors
+}
+
+export async function getStoredPromptOptimizationConfig(): Promise<PromptOptimizationClientConfig | undefined> {
+  try {
+    const result = await chrome.storage.local.get(REMOTE_SELECTOR_CONFIG_STORAGE_KEY)
+    return sanitizeRemoteSelectorConfig(result[REMOTE_SELECTOR_CONFIG_STORAGE_KEY])?.promptOptimization
+  } catch {
+    return undefined
+  }
 }
 
 export async function getStoredSelectorConfig(platform: AIPlatform): Promise<StoredSelectorConfig> {
