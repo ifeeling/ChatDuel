@@ -122,6 +122,7 @@ import {
 import { getAnonymousDeviceId } from '../lib/anonymous-device-id'
 import { requestPromptOptimization } from '../lib/prompt-optimization-client'
 import { isPromptOptimizationAvailable } from '../lib/prompt-optimization-availability'
+import { isKnownExtensionBuild } from '../lib/known-extension-builds'
 import {
   createPromptOptimizationCoordinator,
   PROMPT_OPTIMIZATION_QUOTA_STORAGE_KEY,
@@ -572,6 +573,14 @@ function updateSendButtonState() {
 function updatePromptOptimizationButtonState() {
   btnOptimizePrompt.hidden = !userSettings.promptOptimizationEnabled
   if (btnOptimizePrompt.hidden) return
+
+  if (!isKnownExtensionBuild(chrome.runtime.id)) {
+    btnOptimizePrompt.disabled = true
+    btnOptimizePrompt.classList.remove('optimizing')
+    btnOptimizePrompt.title = t(userSettings.language, 'promptOptimization.unsupportedBuild')
+    return
+  }
+  btnOptimizePrompt.title = t(userSettings.language, 'promptOptimization.button')
 
   const { phase, remainingToday } = promptOptimizationCoordinator.getState()
   const maxPromptLength = promptOptimizationConfig?.maxPromptLength
@@ -3517,6 +3526,7 @@ function bindEvents() {
     refreshDefaultPromptDrafts(language)
     userSettings = { ...userSettings, language }
     applyStaticUiLanguage(language)
+    updatePromptOptimizationButtonState()
   })
   settingPromptKind.addEventListener('change', () => {
     syncCurrentPromptDraft()
