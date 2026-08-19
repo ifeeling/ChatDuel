@@ -4,6 +4,9 @@ import { resolve } from 'path'
 import manifest from './manifest.json' with { type: 'json' }
 
 export default defineConfig({
+  resolve: {
+    preserveSymlinks: true,
+  },
   plugins: [crx({ manifest })],
   build: {
     rollupOptions: {

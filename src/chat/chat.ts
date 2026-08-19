@@ -173,6 +173,7 @@ const settingPromptKind = $<HTMLSelectElement>('#setting-prompt-kind')
 const settingPromptLabel = $<HTMLSpanElement>('#setting-prompt-label')
 const settingPromptTemplate = $<HTMLTextAreaElement>('#setting-prompt-template')
 const settingPromptHelp = $<HTMLParagraphElement>('#setting-prompt-help')
+const settingPromptOptimizationEnabled = $<HTMLInputElement>('#setting-prompt-optimization-enabled')
 const settingCaptureDebug = $<HTMLInputElement>('#setting-capture-debug')
 const settingDiagnosticEnabled = $<HTMLInputElement>('#setting-diagnostic-enabled')
 const diagnosticSummary = $<HTMLDivElement>('#diagnostic-summary')
@@ -345,6 +346,8 @@ function applyStaticUiLanguage(language: UserLanguage) {
   setElementText('[data-settings-tab="help"]', t(language, 'settings.helpTab'))
   setElementText('[data-settings-panel="sites"] .settings-lead', t(language, 'settings.sitesLead'))
   setElementText('[data-settings-panel="prompts"] .settings-lead', t(language, 'settings.promptLead'))
+  setElementText('#prompt-optimization-title', t(language, 'settings.promptOptimizationTitle'))
+  setElementText('#prompt-optimization-help', t(language, 'settings.promptOptimizationHelp'))
   setElementText('.prompt-kind-field span', t(language, 'settings.promptKind'))
   setElementText('#btn-reset-prompt-template', t(language, 'settings.resetPrompt'))
   setElementText('#diagnostics-lead', t(language, 'settings.diagnosticsLead'))
@@ -931,6 +934,7 @@ function renderSettingsForm() {
   }
   promptTemplateDrafts = { ...userSettings.promptTemplates }
   promptTemplateCustomizationDrafts = { ...userSettings.promptTemplateCustomizations }
+  settingPromptOptimizationEnabled.checked = userSettings.promptOptimizationEnabled
   settingCaptureDebug.checked = userSettings.captureDebug
   settingDiagnosticEnabled.checked = userSettings.diagnosticEnabled
   selectedPromptTemplateKey = settingPromptKind.value as UserPromptTemplateKey || 'transfer'
@@ -1207,6 +1211,7 @@ async function onSaveSettings() {
     captureDebug: settingCaptureDebug.checked,
     diagnosticEnabled: settingDiagnosticEnabled.checked,
     diagnosticNoticeVersionSeen: userSettings.diagnosticNoticeVersionSeen,
+    promptOptimizationEnabled: settingPromptOptimizationEnabled.checked,
     promptTemplates: promptTemplateDrafts,
     promptTemplateCustomizations: promptTemplateCustomizationDrafts,
   }
@@ -3225,6 +3230,7 @@ async function onSwitchPanel(source: AIPlatform, target: AIPlatform) {
     captureDebug: userSettings.captureDebug,
     diagnosticEnabled: userSettings.diagnosticEnabled,
     diagnosticNoticeVersionSeen: userSettings.diagnosticNoticeVersionSeen,
+    promptOptimizationEnabled: userSettings.promptOptimizationEnabled,
     promptTemplates: userSettings.promptTemplates,
     promptTemplateCustomizations: userSettings.promptTemplateCustomizations,
   }
@@ -3247,6 +3253,7 @@ async function onAddPanel(platform: AIPlatform) {
     captureDebug: userSettings.captureDebug,
     diagnosticEnabled: userSettings.diagnosticEnabled,
     diagnosticNoticeVersionSeen: userSettings.diagnosticNoticeVersionSeen,
+    promptOptimizationEnabled: userSettings.promptOptimizationEnabled,
     promptTemplates: userSettings.promptTemplates,
     promptTemplateCustomizations: userSettings.promptTemplateCustomizations,
   }, t(userSettings.language, 'panelMenu.added'), t(userSettings.language, 'panelMenu.addFailed'))
@@ -3266,6 +3273,7 @@ async function onClosePanel(platform: AIPlatform) {
     captureDebug: userSettings.captureDebug,
     diagnosticEnabled: userSettings.diagnosticEnabled,
     diagnosticNoticeVersionSeen: userSettings.diagnosticNoticeVersionSeen,
+    promptOptimizationEnabled: userSettings.promptOptimizationEnabled,
     promptTemplates: userSettings.promptTemplates,
     promptTemplateCustomizations: userSettings.promptTemplateCustomizations,
   }, t(userSettings.language, 'panelMenu.closed'), t(userSettings.language, 'panelMenu.closeFailed'))

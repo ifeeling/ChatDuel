@@ -262,6 +262,16 @@
           </div>
           <div class="settings-panel" data-settings-panel="prompts">
             <p class="settings-lead">修改发送给目标 AI 的提示词</p>
+            <label class="site-row">
+              <span class="switch">
+                <input id="setting-prompt-optimization-enabled" type="checkbox">
+                <span class="switch-track"></span>
+              </span>
+              <span class="site-icon">✨</span>
+              <span class="site-name" id="prompt-optimization-title">提示词优化</span>
+            </label>
+            <p class="settings-help" id="prompt-optimization-help">开启后可以在共享输入框把简单描述一键改写成更详细的提示词。</p>
+            <hr class="diagnostic-divider">
             <label class="summary-field prompt-kind-field">
               <span>提示词类型</span>
               <select id="setting-prompt-kind">

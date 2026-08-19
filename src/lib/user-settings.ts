@@ -20,6 +20,7 @@ export interface UserSettings {
   captureDebug: boolean
   diagnosticEnabled: boolean
   diagnosticNoticeVersionSeen: number
+  promptOptimizationEnabled: boolean
   promptTemplates: UserPromptTemplates
   promptTemplateCustomizations: UserPromptTemplateCustomizations
 }
@@ -219,6 +220,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   captureDebug: false,
   diagnosticEnabled: true,
   diagnosticNoticeVersionSeen: 0,
+  promptOptimizationEnabled: true,
   promptTemplates: getDefaultUserPromptTemplates('zh-CN'),
   promptTemplateCustomizations: DEFAULT_PROMPT_CUSTOMIZATIONS,
 }
@@ -303,6 +305,7 @@ function normalizeSettings(value: PartialUserSettings | undefined): UserSettings
     language,
     captureDebug: value?.captureDebug === true,
     diagnosticEnabled: value?.diagnosticEnabled !== false,
+    promptOptimizationEnabled: value?.promptOptimizationEnabled !== false,
     diagnosticNoticeVersionSeen: typeof value?.diagnosticNoticeVersionSeen === 'number'
       && Number.isInteger(value.diagnosticNoticeVersionSeen)
       ? Math.max(0, value.diagnosticNoticeVersionSeen)

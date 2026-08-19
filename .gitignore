@@ -8,7 +8,7 @@ playwright-report/
 test-results/
 .worktrees/
 .superpowers/
-docs/
+docs
 *.zip
 
 # 环境变量 / 密钥(防止误提交)
@@ -16,11 +16,11 @@ docs/
 .env.*
 
 # 测试目录(仅本地保留，不随仓库发布)
-tests/
+tests
 AGENTS.md
 
 # 本机调试信息(含服务器/数据库访问方法, 切勿提交)
-.local/
+.local
 
 # 应用市场发布与素材脚本(仅本机使用, 不提交)
-scripts/
+scripts
