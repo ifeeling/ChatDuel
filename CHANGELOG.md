@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.20 (2026-08-20)
+
+- Reworked the composer input UI: split the toolbar into left/right icon groups, added a raised overlay layer for expanded input so panels no longer get squeezed, capped composer width at 60vw, and switched button hints from native `title` tooltips to `aria-label`-driven quick-tip pills.
+- Fixed a documentation gap: `PRIVACY.md` and the hosted privacy policy now disclose the `api.github.com` request made when checking for updates (added in v0.4.18) and the DeepSeek host permission, neither of which had been documented before.
+
 ## v0.4.19 (2026-08-06)
 
 - Fixed an extra divider line rendering between adjacent visible panels when a panel was hidden.
