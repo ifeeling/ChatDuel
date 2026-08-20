@@ -144,15 +144,6 @@ body { overflow: hidden; }
   background: var(--bg-2);
   flex-shrink: 0;
 }
-.composer.expanded {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 900;
-  min-height: min(46vh, 420px);
-  box-shadow: 0 -18px 60px rgba(0, 0, 0, 0.5);
-}
 
 .pending-question-queue {
   max-height: 180px;
@@ -431,33 +422,87 @@ body { overflow: hidden; }
   display: flex;
   gap: 8px;
   padding: 8px 12px;
-  align-items: center;
-  min-width: 0;
-}
-.composer.expanded .composer-input {
   align-items: flex-end;
-  padding: 12px;
+  min-width: 0;
 }
 
-.composer-textbox {
-  flex: 1;
+/* 输入框左右两侧的固定工具栏:设置/添加面板在左,总结/记录/官网会话在右,
+   都是普通文档流里的短行,永远不跟着中间的输入框一起变高。 */
+.composer-left-toolbar,
+.composer-right-toolbar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  flex-shrink: 0;
+}
+/* 总结是比较重要的功能,图标用醒目的颜色区分出来 */
+#btn-summary {
+  color: #ECBD55;
+}
+
+/* composer-textbox-slot 是个固定高度的占位:只负责在这一行里占宽度和位置,
+   自己永远不长高,所以两边的工具栏和 composer 的总高度永远不变。
+   真正会长高的是里面绝对定位的 .composer-textbox 浮层,从槽位底部往上长,
+   跟展开模式共用同一个浮层——只有输入框本身盖在页面上层,两侧仍然露出原来的内容。 */
+.composer-textbox-slot {
+  flex: 1;
+  position: relative;
   min-width: 0;
+  /* 不占满两侧工具栏之间的全部宽度,封顶到屏幕宽度的 60%,居中显示。 */
+  max-width: 60vw;
+  margin: 0 auto;
+  /* 具体像素值由 chat.ts 在初始化时量出 .composer-textbox 单行态的真实高度后设置
+     (内联 style.height),这里只是 JS 跑起来之前的兜底,避免闪一下 0 高度。 */
+  height: 40px;
+}
+/* 文字和附件/优化/展开/发送图标同一行左右排布(不再上下叠放),
+   这样单行态的高度天然跟左右两侧的图标按钮一样高,不会比它们更高。
+   align-items: flex-end 让图标在文字变多行时始终贴着这一行的底边。 */
+.composer-textbox {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 900;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  gap: 6px;
   min-height: 40px;
   background: var(--bg-3);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 4px 8px;
 }
+.composer-textbox-slot.grown .composer-textbox {
+  box-shadow: 0 -18px 60px rgba(0, 0, 0, 0.5);
+}
 .composer.expanded .composer-textbox {
-  align-items: flex-start;
-  min-height: min(34vh, 300px);
+  height: min(46vh, 420px);
   padding: 8px 10px;
+  box-shadow: 0 -18px 60px rgba(0, 0, 0, 0.5);
 }
 .composer-textbox:focus-within {
   border-color: var(--accent);
+}
+.composer-textbox-fields {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+  /* 兜底:万一某种语言的 placeholder/内容意外撑爆这一行,干净裁掉,不让它visually 糊到旁边的图标上 */
+  overflow: hidden;
+}
+.composer.expanded .composer-textbox-fields {
+  align-items: flex-start;
+}
+.composer-textbox-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 #input {
@@ -476,8 +521,9 @@ body { overflow: hidden; }
   font-family: inherit;
 }
 .composer.expanded #input {
-  min-height: calc(min(34vh, 300px) - 16px);
-  max-height: calc(min(34vh, 300px) - 16px);
+  /* 46vh 高的浮层减去上下 padding(16px)。图标现在跟文字同一行左右排布,不再占单独一行高度。 */
+  min-height: calc(min(46vh, 420px) - 16px);
+  max-height: calc(min(46vh, 420px) - 16px);
   padding: 4px 6px;
 }
 #input::placeholder { color: var(--muted); }
@@ -488,6 +534,7 @@ body { overflow: hidden; }
 }
 
 #btn-send {
+  position: relative;
   background: var(--accent);
   color: #fff;
   border: none;
@@ -504,11 +551,6 @@ body { overflow: hidden; }
 .send-icon {
   width: 21px;
   height: 21px;
-  stroke: currentColor;
-  stroke-width: 2.6;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  fill: none;
 }
 .send-icon-stop { display: none; }
 #btn-send[data-icon="stop"] .send-icon-send { display: none; }
@@ -542,50 +584,7 @@ body { overflow: hidden; }
   font-weight: 600;
   white-space: nowrap;
 }
-/* 输入框左边的工具按钮,参考 Gemini/ChatGPT */
-.input-add-btn,
-.input-tool-btn {
-  flex-shrink: 0;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--fg);
-  font-size: 22px;
-  line-height: 1;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-}
-.input-tool-btn.compact {
-  width: 34px;
-  height: 34px;
-  font-size: 16px;
-}
-.input-action-btn {
-  flex-shrink: 0;
-  height: 34px;
-  padding: 0 10px;
-  border-radius: 7px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--fg);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-.input-action-btn:hover:not(:disabled) {
-  background: var(--bg-3);
-  border-color: var(--accent);
-}
-.input-action-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.input-action-btn.optimizing:disabled {
+.input-icon-btn.optimizing:disabled {
   cursor: wait;
   animation: prompt-optimization-pulse 1s ease-in-out infinite;
 }
@@ -593,23 +592,70 @@ body { overflow: hidden; }
   0%, 100% { opacity: 0.4; }
   50% { opacity: 0.85; }
 }
-.input-tool-btn {
-  color: var(--muted);
-  font-size: 20px;
+/* 输入框右侧图标簇:添加附件 / 优化⇄恢复原文 / 展开⇄收起 */
+.input-icon-btn {
+  position: relative;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
-.input-add-btn:hover,
-.input-tool-btn:hover {
+/* 原生 title 提示又慢又跟这条自定义提示重影,这几个按钮改用 aria-label 承载文字
+   (给屏幕阅读器),不再放 title,原生提示自然不会弹出来,只有这条快提示。 */
+.input-icon-btn[aria-label]:hover::after,
+.input-icon-btn[aria-label]:focus-visible::after,
+#btn-send[aria-label]:hover::after,
+#btn-send[aria-label]:focus-visible::after {
+  content: attr(aria-label);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(20, 20, 20, 0.92);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 950;
+}
+.input-icon-btn:hover:not(:disabled) {
   background: var(--bg-3);
   border-color: var(--accent);
-  color: var(--fg);
 }
+.input-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.composer-icon {
+  width: 18px;
+  height: 18px;
+}
+/* 优化⇄恢复原文共用一个按钮位置,按 data-state 切换显示哪个图标 */
+.optimize-icon-revert { display: none; }
+#btn-optimize-prompt[data-state="revert"] .optimize-icon-optimize { display: none; }
+#btn-optimize-prompt[data-state="revert"] .optimize-icon-revert { display: block; }
+/* 展开⇄收起同理 */
+.expand-icon-expanded { display: none; }
+#btn-expand-input[data-state="expanded"] .expand-icon-collapsed { display: none; }
+#btn-expand-input[data-state="expanded"] .expand-icon-expanded { display: block; }
 /* 已选图片态:蓝边 + 蓝字 + 一个小圆点提示 */
-.input-add-btn.has-image {
+.input-icon-btn.has-image {
   border-color: var(--accent);
   color: var(--accent);
   position: relative;
 }
-.input-add-btn.has-image::after {
+.input-icon-btn.has-image::after {
   content: '';
   position: absolute;
   top: 6px; right: 6px;
@@ -821,9 +867,7 @@ body { overflow: hidden; }
 }
 
 /* ---------- Extension update notice ---------- */
-.update-notice-overlay,
-/* ---------- Prompt optimization preview dialog ---------- */
-.prompt-optimization-overlay {
+.update-notice-overlay {
   position: fixed;
   inset: 0;
   z-index: 1400;
@@ -834,81 +878,6 @@ body { overflow: hidden; }
   background: rgba(0, 0, 0, 0.68);
   backdrop-filter: blur(5px);
 }
-.prompt-optimization-dialog {
-  width: min(560px, calc(100vw - 40px));
-  display: flex;
-  flex-direction: column;
-  border: 1px solid rgba(79, 140, 255, 0.55);
-  border-radius: 10px;
-  background: var(--bg-2);
-  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.65);
-}
-.prompt-optimization-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px 0;
-}
-.prompt-optimization-header h2 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 600;
-}
-.prompt-optimization-close {
-  width: 30px;
-  height: 30px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 24px;
-  line-height: 1;
-  cursor: pointer;
-}
-.prompt-optimization-close:hover {
-  color: var(--fg);
-  background: var(--bg-3);
-}
-.prompt-optimization-preview {
-  margin: 14px 20px 0;
-  padding: 12px 14px;
-  height: 220px;
-  resize: vertical;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.12);
-  color: var(--fg);
-  font: inherit;
-  font-size: 13px;
-  line-height: 1.7;
-}
-.prompt-optimization-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-  padding: 16px 20px 18px;
-}
-.prompt-optimization-actions button {
-  min-width: 100px;
-  height: 38px;
-  padding: 0 18px;
-  border: none;
-  border-radius: 6px;
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-.prompt-optimization-secondary {
-  background: var(--bg-3);
-  color: var(--fg);
-}
-.prompt-optimization-secondary:hover { background: rgba(255, 255, 255, 0.08); }
-.prompt-optimization-primary {
-  background: var(--accent);
-  color: #fff;
-}
-.prompt-optimization-primary:hover { background: #3d75e0; }
 
 .version-check-overlay {
   position: fixed;

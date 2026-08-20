@@ -149,6 +149,7 @@ const btnStopWaiting = $<HTMLButtonElement>('#btn-stop-waiting')
 const panelsContainer = $<HTMLElement>('.panels')
 const composer = $<HTMLElement>('.composer')
 const composerTextbox = $<HTMLDivElement>('#composer-textbox')
+const composerTextboxSlot = $<HTMLDivElement>('#composer-textbox-slot')
 const composerToolbar = $<HTMLDivElement>('.composer-toolbar')
 const btnSummary = $<HTMLButtonElement>('#btn-summary')
 const btnHistory = $<HTMLButtonElement>('#btn-history')
@@ -158,11 +159,6 @@ const btnSettings = $<HTMLButtonElement>('#btn-settings')
 const btnExpandInput = $<HTMLButtonElement>('#btn-expand-input')
 const btnImage = $<HTMLButtonElement>('#btn-image')
 const btnOptimizePrompt = $<HTMLButtonElement>('#btn-optimize-prompt')
-const promptOptimizationOverlay = $<HTMLDivElement>('#prompt-optimization-overlay')
-const promptOptimizationPreview = $<HTMLTextAreaElement>('#prompt-optimization-preview')
-const btnPromptOptimizationClose = $<HTMLButtonElement>('#btn-prompt-optimization-close')
-const btnPromptOptimizationRevert = $<HTMLButtonElement>('#btn-prompt-optimization-revert')
-const btnPromptOptimizationConfirm = $<HTMLButtonElement>('#btn-prompt-optimization-confirm')
 const fileInput = $<HTMLInputElement>('#file-input')
 const imagePreview = $<HTMLDivElement>('#image-preview')
 const previewImg = $<HTMLImageElement>('#preview-img')
@@ -262,7 +258,7 @@ const promptOptimizationCoordinator = createPromptOptimizationCoordinator({
   saveQuotaState: async (state) => {
     await chrome.storage.local.set({ [PROMPT_OPTIMIZATION_QUOTA_STORAGE_KEY]: state })
   },
-  onStateChange: () => renderPromptOptimizationDialog(),
+  onStateChange: () => renderPromptOptimizationState(),
 })
 
 let diagnosticEventCount = 0
@@ -348,6 +344,13 @@ function setElementTitle(selector: string, title: string) {
   }
 }
 
+// 输入框工具栏的图标按钮不用原生 title(太慢、跟自定义提示条重影),
+// 提示文字只放 aria-label——CSS 的快提示条读的就是这个属性。
+function setElementAriaLabel(selector: string, label: string) {
+  const el = document.querySelector<HTMLElement>(selector)
+  if (el) el.setAttribute('aria-label', label)
+}
+
 function formatUiText(language: UserLanguage, key: string, values: Record<string, string | number>): string {
   let text = t(language, key)
   for (const [name, value] of Object.entries(values)) {
@@ -362,18 +365,14 @@ function uiText(key: string, values: Record<string, string | number> = {}): stri
 
 function applyStaticUiLanguage(language: UserLanguage) {
   document.documentElement.lang = language
-  setElementTitle('#btn-settings', t(language, 'app.settings'))
-  setElementTitle('#btn-image', t(language, 'toolbar.attachTitle'))
-  setElementText('#btn-summary', t(language, 'toolbar.summary'))
-  setElementTitle('#btn-summary', t(language, 'toolbar.summaryTitle'))
-  setElementText('#btn-history', t(language, 'toolbar.records'))
-  setElementTitle('#btn-history', t(language, 'toolbar.recordsTitle'))
-  setElementText('#btn-conversations', t(language, 'toolbar.officialChats'))
-  setElementTitle('#btn-conversations', t(language, 'toolbar.officialChatsTitle'))
-  setElementText('#btn-add-panel', t(language, 'toolbar.addAi'))
-  setElementTitle('#btn-add-panel', t(language, 'toolbar.addAiTitle'))
-  setElementTitle('#btn-expand-input', t(language, composer.classList.contains('expanded') ? 'toolbar.collapseInput' : 'toolbar.expandInput'))
-  setElementTitle('#btn-send', t(language, 'toolbar.send'))
+  setElementAriaLabel('#btn-settings', t(language, 'app.settings'))
+  setElementAriaLabel('#btn-image', t(language, 'toolbar.attachTitle'))
+  setElementAriaLabel('#btn-summary', t(language, 'toolbar.summaryTitle'))
+  setElementAriaLabel('#btn-history', t(language, 'toolbar.recordsTitle'))
+  setElementAriaLabel('#btn-conversations', t(language, 'toolbar.officialChatsTitle'))
+  setElementAriaLabel('#btn-add-panel', t(language, 'toolbar.addAiTitle'))
+  setElementAriaLabel('#btn-expand-input', t(language, composer.classList.contains('expanded') ? 'toolbar.collapseInput' : 'toolbar.expandInput'))
+  setElementAriaLabel('#btn-send', t(language, 'toolbar.send'))
   inputEl.placeholder = t(language, 'input.placeholder')
   originalInputPlaceholder = inputEl.placeholder
   enforceSummaryTaskLockUi()
@@ -415,12 +414,7 @@ function applyStaticUiLanguage(language: UserLanguage) {
   setElementText('#btn-version-check-store', t(language, 'versionCheck.goStore'))
   setElementText('#version-check-store-hint', t(language, 'versionCheck.storeReviewHint'))
   setElementTitle('#btn-version-check-close', t(language, 'common.close'))
-  setElementText('#btn-optimize-prompt', t(language, 'promptOptimization.button'))
-  setElementTitle('#btn-optimize-prompt', t(language, 'promptOptimization.button'))
-  setElementText('#prompt-optimization-title-dialog', t(language, 'promptOptimization.dialogTitle'))
-  setElementTitle('#btn-prompt-optimization-close', t(language, 'common.close'))
-  setElementText('#btn-prompt-optimization-revert', t(language, 'promptOptimization.revert'))
-  setElementText('#btn-prompt-optimization-confirm', t(language, 'promptOptimization.confirm'))
+  setElementAriaLabel('#btn-optimize-prompt', t(language, 'promptOptimization.button'))
   document.querySelectorAll<HTMLElement>('[data-site-owner]').forEach((owner) => {
     const platform = owner.dataset.siteOwner
     if (platform) owner.textContent = t(language, `site.owner.${platform}`)
@@ -566,7 +560,6 @@ function updateSendButtonState() {
     ? t(userSettings.language, 'queue.enqueue')
     : ''
   const title = sendButtonTitle(state.kind)
-  sendBtn.title = title
   sendBtn.setAttribute('aria-label', title)
 }
 
@@ -577,32 +570,54 @@ function updatePromptOptimizationButtonState() {
   if (!isKnownExtensionBuild(chrome.runtime.id)) {
     btnOptimizePrompt.disabled = true
     btnOptimizePrompt.classList.remove('optimizing')
-    btnOptimizePrompt.title = t(userSettings.language, 'promptOptimization.unsupportedBuild')
+    btnOptimizePrompt.dataset.state = 'optimize'
+    btnOptimizePrompt.setAttribute('aria-label', t(userSettings.language, 'promptOptimization.unsupportedBuild'))
     return
   }
-  btnOptimizePrompt.title = t(userSettings.language, 'promptOptimization.button')
 
   const { phase, remainingToday } = promptOptimizationCoordinator.getState()
+
+  // 预览态下按钮变成"恢复原文",不受草稿长度/额度限制门禁——恢复动作本身不消耗额度。
+  if (phase.kind === 'previewing') {
+    btnOptimizePrompt.dataset.state = 'revert'
+    btnOptimizePrompt.disabled = false
+    btnOptimizePrompt.classList.remove('optimizing')
+    btnOptimizePrompt.setAttribute('aria-label', t(userSettings.language, 'promptOptimization.revert'))
+    return
+  }
+
+  btnOptimizePrompt.dataset.state = 'optimize'
+
   const maxPromptLength = promptOptimizationConfig?.maxPromptLength
+  const draftLength = inputEl.value.trim().length
   const available = maxPromptLength !== undefined && isPromptOptimizationAvailable({
-    draftLength: inputEl.value.trim().length,
+    draftLength,
     maxPromptLength,
     remainingToday,
   })
+
+  // 按钮被禁用的具体原因不一样,提示语跟着换,而不是不管什么原因都显示同一句"优化提示词"。
+  if (remainingToday !== null && remainingToday <= 0) {
+    btnOptimizePrompt.setAttribute('aria-label', t(userSettings.language, 'promptOptimization.quotaExceeded'))
+  } else if (maxPromptLength !== undefined && draftLength > maxPromptLength) {
+    btnOptimizePrompt.setAttribute('aria-label', t(userSettings.language, 'promptOptimization.tooLong'))
+  } else {
+    btnOptimizePrompt.setAttribute('aria-label', t(userSettings.language, 'promptOptimization.button'))
+  }
+
   btnOptimizePrompt.disabled = !available || phase.kind === 'optimizing'
   btnOptimizePrompt.classList.toggle('optimizing', phase.kind === 'optimizing')
 }
 
-function renderPromptOptimizationDialog() {
+function renderPromptOptimizationState() {
   const { phase } = promptOptimizationCoordinator.getState()
   updatePromptOptimizationButtonState()
 
+  // 没有弹窗预览了:改写结果直接落到输入框里,按钮本身切换成"恢复原文"当退路。
   if (phase.kind === 'previewing') {
-    promptOptimizationPreview.value = phase.suggestion
-    promptOptimizationOverlay.hidden = false
-    btnPromptOptimizationConfirm.focus()
-  } else {
-    promptOptimizationOverlay.hidden = true
+    inputEl.value = phase.suggestion
+    updateSendButtonState()
+    resizeComposerInput()
   }
 
   if (phase.kind === 'error') {
@@ -610,23 +625,27 @@ function renderPromptOptimizationDialog() {
   }
 }
 
-async function onOptimizePromptClick() {
-  const draft = inputEl.value.trim()
-  if (!draft) return
-  await promptOptimizationCoordinator.optimize(draft)
-}
-
-function onPromptOptimizationConfirm() {
-  const finalText = promptOptimizationCoordinator.confirm(promptOptimizationPreview.value)
-  if (finalText === null) return
-  inputEl.value = finalText
+function revertPromptOptimization() {
+  const { phase } = promptOptimizationCoordinator.getState()
+  if (phase.kind !== 'previewing') return
+  inputEl.value = phase.original
+  promptOptimizationCoordinator.revert()
   updateSendButtonState()
-  updatePromptOptimizationButtonState()
+  resizeComposerInput()
   inputEl.focus()
 }
 
-function onPromptOptimizationRevert() {
-  promptOptimizationCoordinator.revert()
+async function onOptimizePromptClick() {
+  const { phase } = promptOptimizationCoordinator.getState()
+
+  if (phase.kind === 'previewing') {
+    revertPromptOptimization()
+    return
+  }
+
+  const draft = inputEl.value.trim()
+  if (!draft) return
+  await promptOptimizationCoordinator.optimize(draft)
 }
 
 function renderQueue() {
@@ -1266,10 +1285,42 @@ async function checkForUpdate() {
 
 function toggleInputExpanded() {
   const expanded = composer.classList.toggle('expanded')
-  btnExpandInput.textContent = expanded ? '⇲' : '⛶'
-  btnExpandInput.title = t(userSettings.language, expanded ? 'toolbar.collapseInput' : 'toolbar.expandInput')
-  btnExpandInput.setAttribute('aria-label', btnExpandInput.title)
+  btnExpandInput.dataset.state = expanded ? 'expanded' : 'collapsed'
+  btnExpandInput.setAttribute('aria-label', t(userSettings.language, expanded ? 'toolbar.collapseInput' : 'toolbar.expandInput'))
+  if (expanded) {
+    // 展开模式的高度完全交给 CSS(.composer.expanded #input)决定,清掉自动增高留下的内联高度;
+    // 展开态自己在 CSS 里就有阴影,不需要 grown 这个类了。
+    inputEl.style.height = ''
+    composerTextboxSlot.classList.remove('grown')
+  } else {
+    resizeComposerInput()
+  }
   inputEl.focus()
+}
+
+// 内容变多时输入框自动长高(封顶到 CSS max-height,超出后走原生滚动)；
+// 手动展开模式(composer.expanded)有自己的固定高度,不需要这条自动增高逻辑。
+// #composer-textbox-slot 的固定占位高度必须跟 #composer-textbox 单行态的真实高度一致
+// (文字行 + 图标行 + 间距 + padding),这几个数字分散在好几条 CSS 规则里,与其在这里
+// 手抄一遍容易抄错,不如量一次浏览器实际渲染出来的高度直接使用。
+function syncComposerTextboxSlotHeight() {
+  const previousHeight = inputEl.style.height
+  inputEl.style.height = ''
+  composerTextboxSlot.style.height = `${composerTextbox.offsetHeight}px`
+  inputEl.style.height = previousHeight
+}
+
+const COMPOSER_INPUT_MAX_HEIGHT = 200
+// 跟 #input 的单行 min-height(28px)对应,超过这个高度才算"多行"。
+const COMPOSER_INPUT_SINGLE_LINE_HEIGHT = 28
+function resizeComposerInput() {
+  if (composer.classList.contains('expanded')) return
+  inputEl.style.height = 'auto'
+  const height = Math.min(inputEl.scrollHeight, COMPOSER_INPUT_MAX_HEIGHT)
+  inputEl.style.height = `${height}px`
+  // #composer-textbox-slot 占位高度固定不变(见 CSS),真正长高的 #composer-textbox
+  // 是绝对定位浮层,从槽位底部往上盖在 AI 面板上层——两边的工具栏和面板高度都不受影响。
+  composerTextboxSlot.classList.toggle('grown', height > COMPOSER_INPUT_SINGLE_LINE_HEIGHT + 4)
 }
 
 async function initializeSettings() {
@@ -1376,7 +1427,7 @@ async function acceptFile(file: File) {
   updateComposerToolbarVisibility()
   updateSendButtonState()
   btnImage.classList.add('has-image')
-  btnImage.title = uiText('attachment.attachedTitle', { name: file.name || 'file' })
+  btnImage.setAttribute('aria-label', uiText('attachment.attachedTitle', { name: file.name || 'file' }))
   showToast(
     result.attachment.classification.handling === 'inline-text'
       ? t(userSettings.language, 'attachment.textAttached')
@@ -1401,7 +1452,7 @@ function clearAttachment() {
   updateComposerToolbarVisibility()
   updateSendButtonState()
   btnImage.classList.remove('has-image')
-  btnImage.title = t(userSettings.language, 'toolbar.attachTitle')
+  btnImage.setAttribute('aria-label', t(userSettings.language, 'toolbar.attachTitle'))
   if (fileInput) fileInput.value = ''
 }
 
@@ -1475,6 +1526,11 @@ function resolveComposerTargets(text: string): AIPlatform[] {
 }
 
 async function onSend() {
+  // 发出去这一刻等于隐式确认了改写结果：把优化协调器收回 idle，
+  // 按钮恢复成"优化"图标，不然发完之后还会一直停在"恢复原文"态。
+  if (promptOptimizationCoordinator.getState().phase.kind === 'previewing') {
+    promptOptimizationCoordinator.confirm(inputEl.value)
+  }
   // @ 目标解析是页面纯界面动作；门禁、空内容拦截的顺序与分支
   // 全部由协调器按原页面顺序判断，页面只把拒绝原因翻译成既有提示。
   const targets = resolveComposerTargets(inputEl.value.trim())
@@ -3446,6 +3502,7 @@ function bindEvents() {
   inputEl.addEventListener('input', onAtInput)
   inputEl.addEventListener('input', updateSendButtonState)
   inputEl.addEventListener('input', updatePromptOptimizationButtonState)
+  inputEl.addEventListener('input', resizeComposerInput)
   inputEl.addEventListener('keydown', onAtKeydown)
   inputEl.addEventListener('blur', () => {
     // 失焦关弹层(等 100ms 给 click 事件先到达)
@@ -3514,12 +3571,6 @@ function bindEvents() {
     if (e.target === versionCheckOverlay) closeVersionCheckDialog()
   })
   btnOptimizePrompt.addEventListener('click', () => void onOptimizePromptClick())
-  btnPromptOptimizationClose.addEventListener('click', onPromptOptimizationRevert)
-  btnPromptOptimizationRevert.addEventListener('click', onPromptOptimizationRevert)
-  btnPromptOptimizationConfirm.addEventListener('click', onPromptOptimizationConfirm)
-  promptOptimizationOverlay.addEventListener('click', (e) => {
-    if (e.target === promptOptimizationOverlay) onPromptOptimizationRevert()
-  })
   settingLanguage.addEventListener('change', () => {
     syncCurrentPromptDraft()
     const language = settingLanguage.value as UserLanguage
@@ -3567,7 +3618,7 @@ function bindEvents() {
     if (e.key === 'Escape' && !conversationOverlay.hidden) closeConversationHistory()
     if (e.key === 'Escape' && !settingsOverlay.hidden) closeSettings()
     if (e.key === 'Escape' && !versionCheckOverlay.hidden) closeVersionCheckDialog()
-    if (e.key === 'Escape' && !promptOptimizationOverlay.hidden) onPromptOptimizationRevert()
+    if (e.key === 'Escape' && promptOptimizationCoordinator.getState().phase.kind === 'previewing') revertPromptOptimization()
   })
 
   // 图片按钮 + 移除按钮
@@ -3585,6 +3636,16 @@ window.addEventListener('DOMContentLoaded', () => {
     await initializeSettings()
     promptOptimizationConfig = await getStoredPromptOptimizationConfig()
     updatePromptOptimizationButtonState()
+    syncComposerTextboxSlotHeight()
+    // 本地缓存里还没有远端配置(比如后台的首次拉取还没跑完/失败了),主动催一次,
+    // 不然优化按钮会一直卡在"配置未知"态,显示的是通用文案而不是真实原因。
+    if (!promptOptimizationConfig) {
+      chrome.runtime.sendMessage({ type: 'selector-config:refresh' }, async () => {
+        if (chrome.runtime.lastError) return
+        promptOptimizationConfig = await getStoredPromptOptimizationConfig()
+        updatePromptOptimizationButtonState()
+      })
+    }
     settingsVersion.textContent = `v${chrome.runtime.getManifest().version}`
     setupSplitter()
     setupOpenButtons()
