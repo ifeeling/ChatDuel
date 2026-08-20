@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: August 19, 2026
+Last updated: August 20, 2026
 
 ChatDuel is a local-first browser extension. Protecting your privacy is the core design goal, not an afterthought.
 
@@ -36,6 +36,8 @@ Next to the shared input box (the one question box that broadcasts to multiple p
 ## Other network requests we make
 
 To keep DOM selectors up to date as the official AI sites change, ChatDuel periodically fetches a small configuration file from `https://chatduel.ifeeling.app/api/extension/config` (the project's own official website). This request sends **only the extension version** as a header — no account information, no conversation content, nothing identifiable. The result is cached locally.
+
+When you click **Check for updates** in Settings, ChatDuel makes a single request to GitHub's public API (`https://api.github.com/repos/ifeeling/ChatDuel/releases/latest`) to look up the latest release. This is a plain, unauthenticated request — no account information or identifiers are sent, and it only happens when you click the button.
 
 ## Your control
 

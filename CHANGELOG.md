@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.4.19 (2026-08-06)
+
+- Fixed an extra divider line rendering between adjacent visible panels when a panel was hidden.
+- Internal refactor: consolidated question-send orchestration into a single "question send coordinator" deep module and unified per-platform command vocabulary into one source of truth. Send behavior is unchanged; testability improved.
+
+## v0.4.18 (2026-08-04)
+
+- Added a "Check for updates" control to Settings: shows the current version and a spinner while checking, then reports up-to-date / update-available / check-failed. An update dialog shows the new version and changelog pulled from GitHub Releases, with buttons to open GitHub or the extension's store listing.
+- Added official-website and GitHub links to Settings.
+- Rewrote the in-app Help panel into about ten cards covering the send queue, `@`-prefixed targeted sends, panel divider dragging, the four summary modes, failure recovery, history search/copy/delete, and account/settings features.
+- Wired up the summary task end-to-end, including failure recovery and a safety re-check pass.
+- Fixed several summary/history state bugs: callback propagation, dedup on failed-retry (upsert instead of insert), and list selection/highlight issues.
+- Shows a refresh prompt on already-open pages after the extension updates.
+- Migrated ChatGPT/Gemini/Claude/DeepSeek/Doubao content-script commands onto a shared command bridge.
+- Added `host_permissions` for `https://api.github.com/*`, used only when checking for updates.
+
+## v0.4.17 (2026-07-29)
+
+- Added a "pending question queue": prepare, edit, and manage multiple questions before sending, with per-question file/image attachments where the target platform supports it (e.g. DeepSeek image understanding).
+- Questions can now carry attachments and are dispatched in queue order.
+- Improved DeepSeek attachment/image-understanding stability across multi-turn conversations by narrowing failure detection.
+- Centralized response capture and completion detection across adapters into a single answer-collection task for more consistent cross-platform behavior.
+- History-write failures no longer silently drop a captured answer; the answer is preserved and a diagnostic is recorded.
+- Fixed a status-bar bug where the platform stayed stuck on "waiting" after an answer appeared but the platform never reported a `streaming` state (notably DeepSeek with images).
+
 ## v0.4.16 (2026-07-27)
 
 - Adapted Claude response capture to the current `role="article"` message structure while distinguishing user prompts from Claude responses.
