@@ -1,4 +1,5 @@
-export const OPTIMIZE_PROMPT_URL = 'https://chatduel.ifeeling.app/api/extension/optimize-prompt'
+export const OPTIMIZE_PROMPT_URL =
+  import.meta.env.VITE_OPTIMIZE_PROMPT_URL ?? 'https://chatduel.ifeeling.app/api/extension/optimize-prompt'
 
 export type OptimizePromptOutcome =
   | { kind: 'success'; text: string; remainingToday: number }

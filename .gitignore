@@ -12,9 +12,10 @@ test-results/
 docs
 *.zip
 
-# 环境变量 / 密钥(防止误提交)
+# 环境变量 / 密钥(防止误提交)。.env.development 和 .env.production
+# 只装非敏感的地址常量,不在此列,允许提交。
 .env
-.env.*
+.env.local
 
 # 测试目录(仅本地保留，不随仓库发布)
 tests

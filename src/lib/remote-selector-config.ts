@@ -1,6 +1,7 @@
 import type { AIPlatform } from '../types'
 
-export const REMOTE_SELECTOR_CONFIG_URL = 'https://chatduel.ifeeling.app/api/extension/config'
+export const REMOTE_SELECTOR_CONFIG_URL =
+  import.meta.env.VITE_REMOTE_SELECTOR_CONFIG_URL ?? 'https://chatduel.ifeeling.app/api/extension/config'
 export const REMOTE_SELECTOR_CONFIG_STORAGE_KEY = 'remoteSelectorConfig'
 
 type SelectorValue = string | string[]
