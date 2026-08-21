@@ -26,3 +26,6 @@ AGENTS.md
 
 # 应用市场发布与素材脚本(仅本机使用, 不提交)
 scripts
+
+# 真机验证用的临时 Playwright profile(存了登录 cookie, 仅本机保留)
+.playwright-real-verify-profile/
