@@ -97,10 +97,9 @@ export function elementToMarkdownText(el: HTMLElement): string {
 // 无障碍专用的 .sr-only）。这里用通配选择器覆盖，不针对某个官网的具体混淆 class名，
 // 因为那类 class 会随官网改版变化（参考 RESPONSE_CAPTURE_MAINTENANCE.md）。
 //
-// 这份清单没有对着 DeepSeek/豆包的真实登录后页面逐条验证过——那两个官网需要登录，
-// 而扩展不能代用户登录（见 CLAUDE.md 的账号/密码红线），所以只能参照 ai-arena 已验证过的
-// Claude/Gemini 选择器风格做同类通配猜测。如果之后发现思考内容仍然漏进历史记录，
-// 从回答抓取调试日志里看实际 class/aria 再扩充这份清单，不要凭感觉扩大匹配范围。
+// DeepSeek 已经用真实登录页面验证过：深度思考的折叠触发文案和折叠正文都没有任何
+// thinking/reasoning 语义标记，class 是纯哈希（例如 `_74c0879`），这份通配选择器
+// 抓不到它们，也没有安全的通用兜底能补上——见下面 stripThinkingNodes 里的说明。
 const THINKING_NODE_SELECTOR = [
   'details',
   '[data-testid*="thinking" i]',
@@ -114,9 +113,14 @@ const THINKING_NODE_SELECTOR = [
   '.sr-only',
 ].join(', ')
 
-// "已深度思考(用时 12 秒)" / "Thought for 12s" 这类折叠触发文案：短、且以固定前缀开头。
+// "已深度思考(用时 12 秒)" / "已思考（用时 8 秒）" / "已完成思考" / "Thought for 12s" 这类折叠
+// 触发文案：短、且以固定前缀开头。"已思考"是 DeepSeek 真机验证到的实际文案（不是"已深度思考"），
+// "已完成思考"是豆包真机验证到的实际文案。
+// 故意不含"推理过程"——真机验证过，豆包会把这四个字当成正式回答里"分步推理"内容的
+// 标题来用（用户明确要求"说明推理过程"时），删掉它虽然只丢一个标题词、不算严重，
+// 但也没有证据证明它真的是哪个平台的思考折叠触发词，保留只有下行风险没有上行收益。
 // 只匹配短文本，避免误删恰好以类似词开头的正式回答长段落。
-const THINKING_LABEL_RE = /^(Thought for\s+\d|Thinking\b|已深度思考|深度思考|正在思考|思考中|推理过程)/i
+const THINKING_LABEL_RE = /^(Thought for\s+\d|Thinking\b|已深度思考|已思考|已完成思考|深度思考|正在思考|思考中)/i
 const THINKING_LABEL_MAX_LENGTH = 80
 
 function isThinkingLabelNode(el: HTMLElement): boolean {
@@ -134,6 +138,13 @@ export function stripThinkingNodes(root: HTMLElement): HTMLElement {
   if (!originalText) return root
 
   root.querySelectorAll<HTMLElement>(THINKING_NODE_SELECTOR).forEach((node) => node.remove())
+  // 只删触发文案节点本身，不提升到父节点删除——真机验证过，DeepSeek 和豆包的折叠
+  // 触发标题跟"父节点还有没有其它有意义内容"这件事，从纯 DOM 结构和文本长度上
+  // 长得一模一样：DeepSeek 里父节点的另一部分是真思考正文（该删），豆包"已完成思考"
+  // 折叠标题的父节点的另一部分却是"推理过程"正式回答本身（不能删，思考草稿在豆包
+  // 默认根本不渲染进折叠状态的 DOM）。两个平台在这一点上给出了相反的正确答案，
+  // 说明"父节点更长就提升删除"这个启发式不可靠，宁可留一点触发文案噪音，
+  // 也不能有把正式回答一起删掉的风险。
   root.querySelectorAll<HTMLElement>('button, summary, h1, h2, h3, h4, h5, h6, div, span, p').forEach((node) => {
     if (root.contains(node) && isThinkingLabelNode(node)) node.remove()
   })
