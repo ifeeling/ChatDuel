@@ -5,7 +5,7 @@ import { waitForSendAccepted } from '../shared/dom-write'
 import { hasStopGeneratingButton } from '../shared/ds-doubao-shared'
 import type { ConversationState } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
-import { elementToMarkdownText } from '../../lib/dom-response-text'
+import { cloneWithoutThinking, elementToMarkdownText } from '../../lib/dom-response-text'
 import selectorsJson from './selectors.json'
 
 type GeminiSelectors = typeof selectorsJson.selectors
@@ -243,12 +243,12 @@ export function createGeminiAdapter(selectorOverrides?: SelectorOverrideMap): AI
 
     getLastResponse() {
       const responseEl = last<HTMLElement>(S.lastResponse)
-      return Promise.resolve(responseEl ? elementToMarkdownText(responseEl) : '')
+      return Promise.resolve(responseEl ? elementToMarkdownText(cloneWithoutThinking(responseEl)) : '')
     },
 
     getConversationState(): Promise<ConversationState> {
       const responseEl = last<HTMLElement>(S.lastResponse)
-      const lastText = responseEl ? elementToMarkdownText(responseEl) : ''
+      const lastText = responseEl ? elementToMarkdownText(cloneWithoutThinking(responseEl)) : ''
       if (hasStopGeneratingButton(S, { requireVisible: false, textFallback: false })) return Promise.resolve({ status: 'streaming', lastResponse: lastText, stopButtonDetected: true })
       if (q(S.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText, stopButtonDetected: false })
       if (!lastText) return Promise.resolve({ status: 'idle', stopButtonDetected: false })

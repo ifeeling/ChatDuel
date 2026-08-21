@@ -17,7 +17,7 @@ import {
 } from '../shared/ds-doubao-shared'
 import type { ConversationState } from '../../types'
 import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
-import { elementToMarkdownText } from '../../lib/dom-response-text'
+import { elementToMarkdownText, stripThinkingNodes } from '../../lib/dom-response-text'
 import { describeCaptureElement, logCaptureDebug } from '../../lib/capture-debug'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 
@@ -258,6 +258,9 @@ function cloneWithoutSuggestionNodes(el: HTMLElement): HTMLElement {
   for (const suggestion of clone.querySelectorAll<HTMLElement>('*')) {
     if (isSuggestionNode(suggestion)) suggestion.remove()
   }
+  // 豆包"深度思考"折叠区和正式回答同处一个候选容器时，必须在拍平成文字之前
+  // 按 DOM 边界删掉思考区，行过滤已经丢了 DOM 边界，清不干净（issue #8）。
+  stripThinkingNodes(clone)
   return clone
 }
 

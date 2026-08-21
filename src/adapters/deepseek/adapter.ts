@@ -17,7 +17,7 @@ import {
 } from '../shared/ds-doubao-shared'
 import type { ConversationState } from '../../types'
 import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
-import { elementToMarkdownText } from '../../lib/dom-response-text'
+import { cloneWithoutThinking, elementToMarkdownText } from '../../lib/dom-response-text'
 import { describeCaptureElement, logCaptureDebug, textPreview } from '../../lib/capture-debug'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 
@@ -588,6 +588,14 @@ export async function ensureDeepSeekVisionMode(): Promise<boolean> {
   }
 }
 
+// DeepSeek "深度思考" 会把思考链和正式回复分两个容器渲染
+// （ai-arena content-shared.js 的踩坑记录里也提到这一点），但也可能出现思考内容和
+// 正式回答同处一个容器、只靠一个可折叠触发文案分隔的情况。在拍平成文字之前先 clone
+// 并按 DOM 边界删掉思考折叠区，而不是等拍平成一整段文字后再按行猜哪行是垃圾。
+function rawResponseText(el: HTMLElement): string {
+  return elementToMarkdownText(cloneWithoutThinking(el))
+}
+
 function cleanDeepSeekResponseText(text: string): string {
   const withoutReferenceLines = normalizeText(text)
     .split('\n')
@@ -631,7 +639,7 @@ function hasOtherResponseCandidate(root: HTMLElement, current: HTMLElement, resp
     .some((candidate) => {
       if (candidate === current || current.contains(candidate) || candidate.contains(current)) return false
       if (isHidden(candidate) || candidate.closest(RESPONSE_EXCLUDE_ANCESTORS) || isDeepSeekUserMessage(candidate)) return false
-      return elementToMarkdownText(candidate).length > 0
+      return rawResponseText(candidate).length > 0
     })
 }
 
@@ -640,7 +648,7 @@ function canUseExpandedResponseRoot(el: HTMLElement, text: string, current: HTML
   if ([...el.querySelectorAll<HTMLElement>('*')].some((child) => isDeepSeekUserMessage(child))) return false
   if (el.querySelector('textarea, input, [contenteditable="true"], [role="textbox"]')) return false
   if (hasOtherResponseCandidate(el, current, responseSelector) && !hasDirectResponseActions(el)) return false
-  const expandedText = elementToMarkdownText(el)
+  const expandedText = rawResponseText(el)
   if (expandedText.length < text.length) return false
   if (!expandedText.includes(text)) return false
   // ds-markdown 是 DeepSeek 实际使用的完整回答渲染容器 class。
@@ -661,7 +669,7 @@ function expandResponseCandidate(el: HTMLElement, text: string, responseSelector
   for (let depth = 0; parent && depth < 8; depth += 1, parent = parent.parentElement) {
     if (!canUseExpandedResponseRoot(parent, bestText, el, responseSelector)) break
     bestEl = parent
-    bestText = elementToMarkdownText(parent)
+    bestText = rawResponseText(parent)
   }
   return { el: bestEl, text: bestText }
 }
@@ -679,7 +687,7 @@ function getMainFallbackText(): string {
     .filter((el) => !el.closest(RESPONSE_EXCLUDE_ANCESTORS))
 
   for (let i = candidates.length - 1; i >= 0; i--) {
-    const text = cleanDeepSeekResponseText(elementToMarkdownText(candidates[i]))
+    const text = cleanDeepSeekResponseText(rawResponseText(candidates[i]))
     if (text.length > 50) return text
   }
 
@@ -695,7 +703,7 @@ function getLatestResponseText(selectors: DeepSeekSelectors): string {
     .filter((el) => !el.closest(RESPONSE_EXCLUDE_ANCESTORS))
     .filter((el) => !isDeepSeekUserMessage(el))
     .map((el, index) => {
-      const text = elementToMarkdownText(el)
+      const text = rawResponseText(el)
       const expanded = expandResponseCandidate(el, text, responseSelector)
       return {
         el: expanded.el,

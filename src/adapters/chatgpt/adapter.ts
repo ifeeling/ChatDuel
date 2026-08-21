@@ -5,6 +5,7 @@ import { writeEditableValue, waitForSendAccepted } from '../shared/dom-write'
 import { hasStopGeneratingButton } from '../shared/ds-doubao-shared'
 import type { ConversationState } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
+import { cloneWithoutThinking } from '../../lib/dom-response-text'
 import selectorsJson from './selectors.json'
 
 type ChatGPTSelectors = typeof selectorsJson.selectors
@@ -217,12 +218,14 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
       throw new Error('file input not found for image upload')
     },
 
-        getLastResponse() {
-      return Promise.resolve(last(S.lastResponse)?.textContent ?? '')
+    getLastResponse() {
+      const el = last<HTMLElement>(S.lastResponse)
+      return Promise.resolve(el ? cloneWithoutThinking(el).textContent ?? '' : '')
     },
 
     getConversationState(): Promise<ConversationState> {
-      const lastText = last(S.lastResponse)?.textContent ?? ''
+      const el = last<HTMLElement>(S.lastResponse)
+      const lastText = el ? cloneWithoutThinking(el).textContent ?? '' : ''
       if (hasStopGeneratingButton(S, { requireVisible: false, textFallback: false })) return Promise.resolve({ status: 'streaming', lastResponse: lastText, stopButtonDetected: true })
       if (q(S.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText, stopButtonDetected: false })
       if (!lastText) return Promise.resolve({ status: 'idle', stopButtonDetected: false })

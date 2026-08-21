@@ -5,6 +5,7 @@ import { writeEditableValue } from '../shared/dom-write'
 import { hasStopGeneratingButton, isVisibleElement } from '../shared/ds-doubao-shared'
 import type { ConversationState } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
+import { cloneWithoutThinking, stripThinkingNodes } from '../../lib/dom-response-text'
 import selectorsJson from './selectors.json'
 
 type ClaudeSelectors = typeof selectorsJson.selectors
@@ -121,13 +122,18 @@ function cleanClaudeText(raw: string): string {
   return cleaned.join('\n').trim()
 }
 
+// 在 DOM 层面剥离思考折叠区之后，再把元素拍平成文字。
+function textFromElement(el: HTMLElement): string {
+  return cloneWithoutThinking(el).textContent ?? ''
+}
+
 // Claude 有时把回答标成 "Claude responded:"，后面紧跟回答块。
 function findClaudeRespondedBlock(): string | null {
   const all = Array.from(document.querySelectorAll<HTMLElement>('*'))
   for (const el of all) {
     if (el.childNodes.length === 1 && el.textContent?.trim() === 'Claude responded:') {
       const next = el.nextElementSibling
-      if (next?.textContent) return next.textContent
+      if (next instanceof HTMLElement) return textFromElement(next)
     }
   }
   return null
@@ -155,9 +161,11 @@ function findResponseByDomWalk(): string | null {
     const text = el.textContent?.trim() ?? ''
     // 跳过太短或太大的（大的是 root 容器本身）
     if (text.length < 30 || text.length > 10000) continue
-    // "Thought for Xs" 是 Claude 思考过程的前缀，说明这是回答区
+    // "Thought for Xs" 是 Claude 思考过程折叠区的开头，说明这块 DOM 里混了思考内容，
+    // 用它定位到"回答所在的区域"，但读文字前要先把思考折叠区从 DOM 里删掉，
+    // 不能把 "Thought for Xs" 后面拼接的全部文字（含思考过程）直接当成回答。
     if (/^Thought for \d+[sm]/.test(text)) {
-      const cleaned = cleanClaudeText(text)
+      const cleaned = cleanClaudeText(textFromElement(el))
       if (cleaned.length > 10) return cleaned
     }
   }
@@ -174,7 +182,7 @@ function findResponseByDomWalk(): string | null {
     const nodes = Array.from(root.querySelectorAll<HTMLElement>(sel))
     if (nodes.length > 0) {
       const last = nodes[nodes.length - 1]
-      const cleaned = cleanClaudeText(last.textContent ?? '')
+      const cleaned = cleanClaudeText(textFromElement(last))
       if (cleaned.length > 10) return cleaned
     }
   }
@@ -183,7 +191,7 @@ function findResponseByDomWalk(): string | null {
   for (const el of allElements) {
     const label = el.getAttribute('aria-label') || ''
     if (/response|answer|assistant|claude|ai/i.test(label)) {
-      const cleaned = cleanClaudeText(el.textContent ?? '')
+      const cleaned = cleanClaudeText(textFromElement(el))
       if (cleaned.length > 10) return cleaned
     }
   }
@@ -198,7 +206,7 @@ function findResponseByDomWalk(): string | null {
     if (el.matches('input, textarea, [contenteditable], [role="textbox"]')) continue
     const text = el.textContent?.trim() ?? ''
     if (text.replace(/\s/g, '').length > 20) {
-      const cleaned = cleanClaudeText(text)
+      const cleaned = cleanClaudeText(textFromElement(el))
       if (cleaned.length > 10) return cleaned
     }
   }
@@ -213,11 +221,11 @@ function findLastResponseFromMain(): string | null {
   const blocks = Array.from(
     main.querySelectorAll<HTMLElement>("[data-testid='assistant-message'], article[role='article'], .font-claude-message"),
   )
-  if (blocks.length) return blocks[blocks.length - 1].textContent ?? null
+  if (blocks.length) return textFromElement(blocks[blocks.length - 1])
   const children = Array.from(main.children) as HTMLElement[]
   for (let i = children.length - 1; i >= 0; i--) {
     const text = children[i].textContent ?? ''
-    if (text.replace(/\s/g, '').length > 20) return text
+    if (text.replace(/\s/g, '').length > 20) return textFromElement(children[i])
   }
   return null
 }
@@ -271,6 +279,7 @@ function findLatestAiResponse(): string | null {
   if (!article) return null
   const content = article.cloneNode(true) as HTMLElement
   content.querySelectorAll("[role='toolbar'], [data-testid^='action-bar-']").forEach((node) => node.remove())
+  stripThinkingNodes(content)
   const cleaned = cleanClaudeText(stripMessagePrefix(content.textContent ?? ''))
   return cleaned.length > 0 ? cleaned : null
 }
