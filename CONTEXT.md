@@ -43,3 +43,7 @@ _Avoid_：优化提示词功能、AI 改写、prompt 优化、提示词增强
 **匿名装机标识**：
 扩展安装时在本机随机生成、只保存在本机的标识符，随提示词优化请求一起发给服务器，用来核算当日已用次数；不关联账号或其他可识别信息，重装扩展会生成新的标识。
 _Avoid_：装机 ID、clientId、用户 ID、设备指纹
+
+**发送前风险扫描**：
+问题发送协调器在实际发送前，对待发送内容做的本地规则扫描（已知密钥格式前缀、证件号/银行卡校验位算法、高信息熵字符串+关键词上下文），用来提醒用户可能贴入了密钥、证件号等结构化敏感信息；不联网核对内容，也因此只能识别结构化敏感信息，识别不了没有固定格式的机密文字。决策见 [ai-arena-extension 全方位对比调研](docs/research/2026-08-21-ai-arena-extension-full-feature-comparison.md)，落地追踪 [issue #12](https://github.com/ifeeling/ChatDuel-extension-private/issues/12)。
+_Avoid_：敏感信息检测、Gatekeeper、内容审核
