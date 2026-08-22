@@ -465,6 +465,13 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
     completed: boolean
     completionActionBarDetected: boolean
     completionActionBarStableCount: number
+    // 2026-08-22 真机验证（CAP-06 调查过程中发现）：豆包 2.1 Turbo 专家模式下，
+    // receive-message-action-bar 从助手消息气泡一创建（内容还是"深入思考中"占位阶段）
+    // 就已经可见，不是等回答真正生成完才出现——"可见"本身不能当完成信号，否则思考阶段
+    // 一闪而过的摘要提示文字只要连续两次轮询没变就会被永久锁定当成最终回答。只有当本轮
+    // 曾经真的观察到 action bar 处于不可见状态、之后才变可见，这个"不可见→可见"的跳变
+    // 才是可信的完成信号；从未见过它不可见，就必须退回下面 45 秒的安全兜底判定。
+    hasObservedActionBarAbsent: boolean
   } | null = null
 
   function responseExclusions(): ReadonlySet<string> {
@@ -562,6 +569,7 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
         completed: false,
         completionActionBarDetected: false,
         completionActionBarStableCount: 0,
+        hasObservedActionBarAbsent: false,
       }
       emitDiagnostic(diagnostics, {
         component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber: 1,
@@ -608,6 +616,7 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
           return { status: 'streaming', lastResponse, stopButtonDetected: false }
         }
         const completionActionBarDetected = !!candidate && hasVisibleCompletionActionBar(candidate, selectors)
+        if (!completionActionBarDetected) activeSend.hasObservedActionBarAbsent = true
         activeSend.completionActionBarStableCount = completionActionBarDetected
           ? activeSend.completionActionBarStableCount + 1
           : 0
@@ -621,7 +630,7 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
             completionActionBarDetected,
           }
         }
-        if (activeSend.completionActionBarStableCount >= 2) {
+        if (activeSend.hasObservedActionBarAbsent && activeSend.completionActionBarStableCount >= 2) {
           activeSend.completed = true
           activeSend.completionActionBarDetected = true
           return {
