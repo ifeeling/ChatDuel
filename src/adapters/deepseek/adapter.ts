@@ -31,6 +31,12 @@ import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remo
 // 诊断脚本需在浏览器 DevTools 中选中 DeepSeek iframe 上下文后运行。
 // ---------------------------------------------------------------------------
 
+// ⚠️ 提醒：下面这组内置默认选择器（inputBox / sendButton / stopButton / response）
+// 对应的 key 都在 remote-selector-config.ts 的 ALLOWED_SELECTOR_KEYS.deepseek 里，
+// 意味着它们本该可以通过服务器端热更新覆盖，不用等发版——但热更新只在服务器那份
+// 远程配置（chatduel.ifeeling.app）里真的写了对应值时才生效。改了这里任何一个选择器
+// （比如 DeepSeek 又改版，某个 class/文案变了），记得同步去更新服务器端的远程配置，
+// 否则装了旧版本、还没吃到新发行版的用户只能继续用这里的旧默认值，等于白改。
 const DEFAULT_INPUT_SELECTORS = [
   'textarea[placeholder*="Message" i]',
   'textarea[placeholder*="Send" i]',

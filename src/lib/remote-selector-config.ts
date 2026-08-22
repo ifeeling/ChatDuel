@@ -23,6 +23,10 @@ export interface StoredSelectorConfig {
   version?: string
 }
 
+// ⚠️ 这份客户端允许字段表只决定"接不接受服务器下发的这个 key"，不会自动让服务器
+// 真的下发对应的值。加一个新 key 到这里之后，如果对应平台的选择器又出现改版失效，
+// 记得同步登录 chatduel.ifeeling.app 的远程配置后台把这个字段的值也补上，
+// 否则加了 key 也只是"允许热更新"，没有真的推送热更新，效果等于没加。
 const ALLOWED_SELECTOR_KEYS: Record<AIPlatform, Set<string>> = {
   chatgpt: new Set([
     'inputBox',
@@ -46,8 +50,8 @@ const ALLOWED_SELECTOR_KEYS: Record<AIPlatform, Set<string>> = {
     'stopButton',
     'loggedIn',
   ]),
-  doubao: new Set(['inputBox', 'sendButton', 'response']),
-  deepseek: new Set(['inputBox', 'sendButton', 'response']),
+  doubao: new Set(['inputBox', 'sendButton', 'response', 'stopButton']),
+  deepseek: new Set(['inputBox', 'sendButton', 'response', 'stopButton']),
   claude: new Set([
     'inputBox',
     'sendButton',
