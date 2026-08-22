@@ -15,6 +15,7 @@ import {
   dispatchEnter,
   hasPendingContent,
 } from '../shared/ds-doubao-shared'
+import { createResponseCursor, type ResponseCursor } from '../shared/response-cursor'
 import type { ConversationState } from '../../types'
 import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
 import { elementToMarkdownText, stripThinkingNodes } from '../../lib/dom-response-text'
@@ -353,11 +354,15 @@ function responseCandidateScore(el: HTMLElement): number {
   return score
 }
 
-function snapshotResponseCandidates(selectors: DoubaoSelectors): ReadonlyMap<HTMLElement, string> {
-  return new Map(
-    collectResponseCandidateElements(selectors)
-      .map((el) => [el, elementText(el)] as const),
-  )
+// 候选查询：匹配 response 选择器（含外层列表容器展开）、过滤隐藏/排除祖先/列表容器/
+// 用户消息后的原始元素列表。响应游标的 remember（发送前）与读取时都基于这份同一口径
+// 的候选列表，这样锚点元素才能在后续查询里按引用对上号。
+function queryResponseCandidateElements(selectors: DoubaoSelectors): HTMLElement[] {
+  return collectResponseCandidateElements(selectors)
+    .filter((el) => !isHidden(el))
+    .filter((el) => !el.closest(RESPONSE_EXCLUDE_ANCESTORS))
+    .filter((el) => !isConversationListContainer(el))
+    .filter((el) => !isUserMessage(el, {}))
 }
 
 interface DoubaoResponseCandidate {
@@ -369,21 +374,17 @@ interface DoubaoResponseCandidate {
 
 function getLatestResponseCandidate(
   selectors: DoubaoSelectors,
+  responseCursor: ResponseCursor,
   excludedTexts: ReadonlySet<string> = new Set(),
-  candidatesBeforeSend: ReadonlyMap<HTMLElement, string> = new Map(),
 ): DoubaoResponseCandidate | undefined {
   // 豆包会出现外层列表、搜索块和建议问题；改候选选择前先看 docs/RESPONSE_CAPTURE_MAINTENANCE.md。
   const seen = new Set<string>()
-  const candidates = collectResponseCandidateElements(selectors)
-    .filter((el) => !isHidden(el))
-    .filter((el) => !el.closest(RESPONSE_EXCLUDE_ANCESTORS))
-    .filter((el) => !isConversationListContainer(el))
-    .filter((el) => !isUserMessage(el, {}))
+  const rawCandidates = queryResponseCandidateElements(selectors)
+  const candidates = responseCursor.sinceAnchor(rawCandidates)
     .map((el, index) => ({ el, text: elementText(el), score: responseCandidateScore(el), index }))
     .filter((candidate) => candidate.text.length > 0)
     .filter((candidate) => !excludedTexts.has(normalizeText(candidate.text)))
     .filter((candidate) => !isSearchLoadingText(candidate.text))
-    .filter((candidate) => candidatesBeforeSend.get(candidate.el) !== candidate.text)
     .filter((candidate) => {
       if (seen.has(candidate.text)) return false
       seen.add(candidate.text)
@@ -418,10 +419,10 @@ function getLatestResponseCandidate(
 
 function getLatestResponseText(
   selectors: DoubaoSelectors,
+  responseCursor: ResponseCursor,
   excludedTexts: ReadonlySet<string> = new Set(),
-  candidatesBeforeSend: ReadonlyMap<HTMLElement, string> = new Map(),
 ): string {
-  return getLatestResponseCandidate(selectors, excludedTexts, candidatesBeforeSend)?.text ?? ''
+  return getLatestResponseCandidate(selectors, responseCursor, excludedTexts)?.text ?? ''
 }
 
 function isVisiblyRendered(el: HTMLElement): boolean {
@@ -454,9 +455,11 @@ function hasVisibleCompletionActionBar(candidate: DoubaoResponseCandidate, selec
 
 export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter & AdapterSendInternals {
   const selectors = mergeSelectorOverrides(DEFAULT_SELECTORS, selectorOverrides) as DoubaoSelectors
+  // ADR-0008 响应游标试点：发送前记住当前候选位置，读取时只看之后新出现的候选，
+  // 取代原先逐元素做「发送前文字快照」判断陈旧候选的做法。
+  const responseCursor = createResponseCursor()
   let activeSend: {
     prompt: string
-    candidatesBeforeSend: ReadonlyMap<HTMLElement, string>
     lastObservedResponse: string
     lastResponseChangeAt: number
     completed: boolean
@@ -492,7 +495,7 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
     },
 
     async sendMessage(text: string, image?: File, diagnostics?: AdapterDiagnostics) {
-      const candidatesBeforeSend = snapshotResponseCandidates(selectors)
+      responseCursor.remember(queryResponseCandidateElements(selectors))
       const box = queryFirst<HTMLElement>(selectors.inputBox)
       if (!box) {
         emitDiagnostic(diagnostics, {
@@ -551,7 +554,6 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
       }
       activeSend = {
         prompt: normalizeText(text),
-        candidatesBeforeSend,
         lastObservedResponse: '',
         lastResponseChangeAt: Date.now(),
         completed: false,
@@ -581,7 +583,7 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
 
     async getLastResponse() {
       if (activeSend?.completed) return activeSend.lastObservedResponse
-      return getLatestResponseText(selectors, responseExclusions(), activeSend?.candidatesBeforeSend)
+      return getLatestResponseText(selectors, responseCursor, responseExclusions())
     },
 
     async getConversationState(): Promise<ConversationState> {
@@ -594,7 +596,7 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
           completionActionBarDetected: activeSend.completionActionBarDetected,
         }
       }
-      const candidate = getLatestResponseCandidate(selectors, responseExclusions(), activeSend?.candidatesBeforeSend)
+      const candidate = getLatestResponseCandidate(selectors, responseCursor, responseExclusions())
       const lastResponse = candidate?.text ?? ''
       if (hasStopGeneratingButton(selectors)) return { status: 'streaming', lastResponse, stopButtonDetected: true }
       if (activeSend) {

@@ -47,3 +47,7 @@ _Avoid_：装机 ID、clientId、用户 ID、设备指纹
 **发送前风险扫描**：
 问题发送协调器在实际发送前，对待发送内容做的本地规则扫描（已知密钥格式前缀、证件号/银行卡校验位算法、高信息熵字符串+关键词上下文），用来提醒用户可能贴入了密钥、证件号等结构化敏感信息；不联网核对内容，也因此只能识别结构化敏感信息，识别不了没有固定格式的机密文字。决策见 [ai-arena-extension 全方位对比调研](docs/research/2026-08-21-ai-arena-extension-full-feature-comparison.md)，落地追踪 [issue #12](https://github.com/ifeeling/ChatDuel-extension-private/issues/12)。
 _Avoid_：敏感信息检测、Gatekeeper、内容审核
+
+**响应游标**：
+适配器在发送前记住的候选回答节点位置（当前候选列表的最后一个元素），用来在读取时只看这个位置之后新出现的候选，从而判断"这是不是新回答"——用位置代替猜文本特征/前缀。目前在 DeepSeek、豆包两个平台试点，实现位于 `src/adapters/shared/response-cursor.ts`，决策与推广标准见 ADR-0008（issue #9）。
+_Avoid_：候选打分、发送前快照、候选基线

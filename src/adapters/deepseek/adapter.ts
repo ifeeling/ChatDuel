@@ -15,6 +15,7 @@ import {
   dispatchEnter,
   hasPendingContent,
 } from '../shared/ds-doubao-shared'
+import { createResponseCursor, type ResponseCursor } from '../shared/response-cursor'
 import type { ConversationState } from '../../types'
 import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
 import { cloneWithoutThinking, elementToMarkdownText } from '../../lib/dom-response-text'
@@ -706,14 +707,26 @@ function getMainFallbackText(): string {
   return ''
 }
 
-function getLatestResponseText(selectors: DeepSeekSelectors): string {
-  // DeepSeek 的混淆 class 会变化；改候选选择前先看 docs/RESPONSE_CAPTURE_MAINTENANCE.md。
-  const seen = new Set<string>()
-  const responseSelector = selectors.response.join(',')
-  const candidates = [...document.querySelectorAll<HTMLElement>(responseSelector)]
+function responseSelectorString(selectors: DeepSeekSelectors): string {
+  return selectors.response.join(',')
+}
+
+// 候选查询：匹配 response 选择器、过滤隐藏/排除祖先/用户消息后的原始元素列表。
+// DeepSeek 的混淆 class 会变化；改这份候选选择逻辑前先看 docs/RESPONSE_CAPTURE_MAINTENANCE.md。
+// 响应游标的 remember（发送前）与读取时都基于这份同一口径的候选列表，
+// 这样锚点元素才能在后续查询里按引用对上号。
+function queryResponseCandidateElements(selectors: DeepSeekSelectors, responseSelector: string): HTMLElement[] {
+  return [...document.querySelectorAll<HTMLElement>(responseSelector)]
     .filter((el) => !isHidden(el))
     .filter((el) => !el.closest(RESPONSE_EXCLUDE_ANCESTORS))
     .filter((el) => !isDeepSeekUserMessage(el))
+}
+
+function getLatestResponseText(selectors: DeepSeekSelectors, responseCursor: ResponseCursor): string {
+  const seen = new Set<string>()
+  const responseSelector = responseSelectorString(selectors)
+  const rawCandidates = queryResponseCandidateElements(selectors, responseSelector)
+  const candidates = responseCursor.sinceAnchor(rawCandidates)
     .map((el, index) => {
       const text = rawResponseText(el)
       const expanded = expandResponseCandidate(el, text, responseSelector)
@@ -804,8 +817,8 @@ function getLatestResponseText(selectors: DeepSeekSelectors): string {
 }
 
 // 获取响应文本，包含 main 兜底逻辑
-function getResponseTextWithFallback(selectors: DeepSeekSelectors): string {
-  const text = getLatestResponseText(selectors)
+function getResponseTextWithFallback(selectors: DeepSeekSelectors, responseCursor: ResponseCursor): string {
+  const text = getLatestResponseText(selectors, responseCursor)
   logCaptureDebug({
     platform: 'deepseek',
     event: 'response-text-attempt',
@@ -836,6 +849,8 @@ function getResponseTextWithFallback(selectors: DeepSeekSelectors): string {
 
 export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): AIAdapter & AdapterSendInternals {
   const selectors = mergeSelectorOverrides(DEFAULT_SELECTORS, selectorOverrides) as DeepSeekSelectors
+  // ADR-0008 响应游标试点：发送前记住当前候选位置，读取时只看之后新出现的候选。
+  const responseCursor = createResponseCursor()
 
   return {
     async writeText(text: string) {
@@ -871,6 +886,7 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
     },
 
     async sendMessage(text: string, image?: File, diagnostics?: AdapterDiagnostics) {
+      responseCursor.remember(queryResponseCandidateElements(selectors, responseSelectorString(selectors)))
       if (image) {
         emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'attachment-prepare', stage: 'preparing', eventStatus: 'observed', hasAttachment: true,
@@ -993,7 +1009,7 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
     },
 
     async getLastResponse() {
-      return getResponseTextWithFallback(selectors)
+      return getResponseTextWithFallback(selectors, responseCursor)
     },
 
     async getConversationState(): Promise<ConversationState> {
@@ -1004,7 +1020,7 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
         hasInputBox,
       })
       if (!hasInputBox) return { status: 'error', errorMessage: 'DeepSeek 输入框未识别', stopButtonDetected: false }
-      const lastResponse = getResponseTextWithFallback(selectors)
+      const lastResponse = getResponseTextWithFallback(selectors, responseCursor)
       const hasStopButton = hasStopGeneratingButton(selectors)
       const state: ConversationState = hasStopButton
         ? { status: 'streaming', lastResponse, stopButtonDetected: true }
