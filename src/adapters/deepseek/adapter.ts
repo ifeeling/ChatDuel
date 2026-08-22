@@ -647,10 +647,17 @@ function responseCandidateVisualBottom(el: HTMLElement): number | null {
   return rect.bottom
 }
 
+// 忽略碎片是故意的——正式回答块本来就会包住自己内部一个个 `<p>`/`<li>` 段落碎片，
+// 那些碎片也独立命中 responseSelector，属于同一条回答内部的正常嵌套，不能算
+// "另一个候选"，否则连"expands a searched DeepSeek answer to the toolbar-bounded
+// response block"这种合法的跨段落扩展都会被误伤。非碎片的"其它候选"（比如思考区
+// 自己的 `.ds-markdown` div）永远不能被吞——根因/复现细节见
+// docs/RESPONSE_CAPTURE_MAINTENANCE.md 第 10 节（issue #18 / CAP-07）。
 function hasOtherResponseCandidate(root: HTMLElement, current: HTMLElement, responseSelector: string): boolean {
   return [...root.querySelectorAll<HTMLElement>(responseSelector)]
     .some((candidate) => {
       if (candidate === current || current.contains(candidate) || candidate.contains(current)) return false
+      if (candidate.matches('p, li')) return false
       if (isHidden(candidate) || candidate.closest(RESPONSE_EXCLUDE_ANCESTORS) || isDeepSeekUserMessage(candidate)) return false
       return rawResponseText(candidate).length > 0
     })
@@ -660,18 +667,17 @@ function canUseExpandedResponseRoot(el: HTMLElement, text: string, current: HTML
   if (isHidden(el) || el.closest(RESPONSE_EXCLUDE_ANCESTORS) || isDeepSeekUserMessage(el)) return false
   if ([...el.querySelectorAll<HTMLElement>('*')].some((child) => isDeepSeekUserMessage(child))) return false
   if (el.querySelector('textarea, input, [contenteditable="true"], [role="textbox"]')) return false
-  if (hasOtherResponseCandidate(el, current, responseSelector) && !hasDirectResponseActions(el)) return false
+  if (hasOtherResponseCandidate(el, current, responseSelector)) return false
   const expandedText = rawResponseText(el)
   if (expandedText.length < text.length) return false
   if (!expandedText.includes(text)) return false
-  // ds-markdown 是 DeepSeek 实际使用的完整回答渲染容器 class。
-  // 如果当前元素有 ds-markdown 标记，说明它本身就是完整的回答容器，
-  // 向上扩展会导致丢失标记、评分骤降。
-  // 仅在父元素也有 ds-markdown 标记或有操作按钮时才允许扩展；
-  // 测试中的 "markdown" / "answer" / "ds-markdown-paragraph" 等不受影响。
-  if (current.classList.contains('ds-markdown')) {
-    if (!el.classList.contains('ds-markdown') && !hasDirectResponseActions(el)) return false
-  }
+  // ds-markdown 是 DeepSeek 实际使用的完整回答渲染容器 class。如果当前元素有
+  // ds-markdown 标记，说明它本身就是完整的回答容器，向上扩展会丢失标记、评分骤降，
+  // 一律不允许扩展到不带 ds-markdown 的祖先。这里原来对"有操作按钮的祖先"开过一个
+  // 口子（`!hasDirectResponseActions(el)`），是 issue #18/CAP-07 的同款漏洞——
+  // 操作按钮不能证明这层祖先只包了这一份回答，删掉这个口子后全量测试无回归，
+  // 判断是防御性收紧，具体分析见 docs/RESPONSE_CAPTURE_MAINTENANCE.md 第 10 节。
+  if (current.classList.contains('ds-markdown') && !el.classList.contains('ds-markdown')) return false
   return true
 }
 
