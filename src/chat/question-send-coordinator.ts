@@ -78,7 +78,10 @@ export function mapSendResultsToPanelStatuses(
 
 /**
  * 回答收集结算的面板映射：
- * captured→完成；四类失败状态（超时/被打断/不确定/用户停止）→发送失败；
+ * captured→完成；三类真正失败（超时/被打断/用户停止）→发送失败；
+ * uncertain（platform 状态不确定，为安全起见暂不认定完成，不代表真的发送失败——
+ * 语义上更接近 ai-arena `EXTRACT_STALE` 那类"还在等新内容"，不是发送失败）→
+ * 单独一档警示级文案，不跟真正的失败共用同一句"发送失败"/错误红色样式；
  * 其它状态（observed-unsaved、send-failed）不改变面板，返回 null。
  */
 export function mapSettledResultToPanelStatus(
@@ -88,10 +91,12 @@ export function mapSettledResultToPanelStatus(
   if (result.status === 'captured') {
     return { platform, level: 'ok', messageKey: 'send.statusDone' }
   }
+  if (result.status === 'uncertain') {
+    return { platform, level: 'warn', messageKey: 'send.statusUncertain' }
+  }
   if (
     result.status === 'capture-timeout'
     || result.status === 'capture-interrupted'
-    || result.status === 'uncertain'
     || result.status === 'user-stopped'
   ) {
     return { platform, level: 'err', messageKey: 'send.statusFailed' }
