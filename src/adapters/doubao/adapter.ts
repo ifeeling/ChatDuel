@@ -20,6 +20,7 @@ import type { ConversationState } from '../../types'
 import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
 import { elementToMarkdownText, stripThinkingNodes } from '../../lib/dom-response-text'
 import { describeCaptureElement, logCaptureDebug } from '../../lib/capture-debug'
+import { notifyFallbackCompletionIfDebugEnabled } from '../../lib/debug-fallback-notify'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
 
 // ⚠️ 提醒：下面这组内置默认选择器（inputBox / sendButton / stopButton / response）
@@ -674,6 +675,11 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
           }
         }
         activeSend.completed = true
+        // 走到这里说明本轮既没等到打断按钮消失、也没等到操作栏从无到有的可信信号，
+        // 完全是靠 45 秒静默超时兜底判定完成——这通常意味着豆包又改版了，两个已知
+        // 信号都失效了，值得回头看看。仅开发者自己手动开启调试开关时才会真的弹通知，
+        // 见 debug-fallback-notify.ts 顶部注释。
+        notifyFallbackCompletionIfDebugEnabled('豆包', '没等到打断按钮消失或操作栏可见的信号，可能是豆包又改版了，值得查一下。')
         return {
           status: 'finished',
           lastResponse: meaningfulResponse,
