@@ -17,8 +17,19 @@
 // 两个方法都只接受数组：两个调用方（DeepSeek/豆包 adapter）传入的候选列表本来就是
 // `document.querySelectorAll` 结果过滤后的普通数组，没有 NodeList/单元素调用场景，
 // 不提前支持用不到的输入形状。
+//
+// remember 的可选 hasContent 判定（issue #22/CAP-10 真机复现后补的）：豆包 DOM 尾部
+// 经常挂着 1-2 个跟正式消息同一套 class、但文本是空的占位包装 div；如果不做判定，
+// 无脑取"数组最后一个元素"当锚点会恰好定在这类空占位上——下一轮真实的新用户消息+
+// AI 回答会插在这些持久占位 div 前面而不是后面，之后所有轮询都会误判"锚点之后没有
+// 新候选"，真实回答被整段漏读直到超时。传入 hasContent 后从数组末尾往前找第一个满足
+// 判定的元素当锚点，跳过空占位；全部候选都不满足判定时锚点为 null（等同没有候选，
+// sinceAnchor 会原样放行全部候选，交给调用方原有的评分/去重逻辑兜底）——参照 ai-arena
+// 的 getLastNonEmpty（`tmp/ai-arena-extension/src/content-shared.js`），同样是"防止
+// 挑到还没填内容的占位元素"的思路。不内置具体的文本提取方式——DeepSeek 用
+// rawResponseText、豆包用 elementText，各自的清洗规则不同，由调用方传入判定函数。
 export interface ResponseCursor {
-  remember(elements: readonly Element[]): void
+  remember(elements: readonly Element[], hasContent?: (el: Element) => boolean): void
   sinceAnchor<T extends Element>(elements: readonly T[]): T[]
 }
 
@@ -27,9 +38,19 @@ export function createResponseCursor(): ResponseCursor {
   let anchor: Element | null = null
 
   return {
-    remember(elements) {
+    remember(elements, hasContent) {
       hasAnchor = true
-      anchor = elements.length ? elements[elements.length - 1] : null
+      if (!hasContent) {
+        anchor = elements.length ? elements[elements.length - 1] : null
+        return
+      }
+      anchor = null
+      for (let i = elements.length - 1; i >= 0; i -= 1) {
+        if (hasContent(elements[i])) {
+          anchor = elements[i]
+          break
+        }
+      }
     },
 
     sinceAnchor<T extends Element>(elements: readonly T[]): T[] {

@@ -495,7 +495,10 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
     },
 
     async sendMessage(text: string, image?: File, diagnostics?: AdapterDiagnostics) {
-      responseCursor.remember(queryResponseCandidateElements(selectors))
+      responseCursor.remember(
+        queryResponseCandidateElements(selectors),
+        (el) => elementText(el as HTMLElement).length > 0,
+      )
       const box = queryFirst<HTMLElement>(selectors.inputBox)
       if (!box) {
         emitDiagnostic(diagnostics, {

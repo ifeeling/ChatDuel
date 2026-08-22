@@ -892,7 +892,10 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
     },
 
     async sendMessage(text: string, image?: File, diagnostics?: AdapterDiagnostics) {
-      responseCursor.remember(queryResponseCandidateElements(selectors, responseSelectorString(selectors)))
+      responseCursor.remember(
+        queryResponseCandidateElements(selectors, responseSelectorString(selectors)),
+        (el) => rawResponseText(el as HTMLElement).length > 0,
+      )
       if (image) {
         emitDiagnostic(diagnostics, {
           component: 'platform-adapter', operation: 'attachment-prepare', stage: 'preparing', eventStatus: 'observed', hasAttachment: true,
