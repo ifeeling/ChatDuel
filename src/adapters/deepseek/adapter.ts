@@ -616,7 +616,19 @@ function responseCandidateScore(el: HTMLElement, text: string): number {
   const marker = elementMarker(el)
   let score = 0
   const isFragment = el.matches('p, li')
-  if ((/\b(assistant|answer|markdown)\b/i.test(marker) || el.matches('article, [role="article"]')) && !isFragment) score += 100
+  // 真机验证过（issue #8 后续）：深度思考开启时，DeepSeek 正在流式输出的思考内容
+  // 也用 `.ds-markdown` 渲染（跟正式回答复用同一套 markdown 组件），只有正式回答
+  // 容器额外带 `ds-assistant-message-main-content` 这个具体标记。如果"markdown"
+  // 单独就给一样的加分，思考内容常常因为文字更啰嗦（长度加分 score += length/100）
+  // 反而分数更高，会赢过干净的正式回答。
+  // 这里故意匹配 "assistant-message-main-content" 这个具体复合词，而不是泛泛的
+  // `\bassistant\b`——试过泛匹配，会连"assistant search-references"这类引用/搜索
+  // 类的干扰候选也一起加分，反而把它们的分数从本该被排除的负分推成正分，抢答案。
+  // 只信任真机验证过的这个具体标记，没有它就退回原来 markdown/answer 的通用加分。
+  if (!isFragment) {
+    if (/assistant-message-main-content/i.test(marker)) score += 150
+    else if (/\b(assistant|answer|markdown)\b/i.test(marker) || el.matches('article, [role="article"]')) score += 100
+  }
   if (/\b(user|human|question|query|recommend|suggest|guide|prompt|chip|card|search|reference|citation|source)\b/i.test(marker)) score -= 100
   if (/^(已阅读\s*\d+\s*个网页|\d+\s*个网页)$/.test(text)) score -= 200
   if (hasDirectResponseActions(el)) score += 120
@@ -721,9 +733,27 @@ function getLatestResponseText(selectors: DeepSeekSelectors): string {
       return true
     })
 
+  // 真机验证过的坑（issue #8 后续）：深度思考开启时，DeepSeek 的思考区和正式回答
+  // 都独立命中 response 选择器（都带 ds-markdown class，只是正式回答多一个
+  // ds-assistant-message-main-content 标记），而外层包住两者的容器（复制/重新生成
+  // 工具栏所在的那层）也会通过候选扩展进候选列表——它自己没有任何 markdown/assistant
+  // 语义标记，打分很低，但因为它在视觉上"包住"了思考区和正式回答两者，
+  // getBoundingClientRect().bottom 天然比任一子候选都靠下，视觉排序会把它排在最后、
+  // 选中它，把思考内容和正式回答拼在一起存进历史。
+  // 修法：只要某个候选包住了另一个**非碎片**候选（是它的祖先），就把这个包住别人的
+  // 候选整个剔除——只在真正的"叶子"候选之间比分数/视觉位置，不然容器天生会赢，
+  // 跟内容干不干净无关。必须限定"非碎片"：正式回答块本来就会包住自己内部一个个
+  // `<p>`/`<li>` 段落碎片（那些碎片也独立命中选择器），这是正常嵌套，不能因为
+  // "包住了别的候选"就连正式回答块自己也一起排除掉。
+  const leafCandidates = candidates.filter((candidate) =>
+    !candidates.some((other) => !other.isFragment && other.el !== candidate.el && candidate.el.contains(other.el))
+  )
+
   // DeepSeek 的对话 DOM 可能按倒序排列，不能只依赖 DOM 顺序判断最新回答。
   // 页面提供有效布局位置时，优先选择视觉上最靠下的完整回答。
-  const visuallyOrdered = candidates
+  // 注意：下面几步全部在 leafCandidates（已经排除包住其它候选的容器）上做，
+  // 不能用 candidates——否则视觉排序会重新把那个"包住一切"的容器选出来。
+  const visuallyOrdered = leafCandidates
     .filter((candidate) =>
       !candidate.isFragment
       && candidate.score >= 0
@@ -735,7 +765,7 @@ function getLatestResponseText(selectors: DeepSeekSelectors): string {
     && visuallyOrdered[0].visualBottom !== visuallyOrdered[visuallyOrdered.length - 1].visualBottom
 
   const HIGH_QUALITY_MIN_SCORE = 50
-  const highQuality = candidates.filter((c) => c.score >= HIGH_QUALITY_MIN_SCORE)
+  const highQuality = leafCandidates.filter((c) => c.score >= HIGH_QUALITY_MIN_SCORE)
   let selected = hasDistinctVisualOrder
     ? visuallyOrdered[visuallyOrdered.length - 1]
     : highQuality.length > 0
@@ -744,11 +774,11 @@ function getLatestResponseText(selectors: DeepSeekSelectors): string {
 
   if (!selected) {
     // 无高分候选时回退到原逻辑：按 score 排序取最高
-    candidates.sort((a, b) => {
+    leafCandidates.sort((a, b) => {
       if (a.score !== b.score) return a.score - b.score
       return a.index - b.index
     })
-    selected = candidates[candidates.length - 1]
+    selected = leafCandidates[leafCandidates.length - 1]
   }
 
   logCaptureDebug({
