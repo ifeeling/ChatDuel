@@ -100,7 +100,18 @@ export interface AnswerCollectionTaskInput {
 }
 
 export type AnswerCollectionPlatformResult =
-  | { status: 'captured'; text: string }
+  | {
+      status: 'captured'
+      text: string
+      /**
+       * 是否经由「isActive 强制完成」抓到（Issue #7）：网站自身状态在抓取时刻仍报告 active，
+       * 是靠文本长时间不变推断出来的，不是网站明确确认已完成。
+       * `pending-question-queue.ts` 的 `pauseReasonFor` 用它决定要不要暂停自动发送队列——
+       * 已保存进历史不代表可以放心自动发下一条问题，保持与文档里「任何不确定情况一律判为不安全」
+       * 的既有队列安全策略一致。
+       */
+      forceCaptured?: boolean
+    }
   | { status: 'observed-unsaved'; text: string; error: string }
   | { status: 'send-failed'; error: string }
   | { status: 'capture-timeout'; error: string }
@@ -419,6 +430,7 @@ export async function runAnswerCollectionTask(
         nextStableCount: decision.progress.stableCount,
         requiredStableCount: REQUIRED_STABLE_POLLS,
         shouldCapture: decision.shouldCapture,
+        forceCaptured: decision.forceCaptured,
         completionActionBarDetected: probe.completionActionBarDetected === true,
       })
       if (decision.shouldCapture && isNewCapturedResponse(decision.text, baselines[platform])) {
@@ -426,6 +438,7 @@ export async function runAnswerCollectionTask(
         const platformResult: AnswerCollectionPlatformResult = {
           status: 'captured',
           text: decision.text,
+          ...(decision.forceCaptured ? { forceCaptured: true } : {}),
         }
         platforms[platform] = platformResult
         pending.delete(platform)

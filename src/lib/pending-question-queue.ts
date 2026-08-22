@@ -113,6 +113,15 @@ function pauseReasonFor(
   if (statuses.includes('capture-interrupted')) return 'capture-interrupted'
   if (statuses.includes('uncertain')) return 'uncertain'
   if (statuses.includes('observed-unsaved')) return 'history-unsaved'
+  // 强制完成（Issue #7）：网站自身状态在抓取时刻仍报告 active，只是靠文本长时间不变推断出来的，
+  // 不是网站明确确认已完成。已保存进历史，但不能当成「安全，可以自动发下一条」——沿用既有
+  // 「任何不确定情况一律判为不安全」的队列安全策略，暂停等用户重新检查。
+  if (platformResults.some(
+    (platformResult) => (platformResult as AnswerCollectionPlatformResult).status === 'captured'
+      && (platformResult as Extract<AnswerCollectionPlatformResult, { status: 'captured' }>).forceCaptured === true,
+  )) {
+    return 'uncertain'
+  }
   if (statuses.every((status) => status === 'send-failed')) return 'all-sends-failed'
   if (statuses.some((status) => status !== 'captured' && status !== 'send-failed')) {
     return 'uncertain'
