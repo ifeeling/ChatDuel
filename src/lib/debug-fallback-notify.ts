@@ -1,7 +1,9 @@
-// 开发者自用的调试提醒：某个平台的回答完成判定，如果没能靠可靠信号
-// （比如豆包的打断按钮/操作栏跳变）快速确认，退回了保守的静默超时兜底，
-// 说明该平台官网很可能又改版、内置选择器该更新了——这个开关默认关闭、
-// 不在设置界面里暴露，只有开发者自己通过 devtools 控制台手动打开：
+// 开发者自用的调试提醒：某个平台的关键选择器（输入框/发送按钮/回答容器/停止按钮，
+// 也就是 remote-selector-config.ts 里能被服务器端热更新覆盖的那几个字段）在页面上
+// 完全找不到目标元素，或者像豆包的"停止生成"信号那样没法确认、只能退回保守的
+// 静默超时兜底——两种情况都说明对应网站大概率又改版了，内置默认值/远程热更新
+// 配置该更新了。这个开关默认关闭、不在设置界面里暴露，只有开发者自己通过
+// devtools 控制台手动打开：
 //   chrome.storage.local.set({ [DEBUG_NOTIFY_FALLBACK_KEY]: true })
 // 通知完全走浏览器本地 Notification API，不发送任何网络请求、不上传任何数据，
 // 跟 PRIVACY.md「不收集用户数据」的承诺没有冲突——普通用户默认不会开启这个开关，
@@ -41,12 +43,13 @@ function fireLocalNotification(title: string, body: string): void {
 }
 
 /**
- * 平台名 + 一句人话描述用来区分"哪个信号没等到"，调用方各自传入自己的文案。
- * fire-and-forget：不 await 这个函数，不能让调试通知拖慢正常的完成判定返回。
+ * title/body 由调用方拼好——本模块只负责"该不该提醒"（开关有没有开）和
+ * "怎么提醒"（本地 Notification），不关心具体是哪个平台/哪个选择器出的问题。
+ * fire-and-forget：不 await 这个函数，不能让调试通知拖慢正常的完成判定/诊断上报。
  */
-export function notifyFallbackCompletionIfDebugEnabled(platformLabel: string, reason: string): void {
+export function notifyDebugAlert(title: string, body: string): void {
   void (async () => {
     if (!(await debugNotifyFallbackEnabled())) return
-    fireLocalNotification(`${platformLabel}完成判定用了静默超时兜底`, reason)
+    fireLocalNotification(title, body)
   })()
 }
