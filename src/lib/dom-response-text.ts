@@ -35,9 +35,26 @@ function wrapInline(node: HTMLElement, marker: string): string {
   return inner ? `${marker}${inner}${marker}` : ''
 }
 
+// 豆包会把分步计算里的算式用 KaTeX 渲染：真正的数字全在
+// <span class="katex"><span aria-hidden="true" class="katex-html">...</span></span> 里，
+// 下面 aria-hidden 判定会把这整棵子树当"不该读"跳过，数字随之消失（issue #17/CAP-06 真机
+// 确认的根因）。KaTeX 外层包装节点上的 `copy-text` 属性携带豆包"复制"功能自用的纯 LaTeX
+// 文本（如 `\(20 + 12 + 4 = 36\)`），是唯一可靠的纯文本来源，优先读取、不再往下递归。
+function normalizeMathCopyText(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^\\[([]/, '')
+    .replace(/\\[)\]]$/, '')
+    .replace(/\\times/g, '×')
+    .replace(/\\div/g, '÷')
+    .trim()
+}
+
 function inlineText(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? ''
   if (!(node instanceof HTMLElement)) return ''
+  const copyText = node.getAttribute('copy-text')
+  if (copyText) return normalizeMathCopyText(copyText)
   if (IGNORED_TAGS.has(node.tagName) || node.hidden || node.getAttribute('aria-hidden') === 'true') return ''
   if (node.tagName === 'BR') return '\n'
 
