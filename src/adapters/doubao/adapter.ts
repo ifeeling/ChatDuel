@@ -62,6 +62,11 @@ const DEFAULT_STOP_BUTTON_SELECTORS = [
   '[data-testid*="cancel" i]',
   '[class*="stop" i]',
   '[class*="cancel" i]',
+  // 真机确认（2026-08-22）：豆包当前 UI 的"打断生成"控件既没有 aria-label/title，也不含
+  // stop/cancel/停止/取消 这类文案，唯一的标记是 class 里的 break-btn-<hash>（"打断"）。
+  // 生成中它替换掉输入框末尾的语音图标；连续采样确认它在整个生成过程（含专家模式思考
+  // 阶段的长时间停顿）里持续存在，生成一结束就立刻消失，是目前唯一可靠的"仍在生成"信号。
+  '[class*="break-btn" i]',
 ]
 
 const DEFAULT_RESPONSE_SELECTORS = [
@@ -472,6 +477,13 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
     // 曾经真的观察到 action bar 处于不可见状态、之后才变可见，这个"不可见→可见"的跳变
     // 才是可信的完成信号；从未见过它不可见，就必须退回下面 45 秒的安全兜底判定。
     hasObservedActionBarAbsent: boolean
+    // 2026-08-22 真机验证：`break-btn` 类名标记的"打断生成"控件在整段生成过程（含专家
+    // 模式思考阶段的长时间停顿）里持续存在，生成一结束就立刻消失——是目前唯一可靠的
+    // "仍在生成"信号（见 hasStopGeneratingButton 里新增的 [class*="break-btn" i]）。
+    // 一旦本轮观察到过它，说明"生成已结束"这个判断有独立证据支撑，不必再像上面
+    // hasObservedActionBarAbsent 那样退回 45 秒安全兜底，可以直接走跟它一样的快速
+    // 完成路径（只需再确认文字本身也稳定下来）。
+    hasObservedStopButton: boolean
   } | null = null
 
   function responseExclusions(): ReadonlySet<string> {
@@ -570,6 +582,7 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
         completionActionBarDetected: false,
         completionActionBarStableCount: 0,
         hasObservedActionBarAbsent: false,
+        hasObservedStopButton: false,
       }
       emitDiagnostic(diagnostics, {
         component: 'platform-adapter', operation: 'send-click', stage: 'clicked', eventStatus: 'succeeded', retryNumber: 1,
@@ -609,7 +622,10 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
       }
       const candidate = getLatestResponseCandidate(selectors, responseCursor, responseExclusions())
       const lastResponse = candidate?.text ?? ''
-      if (hasStopGeneratingButton(selectors)) return { status: 'streaming', lastResponse, stopButtonDetected: true }
+      if (hasStopGeneratingButton(selectors)) {
+        if (activeSend) activeSend.hasObservedStopButton = true
+        return { status: 'streaming', lastResponse, stopButtonDetected: true }
+      }
       if (activeSend) {
         const meaningfulResponse = lastResponse
         if (!meaningfulResponse) {
@@ -630,7 +646,10 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
             completionActionBarDetected,
           }
         }
-        if (activeSend.hasObservedActionBarAbsent && activeSend.completionActionBarStableCount >= 2) {
+        if (
+          (activeSend.hasObservedActionBarAbsent || activeSend.hasObservedStopButton)
+          && activeSend.completionActionBarStableCount >= 2
+        ) {
           activeSend.completed = true
           activeSend.completionActionBarDetected = true
           return {
