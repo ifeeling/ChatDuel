@@ -79,7 +79,7 @@ import {
   markSendLockPlatformDone,
   type SendLockState,
 } from '../lib/send-lock'
-import { buildSessionMarkdownExport, formatBytes, formatCapturedMarkdownText, formatSessionMarkdown } from '../lib/history-format'
+import { buildSessionHtmlExport, buildSessionMarkdownExport, formatBytes, formatCapturedMarkdownText, formatSessionMarkdown } from '../lib/history-format'
 import { buildSummaryPrompt } from '../lib/summary-builder'
 import { buildTransferContent, buildTransferSourceOptions, type TransferSourceOption } from '../lib/transfer-source'
 import { bindComposerFocusRestorer } from '../lib/focus-restore'
@@ -2283,12 +2283,17 @@ function renderHistoryDetail(session?: Session) {
   exportBtn.className = 'history-action'
   exportBtn.textContent = t(userSettings.language, 'common.exportMarkdown')
   exportBtn.addEventListener('click', () => exportSessionMarkdown(session))
+  const exportHtmlBtn = document.createElement('button')
+  exportHtmlBtn.type = 'button'
+  exportHtmlBtn.className = 'history-action'
+  exportHtmlBtn.textContent = t(userSettings.language, 'common.exportHtml')
+  exportHtmlBtn.addEventListener('click', () => exportSessionHtml(session))
   const deleteBtn = document.createElement('button')
   deleteBtn.type = 'button'
   deleteBtn.className = 'history-action danger'
   deleteBtn.textContent = t(userSettings.language, 'common.delete')
   deleteBtn.addEventListener('click', () => void deleteHistorySession(session.id))
-  actions.append(copyBtn, exportBtn, deleteBtn)
+  actions.append(copyBtn, exportBtn, exportHtmlBtn, deleteBtn)
   header.append(headingWrap, actions)
   historyDetail.appendChild(header)
 
@@ -2428,6 +2433,20 @@ function exportSessionMarkdown(session: Session) {
   link.remove()
   URL.revokeObjectURL(url)
   showToast(t(userSettings.language, 'history.exportMarkdownSuccess'), 'success', 1600)
+}
+
+function exportSessionHtml(session: Session) {
+  const report = buildSessionHtmlExport(session)
+  const blob = new Blob([report.content], { type: report.mime })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = report.filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+  showToast(t(userSettings.language, 'history.exportHtmlSuccess'), 'success', 1600)
 }
 
 async function deleteHistorySession(id: string) {
