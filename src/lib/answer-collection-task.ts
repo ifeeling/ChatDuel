@@ -538,12 +538,15 @@ export async function runAnswerCollectionTask(
     if (timedOutPlatforms.size > 0 && timedOutPlatforms.size === pending.size) {
       consecutiveTimeoutRounds += 1
       if (consecutiveTimeoutRounds >= CAPTURE_INTERRUPT_TIMEOUT_STREAK) {
+        const interruptFailures: Partial<Record<AIPlatform, CaptureFailure>> = {}
+        const error = 'response capture interrupted (communication timeout)'
         for (const platform of [...pending]) {
           const platformResult: AnswerCollectionPlatformResult = {
             status: 'capture-interrupted',
-            error: 'response capture interrupted (communication timeout)',
+            error,
           }
           platforms[platform] = platformResult
+          interruptFailures[platform] = { status: 'failed', error }
           pending.delete(platform)
           invokeObserverSafely(() => dependencies.onPlatformSettled?.(platform, platformResult))
           finishDiagnostic(platform, {
@@ -551,6 +554,19 @@ export async function runAnswerCollectionTask(
             errorCode: 'state-request-timeout',
             now: dependencies.now(),
           })
+        }
+        const interruptedSession = applyCaptureFailures(session, interruptFailures, dependencies.now())
+        if (interruptedSession !== session) {
+          const interruptHistory = await updateHistoryWithRetry(interruptedSession, dependencies)
+          session = interruptHistory.session
+          historyStatus = interruptHistory.saved ? 'saved' : 'unsaved'
+          if (interruptHistory.saved) {
+            unsavedPlatforms.clear()
+          } else {
+            for (const platform of Object.keys(interruptFailures) as AIPlatform[]) {
+              unsavedPlatforms.add(platform)
+            }
+          }
         }
         break
       }
