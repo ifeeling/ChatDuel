@@ -56,7 +56,8 @@ export interface ConversationEntry {
 
 export interface SessionResponse {
   text: string
-  status: 'pending' | 'captured' | 'failed'
+  // uncertain: 平台已确认发送成功，但回答收集超时时平台仍在生成中，状态不确定（不等于收集失败）。
+  status: 'pending' | 'captured' | 'failed' | 'uncertain'
   capturedAt?: number
   error?: string
 }

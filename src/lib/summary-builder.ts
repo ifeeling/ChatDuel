@@ -29,6 +29,7 @@ const SUMMARY_MODE_INSTRUCTIONS: Partial<Record<SummaryMode, string>> = {
 function capturedText(session: Session, platform: AIPlatform): string {
   const response = session.responses[platform]
   if (response?.status === 'captured' && response.text.trim()) return response.text.trim()
+  if (response?.status === 'uncertain') return '状态不确定，可能仍在生成，暂无法确认回答内容。'
   if (response?.status === 'failed') return response.error || '发送失败，未获取到回答。'
   return '未获取到回答。'
 }

@@ -30,6 +30,7 @@ export function formatBytes(bytes: number): string {
 function responseStatusLabel(response?: SessionResponse): string {
   if (!response) return '未发送'
   if (response.status === 'captured') return '已记录'
+  if (response.status === 'uncertain') return '状态不确定，可能仍在生成'
   if (response.status === 'failed') return response.error || '发送失败'
   return '待回填'
 }

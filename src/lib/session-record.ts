@@ -139,20 +139,26 @@ export function applyCapturedResponses(
   }
 }
 
+export interface CaptureFailure {
+  status: 'failed' | 'uncertain'
+  error: string
+}
+
 export function applyCaptureFailures(
   session: Session,
-  failures: Partial<Record<AIPlatform, string>>,
+  failures: Partial<Record<AIPlatform, CaptureFailure>>,
   now = Date.now(),
 ): Session {
   const responses = { ...session.responses }
   let changed = false
   for (const platform of session.targetPlatforms) {
     if (responses[platform]?.status !== 'pending') continue
-    const error = failures[platform]?.trim()
-    if (!error) continue
+    const failure = failures[platform]
+    const error = failure?.error.trim()
+    if (!failure || !error) continue
     responses[platform] = {
       text: responses[platform]?.text ?? '',
-      status: 'failed',
+      status: failure.status,
       error,
     }
     changed = true

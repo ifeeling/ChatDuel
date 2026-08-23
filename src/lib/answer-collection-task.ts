@@ -17,6 +17,7 @@ import {
   applyCapturedResponses,
   applySendResults,
   isNewCapturedResponse,
+  type CaptureFailure,
 } from './session-record'
 
 export interface AnswerCollectionSendResult {
@@ -360,7 +361,7 @@ export async function runAnswerCollectionTask(
     await dependencies.wait(POLL_INTERVAL_MS)
     if (settleUserStoppedPlatforms()) break
     const captured: Partial<Record<AIPlatform, string>> = {}
-    const failures: Partial<Record<AIPlatform, string>> = {}
+    const failures: Partial<Record<AIPlatform, CaptureFailure>> = {}
     const timedOutPlatforms = new Set<AIPlatform>()
 
     await Promise.all([...pending].map(async (platform) => {
@@ -369,7 +370,7 @@ export async function runAnswerCollectionTask(
         probe = await dependencies.read(platform)
       } catch {
         const error = 'response capture interrupted'
-        failures[platform] = error
+        failures[platform] = { status: 'failed', error }
         const platformResult: AnswerCollectionPlatformResult = { status: 'capture-interrupted', error }
         platforms[platform] = platformResult
         pending.delete(platform)
@@ -454,7 +455,7 @@ export async function runAnswerCollectionTask(
         const error = stillGenerating
           ? 'platform still generating at capture timeout'
           : 'response capture timed out'
-        failures[platform] = error
+        failures[platform] = { status: stillGenerating ? 'uncertain' : 'failed', error }
         const platformResult: AnswerCollectionPlatformResult = {
           status: stillGenerating ? 'uncertain' : 'capture-timeout',
           error,

@@ -2177,6 +2177,7 @@ function compactText(text: string, max = 80): string {
 function responseLabel(response?: SessionResponse): string {
   if (!response) return t(userSettings.language, 'history.status.notSent')
   if (response.status === 'captured') return t(userSettings.language, 'history.status.captured')
+  if (response.status === 'uncertain') return t(userSettings.language, 'history.status.uncertain')
   if (response.status === 'failed') return t(userSettings.language, 'history.status.failed')
   return t(userSettings.language, 'history.status.pending')
 }
