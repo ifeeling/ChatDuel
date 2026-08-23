@@ -332,6 +332,8 @@ export async function runAnswerCollectionTask(
     }
   }
 
+  // 用户主动停止落盘为 'failed'（而不是给 SessionResponse.status 新增专属值）：
+  // 历史里只需要"这个平台没有可用回答"，不需要跟真正的抓取失败在 UI 上分开展示。
   const settleUserStoppedPlatforms = async (): Promise<boolean> => {
     if (!input.signal?.aborted) return false
     const stoppedFailures: Partial<Record<AIPlatform, CaptureFailure>> = {}
