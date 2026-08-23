@@ -1505,8 +1505,8 @@ body { overflow: hidden; }
 .history-overlay[hidden] { display: none; }
 
 .history-dialog {
-  width: min(1120px, calc(100vw - 32px));
-  height: min(760px, calc(100vh - 32px));
+  width: min(1440px, calc(100vw - 32px));
+  height: min(880px, calc(100vh - 32px));
   overflow: hidden;
   background: var(--bg-2);
   border: 1px solid var(--border);
@@ -1676,6 +1676,22 @@ body { overflow: hidden; }
   font-weight: 600;
 }
 .history-section-header h3 { margin: 0; }
+.history-response-columns {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(320px, 1fr);
+  gap: 16px;
+  margin-top: 18px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.history-response-column {
+  margin-top: 0;
+  min-width: 320px;
+}
+.history-response-column .history-block {
+  max-height: 420px;
+}
 .history-block-copy {
   flex-shrink: 0;
   padding: 3px 8px;
@@ -2130,5 +2146,13 @@ body { overflow: hidden; }
   }
   .history-detail-header {
     flex-direction: column;
+  }
+  .history-response-columns {
+    grid-auto-flow: row;
+    grid-auto-columns: unset;
+    overflow-x: visible;
+  }
+  .history-response-column {
+    min-width: 0;
   }
 }

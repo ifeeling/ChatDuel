@@ -2309,17 +2309,10 @@ function renderHistoryDetail(session?: Session) {
   if (session.attachments.length > 0) {
     appendAttachmentSection(session.attachments)
   }
-  for (const platform of session.targetPlatforms) {
-    const label = getPlatformMeta(platform)?.label ?? platform
-    const response = session.responses[platform]
-    const text = response?.status === 'captured' && response.text.trim()
-      ? formatCapturedMarkdownText(normalizeCapturedResponse(platform, response.text))
-      : responseLabel(response)
-    appendHistorySection(uiText('history.responseTitle', { label }), text)
-  }
+  appendHistoryResponseColumns(session)
 }
 
-function appendHistorySection(titleText: string, bodyText: string) {
+function buildHistorySectionElement(titleText: string, bodyText: string): HTMLElement {
   const section = document.createElement('section')
   section.className = 'history-section'
   const header = document.createElement('div')
@@ -2337,7 +2330,29 @@ function appendHistorySection(titleText: string, bodyText: string) {
   body.textContent = bodyText
   header.append(title, copyBtn)
   section.append(header, body)
-  historyDetail.appendChild(section)
+  return section
+}
+
+function appendHistorySection(titleText: string, bodyText: string) {
+  historyDetail.appendChild(buildHistorySectionElement(titleText, bodyText))
+}
+
+// 各平台回答横向并排展示，便于直接对比（UI-02）；其余区块（用户问题、附件等）
+// 仍走 appendHistorySection 纵向堆叠。
+function appendHistoryResponseColumns(session: Session) {
+  const wrapper = document.createElement('div')
+  wrapper.className = 'history-response-columns'
+  for (const platform of session.targetPlatforms) {
+    const label = getPlatformMeta(platform)?.label ?? platform
+    const response = session.responses[platform]
+    const text = response?.status === 'captured' && response.text.trim()
+      ? formatCapturedMarkdownText(normalizeCapturedResponse(platform, response.text))
+      : responseLabel(response)
+    const column = buildHistorySectionElement(uiText('history.responseTitle', { label }), text)
+    column.classList.add('history-response-column')
+    wrapper.appendChild(column)
+  }
+  historyDetail.appendChild(wrapper)
 }
 
 async function copyHistoryBlockText(text: string) {
