@@ -7,6 +7,7 @@ import {
   writeNativeTextareaValue,
   activateControl,
   normalizeText,
+  mapProseOutsideFencedCode,
   isHidden,
   elementMarker,
   hasDirectResponseActions,
@@ -277,18 +278,26 @@ function cloneWithoutSuggestionNodes(el: HTMLElement): HTMLElement {
   return clone
 }
 
+// 按行过滤"搜索 N 个关键词/参考 N 篇资料"这类引用条噪音行；围栏代码块内的行不参与
+// 这一步——逐行 trim 会把代码块的缩进也一起削平（CAP-09，issue #21）。
+function withoutDoubaoReferenceLines(text: string): string {
+  return mapProseOutsideFencedCode(text, (prose) =>
+    prose
+      .split('\n')
+      .map((line) => line.trim())
+      .map((line) => line
+        .replace(/^搜索\s*\d+\s*个?关键词[，,]?\s*参考\s*\d+\s*篇资料\s*/u, '')
+        .replace(/^搜索\s*\d+\s*个?关键词[，,]?\s*/u, '')
+        .replace(/^参考\s*\d+\s*篇资料\s*/u, '')
+        .replace(/\s*参考\s*\d+\s*篇资料$/u, '')
+        .trim())
+      .filter(Boolean)
+      .join('\n'))
+}
+
 function cleanDoubaoResponseText(text: string): string {
-  const cleanedLines = normalizeText(text)
-    .split('\n')
-    .map((line) => line.trim())
-    .map((line) => line
-      .replace(/^搜索\s*\d+\s*个?关键词[，,]?\s*参考\s*\d+\s*篇资料\s*/u, '')
-      .replace(/^搜索\s*\d+\s*个?关键词[，,]?\s*/u, '')
-      .replace(/^参考\s*\d+\s*篇资料\s*/u, '')
-      .replace(/\s*参考\s*\d+\s*篇资料$/u, '')
-      .trim())
-    .filter(Boolean)
-  return removeTrailingSuggestionLines(cleanedLines.join('\n'))
+  const cleanedText = withoutDoubaoReferenceLines(normalizeText(text))
+  return removeTrailingSuggestionLines(cleanedText)
 }
 
 function elementText(el: HTMLElement): string {

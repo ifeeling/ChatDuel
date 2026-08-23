@@ -33,15 +33,40 @@ export function activateControl(button: HTMLElement): void {
   button.click()
 }
 
-// 文本归一化：统一不间断空格、压缩多余空白与空行。两平台副本逐字相同。
-export function normalizeText(text: string): string {
+function normalizeProseWhitespace(text: string): string {
   return text
     .replace(/\u00a0/g, ' ')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n[ \t]+/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[ \t]{2,}/g, ' ')
-    .trim()
+}
+
+const FENCED_CODE_BLOCK_RE = /```[\s\S]*?```/g
+
+// 把 text 按围栏代码块（```...```）切开，只对围栏外的散文片段跑 transform，
+// 围栏本身原样拼回去、不经过 transform。两平台各自的回答清洗函数
+// （cleanDeepSeekResponseText/cleanDoubaoResponseText）在按行 trim/过滤噪音行时
+// 都需要这个保护——见 normalizeText 下面的说明和 CAP-09（issue #21）。
+export function mapProseOutsideFencedCode(text: string, transform: (prose: string) => string): string {
+  const fences = text.match(FENCED_CODE_BLOCK_RE) ?? []
+  const prose = text.split(FENCED_CODE_BLOCK_RE).map(transform)
+  let result = prose[0]
+  for (let i = 0; i < fences.length; i += 1) {
+    result += fences[i] + prose[i + 1]
+  }
+  return result
+}
+
+// 文本归一化：统一不间断空格、压缩多余空白与空行。两平台副本逐字相同。
+//
+// 围栏代码块（```...```）内部的换行/缩进是内容本身，不能套用上面这套"清理 HTML 排版
+// 噪音"的空白折叠规则——CAP-09（issue #21）真机确认过：DeepSeek/豆包的回答清洗
+// （cleanDeepSeekResponseText/cleanDoubaoResponseText）都会把 elementToMarkdownText
+// 已经正确重建出缩进的代码块，在这一步经由 \n[ \t]+ → \n 这条规则把缩进洗掉。
+// 围栏内的内容原样保留，只清洗围栏外的散文部分。
+export function normalizeText(text: string): string {
+  return mapProseOutsideFencedCode(text, normalizeProseWhitespace).trim()
 }
 
 // 元素是否隐藏（hidden 属性 / aria-hidden / display:none / visibility:hidden）。

@@ -7,6 +7,7 @@ import {
   writeNativeTextareaValue,
   activateControl,
   normalizeText,
+  mapProseOutsideFencedCode,
   isHidden,
   elementMarker,
   hasDirectResponseActions,
@@ -603,13 +604,20 @@ function rawResponseText(el: HTMLElement): string {
   return elementToMarkdownText(cloneWithoutThinking(el))
 }
 
+// 按行过滤"已阅读 N 个网页"这类引用条噪音行；围栏代码块内的行不参与这一步——
+// 逐行 trim 会把代码块的缩进也一起削平（CAP-09，issue #21）。
+function withoutDeepSeekReferenceLines(text: string): string {
+  return mapProseOutsideFencedCode(text, (prose) =>
+    prose
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => !/^已阅读\s*\d+\s*个网页$/.test(line))
+      .filter((line) => !/^\d+\s*个网页$/.test(line))
+      .join('\n'))
+}
+
 function cleanDeepSeekResponseText(text: string): string {
-  const withoutReferenceLines = normalizeText(text)
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => !/^已阅读\s*\d+\s*个网页$/.test(line))
-    .filter((line) => !/^\d+\s*个网页$/.test(line))
-    .join('\n')
+  const withoutReferenceLines = withoutDeepSeekReferenceLines(normalizeText(text))
 
   return normalizeText(withoutReferenceLines)
     .replace(/^已阅读\s*\d+\s*个网页\s*/u, '')

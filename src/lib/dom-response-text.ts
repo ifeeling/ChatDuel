@@ -19,6 +19,18 @@ const BLOCK_TAGS = new Set([
   'UL',
 ])
 
+// 代码块头部工具栏（语言标签 + 复制/下载/运行按钮）：DeepSeek/豆包都把它做成普通
+// div/span（不是语义化的 <button>），绕过上面的 IGNORED_TAGS，工具栏文案会泄漏进抓取
+// 结果——CAP-09（issue #21）真机确认。跟 THINKING_NODE_SELECTOR 一样用通配选择器而不是
+// 具体 class 名，因为那类 class 会随官网改版变化：
+//   - DeepSeek 真机验证：class 里带 "code-block-banner" 这个语义片段（`md-code-block-banner-wrap`）。
+//   - 豆包真机验证：包装节点自带 `data-copy-ignore="true"`，是豆包自己标记的"复制时忽略"。
+const CODE_BLOCK_BANNER_SELECTOR = '[class*="code-block-banner" i], [data-copy-ignore]'
+
+function isCodeBlockBannerNode(el: HTMLElement): boolean {
+  return el.matches(CODE_BLOCK_BANNER_SELECTOR)
+}
+
 function normalizeText(text: string): string {
   return text
     .replace(/\u00a0/g, ' ')
@@ -56,6 +68,7 @@ function inlineText(node: Node): string {
   const copyText = node.getAttribute('copy-text')
   if (copyText) return normalizeMathCopyText(copyText)
   if (IGNORED_TAGS.has(node.tagName) || node.hidden || node.getAttribute('aria-hidden') === 'true') return ''
+  if (isCodeBlockBannerNode(node)) return ''
   if (node.tagName === 'BR') return '\n'
 
   if (node.tagName === 'STRONG' || node.tagName === 'B') return wrapInline(node, '**')
@@ -189,6 +202,7 @@ function blockquoteMarkdown(el: HTMLElement): string {
 
 function blocksFromElement(el: HTMLElement): string[] {
   if (IGNORED_TAGS.has(el.tagName) || el.hidden || el.getAttribute('aria-hidden') === 'true') return []
+  if (isCodeBlockBannerNode(el)) return []
 
   if (/^H[1-6]$/.test(el.tagName)) {
     const text = headingMarkdown(el)
