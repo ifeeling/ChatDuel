@@ -126,7 +126,16 @@ function renderInlineMarkdown(text: string): string {
     .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>')
 }
 
-// 分享卡需要给不熟悉 Markdown 的人看，所以把回答渲染成真正的标题/加粗/列表/代码块，
+function splitTableRow(line: string): string[] {
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim())
+}
+
+function isTableSeparatorLine(line: string): boolean {
+  const cells = splitTableRow(line)
+  return cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell))
+}
+
+// 分享卡需要给不熟悉 Markdown 的人看，所以把回答渲染成真正的标题/加粗/列表/代码块/表格，
 // 而不是像面板历史那样直接展示原始 Markdown 源码（面板历史配了「复制 Markdown」，
 // 目标读者本来就懂 Markdown；分享卡的目标读者不懂）。只覆盖 AI 回答里最常见的几种
 // 语法，不追求完整 CommonMark 覆盖。
@@ -169,6 +178,22 @@ function renderMarkdownToHtml(rawText: string): string {
       }
       i += 1
       blocks.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`)
+      continue
+    }
+
+    if (line.includes('|') && i + 1 < lines.length && isTableSeparatorLine(lines[i + 1])) {
+      flushParagraph()
+      flushList()
+      const headerCells = splitTableRow(line)
+      i += 2
+      const rows: string[][] = []
+      while (i < lines.length && lines[i].trim() !== '' && lines[i].includes('|')) {
+        rows.push(splitTableRow(lines[i]))
+        i += 1
+      }
+      const thead = `<thead><tr>${headerCells.map((cell) => `<th>${renderInlineMarkdown(cell)}</th>`).join('')}</tr></thead>`
+      const tbody = `<tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${renderInlineMarkdown(cell)}</td>`).join('')}</tr>`).join('')}</tbody>`
+      blocks.push(`<table>${thead}${tbody}</table>`)
       continue
     }
 
@@ -246,11 +271,16 @@ export function formatSessionHtml(session: Session): string {
   .body pre { margin: 0 0 12px; padding: 10px 12px; border-radius: 6px; overflow-x: auto; background: rgba(0, 0, 0, 0.05); }
   .body code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
   .body pre code { font-size: 0.85em; }
+  .body table { border-collapse: collapse; margin: 0 0 12px; display: block; overflow-x: auto; white-space: nowrap; }
+  .body th, .body td { border: 1px solid #e2e2e6; padding: 6px 10px; text-align: left; }
+  .body th { background: rgba(0, 0, 0, 0.04); font-weight: 600; }
   @media (prefers-color-scheme: dark) {
     body { background: #17181c; color: #e6e6e6; }
     .card { background: #22242b; border-color: #33353d; }
     .word-count, .meta { color: #9a9a9a; }
     .body pre { background: rgba(255, 255, 255, 0.08); }
+    .body th, .body td { border-color: #33353d; }
+    .body th { background: rgba(255, 255, 255, 0.06); }
   }
 </style>
 </head>
