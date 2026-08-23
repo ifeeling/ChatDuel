@@ -332,20 +332,36 @@ export async function runAnswerCollectionTask(
     }
   }
 
-  const settleUserStoppedPlatforms = (): boolean => {
+  const settleUserStoppedPlatforms = async (): Promise<boolean> => {
     if (!input.signal?.aborted) return false
+    const stoppedFailures: Partial<Record<AIPlatform, CaptureFailure>> = {}
     for (const platform of [...pending]) {
+      const error = 'answer collection stopped by user'
       const platformResult: AnswerCollectionPlatformResult = {
         status: 'user-stopped',
-        error: 'answer collection stopped by user',
+        error,
       }
       platforms[platform] = platformResult
+      stoppedFailures[platform] = { status: 'failed', error }
       pending.delete(platform)
       invokeObserverSafely(() => dependencies.onPlatformSettled?.(platform, platformResult))
       finishDiagnostic(platform, {
         outcome: 'paused',
         now: dependencies.now(),
       })
+    }
+    const updated = applyCaptureFailures(session, stoppedFailures, dependencies.now())
+    if (updated !== session) {
+      const stopHistory = await updateHistoryWithRetry(updated, dependencies)
+      session = stopHistory.session
+      historyStatus = stopHistory.saved ? 'saved' : 'unsaved'
+      if (stopHistory.saved) {
+        unsavedPlatforms.clear()
+      } else {
+        for (const platform of Object.keys(stoppedFailures) as AIPlatform[]) {
+          unsavedPlatforms.add(platform)
+        }
+      }
     }
     return true
   }
@@ -357,9 +373,9 @@ export async function runAnswerCollectionTask(
   let consecutiveTimeoutRounds = 0
   const CAPTURE_INTERRUPT_TIMEOUT_STREAK = 3
   while (pending.size > 0) {
-    if (settleUserStoppedPlatforms()) break
+    if (await settleUserStoppedPlatforms()) break
     await dependencies.wait(POLL_INTERVAL_MS)
-    if (settleUserStoppedPlatforms()) break
+    if (await settleUserStoppedPlatforms()) break
     const captured: Partial<Record<AIPlatform, string>> = {}
     const failures: Partial<Record<AIPlatform, CaptureFailure>> = {}
     const timedOutPlatforms = new Set<AIPlatform>()
