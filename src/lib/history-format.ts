@@ -47,11 +47,19 @@ function formatAttachment(attachment: SessionAttachment): string {
 }
 
 export function formatCapturedMarkdownText(text: string): string {
-  return text
+  // 「标题后面缺换行」修复只在原文完全没有 \n\n 时才做：这条规则是给彻底被压扁成
+  // 一整行的文本兜底的（标题和正文之间只剩一个空格），它没法区分“标题本身带空格”
+  // （如“版本 1”“Step 2”）和“标题结束、正文开始”，一旦原文已经有 \n\n 说明排版本来
+  // 就不是压扁状态，贸然套用这条规则会把带空格的标题自己拦腰切断。
+  const alreadyHasParagraphBreaks = text.includes('\n\n')
+  let normalized = text
     .replace(/\r\n?/g, '\n')
     .replace(/[ \t]+$/gm, '')
     .replace(/([^\n])\s+(#{2,6}\s+)/g, '$1\n\n$2')
-    .replace(/(#{2,6}\s+[^\n]+?)\s+(?=(?:#{2,6}\s+)|(?:[-*]\s+)|(?:\d+[.)]\s+)|[^#\n])/g, '$1\n\n')
+  if (!alreadyHasParagraphBreaks) {
+    normalized = normalized.replace(/(#{2,6}\s+[^\n]+?)\s+(?=(?:#{2,6}\s+)|(?:[-*]\s+)|(?:\d+[.)]\s+)|[^#\n])/g, '$1\n\n')
+  }
+  return normalized
     .replace(/([。！？.!?])\s+([-*]\s+)/g, '$1\n$2')
     .replace(/([。！？.!?])\s+(\d+[.)]\s+)/g, '$1\n$2')
     .replace(/\n{3,}/g, '\n\n')
@@ -109,6 +117,93 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#39;')
 }
 
+// escapeHtml 不会动 markdown 语法字符（*、`、#、-），所以可以先转义再在转义后的
+// 字符串上做语法替换：语法标记两侧插入的标签不会被内容里的原始 <>&"' 干扰。
+function renderInlineMarkdown(text: string): string {
+  return escapeHtml(text)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>')
+}
+
+// 分享卡需要给不熟悉 Markdown 的人看，所以把回答渲染成真正的标题/加粗/列表/代码块，
+// 而不是像面板历史那样直接展示原始 Markdown 源码（面板历史配了「复制 Markdown」，
+// 目标读者本来就懂 Markdown；分享卡的目标读者不懂）。只覆盖 AI 回答里最常见的几种
+// 语法，不追求完整 CommonMark 覆盖。
+function renderMarkdownToHtml(rawText: string): string {
+  const lines = formatCapturedMarkdownText(rawText).split('\n')
+  const blocks: string[] = []
+  let paragraph: string[] = []
+  let list: { tag: 'ul' | 'ol'; items: string[] } | null = null
+
+  const flushParagraph = () => {
+    if (paragraph.length === 0) return
+    blocks.push(`<p>${paragraph.map(renderInlineMarkdown).join('<br>')}</p>`)
+    paragraph = []
+  }
+  const flushList = () => {
+    if (!list) return
+    const items = list.items.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join('')
+    blocks.push(`<${list.tag}>${items}</${list.tag}>`)
+    list = null
+  }
+
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
+    if (line.trim() === '') {
+      flushParagraph()
+      flushList()
+      i += 1
+      continue
+    }
+
+    if (/^```/.test(line)) {
+      flushParagraph()
+      flushList()
+      const codeLines: string[] = []
+      i += 1
+      while (i < lines.length && !/^```\s*$/.test(lines[i])) {
+        codeLines.push(lines[i])
+        i += 1
+      }
+      i += 1
+      blocks.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`)
+      continue
+    }
+
+    const heading = line.match(/^(#{1,6})\s+(.*)$/)
+    if (heading) {
+      flushParagraph()
+      flushList()
+      const level = heading[1].length
+      blocks.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`)
+      i += 1
+      continue
+    }
+
+    const listItem = line.match(/^[-*]\s+(.*)$/) ?? line.match(/^\d+[.)]\s+(.*)$/)
+    if (listItem) {
+      flushParagraph()
+      const tag = /^\d/.test(line) ? 'ol' : 'ul'
+      if (!list || list.tag !== tag) {
+        flushList()
+        list = { tag, items: [] }
+      }
+      list.items.push(listItem[1])
+      i += 1
+      continue
+    }
+
+    flushList()
+    paragraph.push(line)
+    i += 1
+  }
+  flushParagraph()
+  flushList()
+  return blocks.join('\n')
+}
+
 export function formatSessionHtml(session: Session): string {
   const title = firstLine(session.prompt)
   const cards = session.targetPlatforms.map((platform) => {
@@ -118,8 +213,8 @@ export function formatSessionHtml(session: Session): string {
     const text = hasText ? normalizeCapturedResponse(platform, response!.text) : ''
     const wordCountLabel = hasText ? `<span class="word-count">${countWords(text)} 字</span>` : ''
     const body = hasText
-      ? escapeHtml(formatCapturedMarkdownText(text))
-      : escapeHtml(responseStatusLabel(response))
+      ? renderMarkdownToHtml(text)
+      : `<p>${escapeHtml(responseStatusLabel(response))}</p>`
     return [
       '<section class="card">',
       `<h2>${escapeHtml(label)} ${wordCountLabel}</h2>`,
@@ -141,11 +236,21 @@ export function formatSessionHtml(session: Session): string {
   .card { background: #fff; border: 1px solid #e2e2e6; border-radius: 12px; padding: 16px 20px; margin-bottom: 16px; }
   .card h2 { font-size: 15px; margin: 0 0 10px; }
   .word-count { font-weight: normal; color: #888; font-size: 12px; }
-  .body { white-space: pre-wrap; line-height: 1.6; font-size: 14px; }
+  .body { line-height: 1.6; font-size: 14px; overflow-wrap: anywhere; }
+  .body > *:first-child { margin-top: 0; }
+  .body > *:last-child { margin-bottom: 0; }
+  .body p { margin: 0 0 12px; }
+  .body h1, .body h2, .body h3, .body h4, .body h5, .body h6 { margin: 16px 0 8px; line-height: 1.3; }
+  .body ul, .body ol { margin: 0 0 12px; padding-left: 22px; }
+  .body li { margin: 0 0 4px; }
+  .body pre { margin: 0 0 12px; padding: 10px 12px; border-radius: 6px; overflow-x: auto; background: rgba(0, 0, 0, 0.05); }
+  .body code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
+  .body pre code { font-size: 0.85em; }
   @media (prefers-color-scheme: dark) {
     body { background: #17181c; color: #e6e6e6; }
     .card { background: #22242b; border-color: #33353d; }
     .word-count, .meta { color: #9a9a9a; }
+    .body pre { background: rgba(255, 255, 255, 0.08); }
   }
 </style>
 </head>
