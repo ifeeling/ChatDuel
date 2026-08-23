@@ -28,7 +28,9 @@
     "unlimitedStorage",
     "tabs",
     "declarativeNetRequest",
-    "alarms"
+    "alarms",
+    "clipboardRead",
+    "clipboardWrite"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
