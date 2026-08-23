@@ -1545,7 +1545,7 @@ body { overflow: hidden; }
 
 .history-body {
   display: grid;
-  grid-template-columns: 340px 1fr;
+  grid-template-columns: 260px 1fr;
   height: calc(100% - 48px);
   min-height: 420px;
   min-height: 0;
@@ -1596,11 +1596,13 @@ body { overflow: hidden; }
   background: rgba(80, 140, 255, 0.12);
 }
 .history-item-title {
-  display: block;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   margin-bottom: 6px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  line-height: 1.35;
   font-weight: 600;
 }
 .history-item-meta,
