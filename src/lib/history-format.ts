@@ -124,6 +124,14 @@ function renderInlineMarkdown(text: string): string {
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>')
+    .replace(/~~([^~]+)~~/g, '<del>$1</del>')
+    // URL 允许一层括号嵌套（如维基百科链接 .../Foo_(bar)），否则正则遇到 URL
+    // 自带的右括号就提前收尾，截断链接、留下多余的 `)` 泄漏到正文里。
+    // 协议按白名单放行（http/https/mailto）——分享卡导出的是静态 HTML 文件，
+    // 直接输出 <a href> 可点击，不能放行 javascript:/data: 这类协议；不放行的
+    // 链接直接退化成纯文字，不保留原始 markdown 语法。
+    .replace(/\[([^\]]+)\]\(((?:[^()\s]|\([^)\s]*\))+)\)/g, (match, label: string, url: string) =>
+      /^(https?:|mailto:)/i.test(url) ? `<a href="${url}">${label}</a>` : label)
 }
 
 function splitTableRow(line: string): string[] {
@@ -135,10 +143,11 @@ function isTableSeparatorLine(line: string): boolean {
   return cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell))
 }
 
-// 分享卡需要给不熟悉 Markdown 的人看，所以把回答渲染成真正的标题/加粗/列表/代码块/表格，
-// 而不是像面板历史那样直接展示原始 Markdown 源码（面板历史配了「复制 Markdown」，
-// 目标读者本来就懂 Markdown；分享卡的目标读者不懂）。只覆盖 AI 回答里最常见的几种
-// 语法，不追求完整 CommonMark 覆盖。
+// 分享卡需要给不熟悉 Markdown 的人看，所以把回答渲染成真正的标题/加粗/删除线/链接/
+// 列表/引用/分隔线/代码块/表格，而不是像面板历史那样直接展示原始 Markdown 源码
+// （面板历史配了「复制 Markdown」，目标读者本来就懂 Markdown；分享卡的目标读者不懂）。
+// 覆盖范围以 dom-response-text.ts（捕获侧）实际会产出的语法为准，不追求完整
+// CommonMark 覆盖——捕获侧不会产出的语法，这里也不需要认。
 function renderMarkdownToHtml(rawText: string): string {
   const lines = formatCapturedMarkdownText(rawText).split('\n')
   const blocks: string[] = []
@@ -164,6 +173,39 @@ function renderMarkdownToHtml(rawText: string): string {
       flushParagraph()
       flushList()
       i += 1
+      continue
+    }
+
+    if (/^(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      flushParagraph()
+      flushList()
+      blocks.push('<hr>')
+      i += 1
+      continue
+    }
+
+    if (/^>\s?/.test(line)) {
+      flushParagraph()
+      flushList()
+      const quoteLines: string[] = []
+      // blockquoteMarkdown（捕获侧）用空行分隔引用内的多个段落，空行本身不带 `>` 前缀
+      // （见 dom-response-text.ts）。只有紧跟着的下一行还是 `>` 开头时，才把这个空行
+      // 当成引用内部的段落分隔符继续收（渲染成 <br><br>），否则空行就是引用真正的结束。
+      while (i < lines.length) {
+        if (/^>\s?/.test(lines[i])) {
+          quoteLines.push(lines[i].replace(/^>\s?/, ''))
+          i += 1
+          continue
+        }
+        if (lines[i].trim() === '' && i + 1 < lines.length && /^>\s?/.test(lines[i + 1])) {
+          quoteLines.push('')
+          i += 1
+          continue
+        }
+        break
+      }
+      const rendered = quoteLines.map((quoteLine) => (quoteLine ? renderInlineMarkdown(quoteLine) : '')).join('<br>')
+      blocks.push(`<blockquote>${rendered}</blockquote>`)
       continue
     }
 
@@ -274,6 +316,9 @@ export function formatSessionHtml(session: Session): string {
   .body table { border-collapse: collapse; margin: 0 0 12px; display: block; overflow-x: auto; white-space: nowrap; }
   .body th, .body td { border: 1px solid #e2e2e6; padding: 6px 10px; text-align: left; }
   .body th { background: rgba(0, 0, 0, 0.04); font-weight: 600; }
+  .body hr { margin: 16px 0; border: none; border-top: 1px solid #e2e2e6; }
+  .body blockquote { margin: 0 0 12px; padding: 4px 12px; border-left: 3px solid #d0d0d6; color: #555; }
+  .body a { color: #2563eb; }
   @media (prefers-color-scheme: dark) {
     body { background: #17181c; color: #e6e6e6; }
     .card { background: #22242b; border-color: #33353d; }
@@ -281,6 +326,9 @@ export function formatSessionHtml(session: Session): string {
     .body pre { background: rgba(255, 255, 255, 0.08); }
     .body th, .body td { border-color: #33353d; }
     .body th { background: rgba(255, 255, 255, 0.06); }
+    .body hr { border-top-color: #33353d; }
+    .body blockquote { border-left-color: #4a4c56; color: #b0b0b0; }
+    .body a { color: #60a5fa; }
   }
 </style>
 </head>
