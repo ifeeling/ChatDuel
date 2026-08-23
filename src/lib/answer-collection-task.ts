@@ -452,7 +452,11 @@ export async function runAnswerCollectionTask(
         forceCaptured: decision.forceCaptured,
         completionActionBarDetected: probe.completionActionBarDetected === true,
       })
-      if (decision.shouldCapture && isNewCapturedResponse(decision.text, baselines[platform])) {
+      // sentPrompt 回声校验只对 Claude 生效（CAP-05 历史坑限定的平台）：其它平台的正式
+      // 回答理论上也可能恰好跟发送内容一字不差，为它们做同样的拒绝会把这种巧合误判成
+      // 回声，是 issue 明确要避免的风险。
+      const echoGuardPrompt = platform === 'claude' ? session.sentPrompt : undefined
+      if (decision.shouldCapture && isNewCapturedResponse(decision.text, baselines[platform], echoGuardPrompt)) {
         captured[platform] = decision.text
         const platformResult: AnswerCollectionPlatformResult = {
           status: 'captured',

@@ -338,6 +338,13 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
     lastMutationTimestamp = Date.now()
   }).observe(document.body, { childList: true, subtree: true, characterData: true })
 
+  // CAP-05 私有自愈状态：Claude 的 ProseMirror 输入框偶发"点击发送没有真正提交"
+  // （docs/research/2026-06-19-claude-integration-notes.md 已确认的历史坑），
+  // 回答区读到的内容其实是刚发的问题本身。每次 sendMessage 重置一次重试预算，
+  // 故意不放进共享的适配器工具包——这是 Claude 独有的行为，其它平台不需要。
+  let lastSentText = ''
+  let echoRetryUsed = false
+
   function q<T extends Element = Element>(sel: string): T | null {
     return document.querySelector<T>(sel)
   }
@@ -360,6 +367,8 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
     },
 
     async sendMessage(text: string, image?: File, diagnostics?: AdapterDiagnostics) {
+      lastSentText = text.trim()
+      echoRetryUsed = false
       const box = q<HTMLElement>(S.inputBox)
       if (!box) {
         emitDiagnostic(diagnostics, {
@@ -460,8 +469,20 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
       return Promise.resolve(getLatestResponseText())
     },
 
-    getConversationState(): Promise<ConversationState> {
+    async getConversationState(): Promise<ConversationState> {
       const lastText = getLatestResponseText()
+      // CAP-05：回答区读到的内容跟刚发的问题一字不差，大概率是提交没真正生效、
+      // 回声回显。重新点一次发送按钮，最多一次，避免死循环；即使重试点击本身
+      // 失败也不能把回声当成"已完成"，让下一轮轮询或最终超时接手。
+      if (lastText && lastSentText && lastText.trim() === lastSentText && !echoRetryUsed) {
+        echoRetryUsed = true
+        try {
+          await this.triggerSend()
+        } catch {
+          // 重试点击失败：什么都不做，交由下一轮或最终超时处理。
+        }
+        return { status: 'streaming', lastResponse: lastText, stopButtonDetected: false }
+      }
       // 优先用选择器检测（最准确）
       if (hasStopGeneratingButton(S, { requireVisible: true, textFallback: false })) return Promise.resolve({ status: 'streaming', lastResponse: lastText, stopButtonDetected: true })
       if (q(S.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText, stopButtonDetected: false })

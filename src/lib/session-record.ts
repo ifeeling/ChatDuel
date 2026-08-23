@@ -171,8 +171,21 @@ export function applyCaptureFailures(
   }
 }
 
-export function isNewCapturedResponse(text: string | undefined, baseline: string | undefined): boolean {
+/**
+ * sentPrompt 为可选参数：调用方能提供「本轮实际发送的问题文本」时，多做一层
+ * 兜底——抓到的内容如果跟发送内容一字不差，大概率是把用户提问误当成了 AI
+ * 回答（CAP-05：Claude 输入框偶发提交失败，回答区回显出刚发的问题），不能
+ * 当作有效新回答保存。省略或传空白字符串时行为与之前一致。
+ */
+export function isNewCapturedResponse(
+  text: string | undefined,
+  baseline: string | undefined,
+  sentPrompt?: string,
+): boolean {
   const next = text?.trim() ?? ''
   if (!next) return false
-  return next !== (baseline?.trim() ?? '')
+  if (next === (baseline?.trim() ?? '')) return false
+  const sent = sentPrompt?.trim()
+  if (sent && next === sent) return false
+  return true
 }
