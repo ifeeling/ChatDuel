@@ -33,17 +33,28 @@ const EVIDENCE_SELECTOR = [
   '[data-testid*="attach" i]',
   '[data-testid*="file" i]',
 ].join(',')
+// 故意比 EVIDENCE_SELECTOR 窄很多：只信"专门播报状态的区域"（role=alert/aria-live），
+// 不再把 EVIDENCE_SELECTOR 那批泛用的 upload/attach/file/image class 选择器也算作失败信号来源
+// ——真机验证过（2026-08-24，豆包）：composer 工具栏里任意一个图标/按钮只要 class 沾点
+// "file"/"image"，哪怕跟这次这个文件完全无关，只要它在附件成功之后被框架重新渲染出一个
+// 新的 DOM 节点（即使内容没变，React/Vue 类框架很常见），就会被当成"新出现的可疑元素"，
+// 而它的无障碍文案里随便一个英文 "error"/"failed" 子串（图标库的隐藏 aria-label 很常见）
+// 就会被误判成这次上传失败——实测把豆包一次已经成功挂载的附件误判成失败，导致发送中止。
 const FAILURE_CONTEXT_SELECTOR = [
-  EVIDENCE_SELECTOR,
   '[role="alert"]',
   '[aria-live="assertive"]',
 ].join(',')
 
-/** 从锚点(通常是输入框或 file input)向上找出"包住输入框/上传相关元素"的最外层容器，作为证据检测范围。 */
+/**
+ * 从锚点(通常是输入框或 file input)向上找出"包住输入框/上传相关元素"的最外层容器，作为证据检测范围。
+ * depth 上限 20：真机验证过（2026-08-24，豆包）——deepseek 原实现里沿用的 8 层在豆包这种嵌套更深的
+ * 组件树上会在爬到"附件预览行"所在的公共祖先之前就停手，导致预览区域落在 scope 外、
+ * 证据检测永远数不到新出现的附件卡片（明明真的传上去了，却一直判定失败）。
+ */
 export function findAttachmentScope(anchor: HTMLElement): ParentNode {
   let best: HTMLElement | null = null
   let scope: HTMLElement = anchor
-  for (let depth = 0; scope.parentElement && depth < 8; depth += 1) {
+  for (let depth = 0; scope.parentElement && depth < 20; depth += 1) {
     scope = scope.parentElement
     if (scope === document.body || scope === document.documentElement) break
     if (
