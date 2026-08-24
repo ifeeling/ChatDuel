@@ -14,6 +14,9 @@
 //   - 投递计划、诊断上下文、发送锁起锁、会话记录、回答收集任务装配与收尾、
 //     队列转移、会话网址快照全部收进实现内部；
 //   - 协调器不触碰 DOM、不查文案：只播报语义事件，翻译与渲染由页面负责。
+//
+// 票 3（Issue #12）在 dispatch 最前面插入发送前风险扫描（本地规则，见
+// pre-send-risk-scan.ts）：命中时播报一次 warn 级 toast，不阻断发送。
 
 import type { AIPlatform, ConversationEntry, Session, SessionAttachment } from '../types'
 import {
@@ -29,6 +32,7 @@ import {
   type QueuePauseReason,
 } from '../lib/pending-question-queue'
 import { dispatchPendingQuestion } from './pending-question-composer'
+import { scanForSendRisk, type SendRiskFindingType } from '../lib/pre-send-risk-scan'
 import { isSpecificConversationUrl } from '../lib/conversation-store'
 import {
   createDiagnosticBatchId,
@@ -229,6 +233,8 @@ export interface QuestionSendCoordinatorDependencies {
   supportsEmbed(platform: AIPlatform): boolean
   /** 平台展示名（手动上传提示里的平台列表用）。 */
   getPlatformLabel(platform: AIPlatform): string
+  /** 发送前风险扫描命中类型的展示名（风险提示文案用）。 */
+  getRiskFindingLabel(type: SendRiskFindingType): string
   /** 当前平台顺序（写入官网会话记录）。 */
   getPlatformOrder(): AIPlatform[]
   /** 会话标题压缩（空标题的兜底文案由页面翻译）。 */
@@ -352,6 +358,15 @@ export function createQuestionSendCoordinator(
     const text = input.text
     let targets = [...input.targets]
     const attachment = input.attachment
+
+    // 发送前风险扫描：只提醒，不阻断发送（本地规则扫描，见 pre-send-risk-scan.ts）。
+    const riskFindings = scanForSendRisk(text)
+    if (riskFindings.length > 0) {
+      const labels = [...new Set(riskFindings.map((finding) => finding.type))]
+        .map((type) => deps.getRiskFindingLabel(type))
+        .join(' / ')
+      deps.onToast({ level: 'warn', durationMs: 6000, messageKey: 'send.riskDetected', params: { labels } })
+    }
 
     const deliveryPlan = buildAttachmentDeliveryPlan(
       targets,

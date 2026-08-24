@@ -99,6 +99,7 @@ import {
   updatePendingQuestionFromView,
 } from './pending-question-composer'
 import { renderPendingQuestionQueue } from './pending-question-queue-view'
+import type { SendRiskFindingType } from '../lib/pre-send-risk-scan'
 import {
   createAnswerCollectionBaseDependencies,
   createQuestionSendCoordinator,
@@ -896,6 +897,16 @@ const answerCollectionBaseOptions: AnswerCollectionBaseDependenciesOptions = {
   history: { add: addSession, get: getSession, update: updateSession },
 }
 
+// 发送前风险扫描（Issue #12）命中类型 -> 文案键，供 riskDetected 提示拼 labels。
+const RISK_FINDING_LABEL_KEYS: Record<SendRiskFindingType, string> = {
+  'api-key': 'riskScan.apiKey',
+  'private-key': 'riskScan.privateKey',
+  'id-card': 'riskScan.idCard',
+  'bank-card': 'riskScan.bankCard',
+  'phone-number': 'riskScan.phoneNumber',
+  'keyword-secret': 'riskScan.keywordSecret',
+}
+
 // 问题发送协调器（Issue #30）：页面提交入口与队列自动补发都走它的两个公开入口。
 // 协调器不触碰 DOM、不查文案：页面把语义事件绑到渲染与文案翻译，
 // 把现有发送锁包装函数以端口形式绑给协调器。
@@ -913,6 +924,7 @@ const questionSendCoordinator = createQuestionSendCoordinator({
   isDiagnosticEnabled: () => userSettings.diagnosticEnabled,
   supportsEmbed: (platform) => getPlatformCapabilities(platform).supportsEmbed,
   getPlatformLabel: (platform) => getPlatformMeta(platform)?.label ?? platform,
+  getRiskFindingLabel: (type) => t(userSettings.language, RISK_FINDING_LABEL_KEYS[type]),
   getPlatformOrder: () => userSettings.platformOrder,
   compactConversationTitle: (title) => compactText(title, 90),
   saveConversationEntry: upsertConversation,
