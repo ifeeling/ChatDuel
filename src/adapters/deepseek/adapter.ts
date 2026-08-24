@@ -19,6 +19,7 @@ import {
 import { createResponseCursor, type ResponseCursor } from '../shared/response-cursor'
 import type { ConversationState } from '../../types'
 import { buildDataTransferFromFile, dispatchPaste } from '../../lib/image-handler'
+import { attachFileWithFallback } from '../shared/attachment-evidence'
 import { cloneWithoutThinking, elementToMarkdownText } from '../../lib/dom-response-text'
 import { describeCaptureElement, logCaptureDebug, textPreview } from '../../lib/capture-debug'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
@@ -1026,6 +1027,15 @@ export function createDeepSeekAdapter(selectorOverrides?: SelectorOverrideMap): 
     },
 
     async attachImage(file: File) {
+      // 非图片附件（ATTACH-01 / issue #35）：直塞 input 是 Plan A，paste 是 Plan B 兜底——
+      // 跟下面图片走的"paste 优先"顺序刻意不同，不改动已验证过的图片上传路径。
+      if (!file.type.startsWith('image/')) {
+        const composer = queryFirst<HTMLElement>(selectors.inputBox)
+        if (await attachFileWithFallback(file, composer, {
+          inputOptions: { maxMs: 0, candidates: DEEPSEEK_FILE_INPUT_CANDIDATES, recurseIframes: false },
+        })) return
+        throw new Error('deepseek file upload failed')
+      }
       if (await pasteFileIntoComposer(file, selectors)) return
       if (await attachFileToInput(file)) return
       throw new Error('deepseek image upload failed')

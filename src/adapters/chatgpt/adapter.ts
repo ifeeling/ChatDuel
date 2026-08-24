@@ -1,6 +1,7 @@
 import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
 import { emitDiagnostic } from '../shared/diagnostics'
 import { attachImageToFileInput } from '../shared/file-input'
+import { attachFileWithFallback } from '../shared/attachment-evidence'
 import { writeEditableValue, waitForSendAccepted } from '../shared/dom-write'
 import { hasStopGeneratingButton } from '../shared/ds-doubao-shared'
 import type { ConversationState } from '../../types'
@@ -214,6 +215,13 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
     },
 
     async attachImage(file: File) {
+      // 非图片附件（ATTACH-01 / issue #35）：直塞 input 是 Plan A，paste 是 Plan B 兜底，
+      // 用附件证据 + 失败文案双向检测判断是否真的成功，不是简单的"事件派发完就算数"。
+      if (!file.type.startsWith('image/')) {
+        const composer = q<HTMLElement>(S.inputBox)
+        if (await attachFileWithFallback(file, composer)) return
+        throw new Error('chatgpt file upload failed')
+      }
       if (await attachImageToFileInput(file)) return
       throw new Error('file input not found for image upload')
     },

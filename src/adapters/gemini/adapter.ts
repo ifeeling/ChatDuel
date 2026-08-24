@@ -1,6 +1,7 @@
 import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
 import { emitDiagnostic } from '../shared/diagnostics'
 import { attachImageToFileInput } from '../shared/file-input'
+import { attachFileWithFallback } from '../shared/attachment-evidence'
 import { waitForSendAccepted } from '../shared/dom-write'
 import { hasStopGeneratingButton } from '../shared/ds-doubao-shared'
 import type { ConversationState } from '../../types'
@@ -233,6 +234,12 @@ export function createGeminiAdapter(selectorOverrides?: SelectorOverrideMap): AI
     },
 
     async attachImage(file: File) {
+      // 非图片附件（ATTACH-01 / issue #35）：直塞 input 是 Plan A，paste 是 Plan B 兜底。
+      if (!file.type.startsWith('image/')) {
+        const composer = document.querySelector<HTMLElement>('div.ql-editor[contenteditable="true"]')
+        if (await attachFileWithFallback(file, composer)) return
+        throw new Error('gemini file upload failed')
+      }
       // 路径 1: 找原生 file input 并注入(ChatGPT 走这条)
       if (await attachImageToFileInput(file)) return
       // 路径 2: Gemini 2026+ 把上传按钮封在 Angular xapfileselectortrigger 组件里,DOM 不暴露 file input。

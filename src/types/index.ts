@@ -67,7 +67,7 @@ export interface SessionAttachment {
   name: string
   mime: string
   size: number
-  kind: 'image' | 'text' | 'document'
+  kind: 'image' | 'text' | 'document' | 'markup' | 'unknown'
   handling: 'inline-text' | 'file-upload' | 'manual'
   inlinedText?: string
   uploadStatus?: 'pending' | 'ready' | 'failed' | 'manual'

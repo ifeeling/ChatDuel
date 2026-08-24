@@ -1,6 +1,7 @@
 import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
 import { emitDiagnostic } from '../shared/diagnostics'
 import { attachImageToFileInput, findFileInput } from '../shared/file-input'
+import { attachFileWithFallback } from '../shared/attachment-evidence'
 import { writeEditableValue } from '../shared/dom-write'
 import { hasStopGeneratingButton, isVisibleElement } from '../shared/ds-doubao-shared'
 import type { ConversationState } from '../../types'
@@ -461,6 +462,12 @@ export function createClaudeAdapter(selectorOverrides?: SelectorOverrideMap): AI
     },
 
     async attachImage(file: File) {
+      // 非图片附件（ATTACH-01 / issue #35）：直塞 input 是 Plan A，paste 是 Plan B 兜底。
+      if (!file.type.startsWith('image/')) {
+        const composer = q<HTMLElement>(S.inputBox)
+        if (await attachFileWithFallback(file, composer)) return
+        throw new Error('claude file upload failed')
+      }
       if (await attachImageToFileInput(file)) return
       throw new Error('file input not found for claude image upload')
     },

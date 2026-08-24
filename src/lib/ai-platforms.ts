@@ -30,6 +30,11 @@ export interface AIPlatformCapabilities {
   readonly supportsEmbed: boolean
   readonly supportsText: boolean
   readonly supportsImageUpload: boolean
+  // 只决定"要不要把这个平台当自动上传目标去尝试"（question-send-coordinator.ts 的
+  // autoUploadTargets/manualUploadTargets 分档），不是"这个平台能不能传某个具体格式"——
+  // 具体格式的成败交给 attachFileWithFallback 运行时探测（ATTACH-01 / issue #35）。
+  // 当前 5 个平台都是 true，是因为已验证"直塞 input/paste 至少有一层能用"；如果新增
+  // 平台时这里留 false，会连探测都不会发起，直接落人工上传——不是"探测后判定不支持"。
   readonly supportsFileUpload: boolean
   readonly supportsLastResponse: boolean
 }
@@ -49,7 +54,7 @@ export const AI_PLATFORMS: Record<AIPlatform, AIPlatformMeta> = {
       supportsEmbed: true,
       supportsText: true,
       supportsImageUpload: true,
-      supportsFileUpload: false,
+      supportsFileUpload: true,
       supportsLastResponse: true,
     },
   },
@@ -75,7 +80,7 @@ export const AI_PLATFORMS: Record<AIPlatform, AIPlatformMeta> = {
       supportsEmbed: true,
       supportsText: true,
       supportsImageUpload: true,
-      supportsFileUpload: false,
+      supportsFileUpload: true,
       supportsLastResponse: true,
     },
   },
@@ -88,7 +93,7 @@ export const AI_PLATFORMS: Record<AIPlatform, AIPlatformMeta> = {
       supportsEmbed: true,
       supportsText: true,
       supportsImageUpload: true,
-      supportsFileUpload: false,
+      supportsFileUpload: true,
       supportsLastResponse: true,
     },
   },
@@ -101,7 +106,7 @@ export const AI_PLATFORMS: Record<AIPlatform, AIPlatformMeta> = {
       supportsEmbed: true,
       supportsText: true,
       supportsImageUpload: true,
-      supportsFileUpload: false,
+      supportsFileUpload: true,
       supportsLastResponse: true,
     },
   },

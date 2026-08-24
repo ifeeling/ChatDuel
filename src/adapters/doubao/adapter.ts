@@ -1,6 +1,7 @@
 import type { AIAdapter, AdapterDiagnostics, AdapterSendInternals } from '../base'
 import { emitDiagnostic } from '../shared/diagnostics'
 import { attachImageToFileInput as sharedAttachImageToFileInput } from '../shared/file-input'
+import { attachFileWithFallback } from '../shared/attachment-evidence'
 import { writeEditableValue } from '../shared/dom-write'
 import {
   queryFirst,
@@ -615,6 +616,14 @@ export function createDoubaoAdapter(selectorOverrides?: SelectorOverrideMap): AI
     },
 
     async attachImage(file: File) {
+      // 非图片附件（ATTACH-01 / issue #35）：直塞 input 是 Plan A，paste 是 Plan B 兜底。
+      if (!file.type.startsWith('image/')) {
+        const composer = queryFirst<HTMLElement>(selectors.inputBox)
+        if (await attachFileWithFallback(file, composer, {
+          inputOptions: { maxMs: 0, candidates: DOUBAO_FILE_INPUT_CANDIDATES, recurseIframes: false },
+        })) return
+        throw new Error('doubao file upload failed')
+      }
       if (await attachImageToFileInput(file)) return
       if (await pasteImageIntoComposer(file, selectors)) return
       const probe = probeDoubaoAttachmentControls(selectorOverrides)
