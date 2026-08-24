@@ -88,11 +88,17 @@ export function classifyFile(file: File): FileClassification {
   return { kind: 'unknown', handling: 'file-upload' }
 }
 
+/**
+ * 图片：没有运行时探测，静态能力表（supportsImageUpload）是唯一依据。
+ * 非图片文件（document/markup/unknown）：静态名单已完全让位于运行时探测——
+ * 恒为 true，实际能不能传交给 attachFileWithFallback 在具体平台上探测决定
+ * （直塞 input → paste，两层都试完才算数），探测失败时该平台单独报送失败，
+ * 不再有"代码预判不支持"这一档（ATTACH-01 / issue #35）。
+ */
 export function supportsAutoUpload(platform: AIPlatform, classification: FileClassification): boolean {
   if (classification.handling !== 'file-upload') return false
-  const capabilities = getPlatformCapabilities(platform)
-  if (classification.kind === 'image') return capabilities.supportsImageUpload
-  return capabilities.supportsFileUpload
+  if (classification.kind !== 'image') return true
+  return getPlatformCapabilities(platform).supportsImageUpload
 }
 
 export function buildAttachmentDeliveryPlan(
