@@ -68,6 +68,10 @@ export interface PlatformCommunication {
   readLastResponse(platform: AIPlatform, timeoutMs?: number): Promise<ResponseReadResult>
   readConversationState(platform: AIPlatform, timeoutMs?: number): Promise<ConversationStateResult>
   readConversationUrl(platform: AIPlatform, timeoutMs?: number): Promise<string>
+  /** 只探测命令桥（content-script + 消息通道）是否活着响应，不读取任何会话状态。 */
+  pingContentScript(platform: AIPlatform, timeoutMs?: number): Promise<boolean>
+  /** 标记未就绪并重开该平台的 frame；供体检等场景主动触发重连，不等待下一次 prepare。 */
+  reloadFrame(platform: AIPlatform): void
 }
 
 function chooseRoute(
@@ -493,6 +497,26 @@ export function createPlatformCommunication(
     return result?.ok && typeof result.data === 'string' ? result.data : ''
   }
 
+  async function pingContentScript(platform: AIPlatform, timeoutMs = 5000): Promise<boolean> {
+    if (chooseRoute(platform, dependencies) === 'official-tab') {
+      const { response } = await sendOfficialTabCommandWithTimeout<PlatformCommandResult>(
+        platform,
+        'ping',
+        timeoutMs,
+        {},
+        'ping',
+      )
+      return !!response?.ok
+    }
+    const result = await waitForCommandBridgeReply(platform, 'ping', timeoutMs, {}, 'ping')
+    return !!result?.ok
+  }
+
+  function reloadFrame(platform: AIPlatform): void {
+    markNotReady(platform)
+    dependencies.reload(platform)
+  }
+
   return {
     markNotReady,
     routeFor: (platform) => chooseRoute(platform, dependencies),
@@ -501,5 +525,7 @@ export function createPlatformCommunication(
     readLastResponse,
     readConversationState,
     readConversationUrl,
+    pingContentScript,
+    reloadFrame,
   }
 }

@@ -237,6 +237,7 @@
           <button class="settings-nav-item active" type="button" data-settings-tab="sites">显示站点</button>
           <button class="settings-nav-item" type="button" data-settings-tab="prompts">提示词</button>
           <button class="settings-nav-item" type="button" data-settings-tab="diagnostics">诊断</button>
+          <button class="settings-nav-item" type="button" data-settings-tab="health-check">平台体检</button>
           <button class="settings-nav-item" type="button" disabled>快捷键</button>
           <button class="settings-nav-item" type="button" data-settings-tab="help">使用帮助</button>
         </nav>
@@ -379,6 +380,15 @@
             </label>
             <p class="settings-help" id="diagnostics-capture-help">开启后请复现问题，并把浏览器控制台中 [ChatDuel capture debug] 开头的日志发给开发者。日志可能包含部分对话内容，请确认后再发送。</p>
           </div>
+          <div class="settings-panel" data-settings-panel="health-check">
+            <p class="settings-lead" id="health-check-lead">对每个正在显示的 AI 平台做一次快速体检：页面有没有加载成功、插件通道通不通、可能有没有登录。</p>
+            <div class="health-check-actions">
+              <button id="btn-health-check-run" class="settings-secondary" type="button">开始体检</button>
+              <button id="btn-health-check-fix-all" class="settings-secondary" type="button" hidden>一键修复可自动修的项</button>
+            </div>
+            <div id="health-check-list" class="health-check-list" aria-live="polite"></div>
+            <p class="settings-help" id="health-check-empty" hidden>没有正在显示的 AI 平台，请先在"显示站点"里勾选。</p>
+          </div>
           <div class="settings-panel" data-settings-panel="help">
             <p class="settings-lead">常用功能说明</p>
             <div class="help-grid">
@@ -421,6 +431,10 @@
               <section class="help-card">
                 <h3>设置能力</h3>
                 <p>设置中可自定义发送给 AI 的提示词、切换界面语言、管理本地诊断记录，并在设置底部“检查更新”或访问官网与 GitHub。</p>
+              </section>
+              <section class="help-card">
+                <h3>平台体检</h3>
+                <p>设置里的“平台体检”可以对每个正在显示的 AI 做一次快速检查：页面是否加载成功、插件通道是否响应、是否可能需要重新登录，红绿灯直观展示，能自动修复的项还可以一键修复。</p>
               </section>
             </div>
           </div>

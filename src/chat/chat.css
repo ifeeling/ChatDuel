@@ -1468,6 +1468,62 @@ body { overflow: hidden; }
   border: 0;
   border-top: 1px solid var(--border);
 }
+.health-check-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.health-check-list {
+  max-width: 760px;
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.health-check-row {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-3);
+}
+.health-check-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.health-check-checks {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+.health-check-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+  cursor: default;
+}
+.health-check-dot[data-status="ok"] { background: var(--ok); }
+.health-check-dot[data-status="fail"] { background: var(--err); }
+.health-check-dot[data-status="unknown"] { background: var(--warn); }
+.health-check-detail {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.health-check-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.health-check-row-actions .settings-secondary {
+  margin-top: 0;
+}
 .help-grid {
   max-width: 840px;
   display: grid;

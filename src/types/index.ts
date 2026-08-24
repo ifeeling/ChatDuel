@@ -146,4 +146,6 @@ export interface ConversationState {
   errorMessage?: string
   stopButtonDetected?: boolean
   completionActionBarDetected?: boolean
+  /** 登录探针判定为登录页时置真；供体检等场景区分"未登录"与其它错误，不靠 errorMessage 文案匹配。 */
+  needsLogin?: boolean
 }

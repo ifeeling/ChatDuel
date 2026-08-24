@@ -1,10 +1,15 @@
 /**
- * 平台无关的登录 / 状态探针工厂，被 DeepSeek 与豆包 content-script 共用。
+ * 平台无关的登录 / 状态探针工厂，被全部 5 个平台的 content-script 共用。
  *
- * 两家的 hasUsableComposer / looksLikeLoginPage / getProbeState 原先逐字重复，
+ * 各家的 hasUsableComposer / looksLikeLoginPage / getProbeState 原先逐字重复，
  * 差异仅三点：平台显示名、登录页 URL 关键词、登录页正文正则。
  * 这里把差异收敛为参数，函数体不含任何平台名分支。
  */
+import type { AIAdapter } from '../base'
+import type {
+  ContentScriptCommandExtensionHandler,
+  ContentScriptCommandExtensionResult,
+} from '../../content-scripts/content-script-command-bridge'
 import type { ConversationState } from '../../types'
 
 export interface LoginProbeOptions {
@@ -41,7 +46,7 @@ export function createLoginProbe(opts: LoginProbeOptions): LoginProbe {
 
   function getProbeState(): ConversationState {
     if (looksLikeLoginPage()) {
-      return { status: 'error', errorMessage: `可能未登录${sep}${opts.platformName}` }
+      return { status: 'error', errorMessage: `可能未登录${sep}${opts.platformName}`, needsLogin: true }
     }
     if (hasUsableComposer()) {
       return { status: 'idle' }
@@ -50,4 +55,26 @@ export function createLoginProbe(opts: LoginProbeOptions): LoginProbe {
   }
 
   return { hasUsableComposer, looksLikeLoginPage, getProbeState }
+}
+
+/**
+ * `get-state` 命令处理器工厂：adapter 探测失败或明确报错时，退回登录探针判断。
+ *
+ * 5 个平台 content-script 里对 get-state 的处理原先逐字重复（仅探针 options 不同）；
+ * 这里把"拿 adapter 状态、失败退回探针、error 状态也用探针复核"这段收敛成一个工厂，
+ * 直接匹配 `BootContentScriptOptions.createExtensionHandler` 的签名，可以整体赋值。
+ * 需要额外命令（如 DeepSeek 的 get-conversation-url）的 content-script 自行包一层。
+ */
+export function createLoginProbeExtensionHandler(
+  opts: LoginProbeOptions,
+): (adapter: Pick<AIAdapter, 'getConversationState'>) => ContentScriptCommandExtensionHandler {
+  const probe = createLoginProbe(opts)
+  return (adapter) => async ({ command }): Promise<ContentScriptCommandExtensionResult> => {
+    if (command !== 'get-state') return { handled: false }
+    const state = await adapter.getConversationState().catch(() => probe.getProbeState())
+    return {
+      handled: true,
+      data: state.status === 'error' ? probe.getProbeState() : state,
+    }
+  }
 }

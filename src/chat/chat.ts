@@ -112,6 +112,12 @@ import {
   createPlatformCommunication,
   type PlatformSendResult,
 } from './platform-communication'
+import {
+  checkAllPlatformsHealth,
+  isAutoFixable,
+  type HealthCheckStatus,
+  type PlatformHealthCheckResult,
+} from './platform-health-check'
 import { showExtensionUpdateNotice } from './update-notice-dialog'
 import { fetchLatestRelease, REPO, type VersionCheckResult } from '../lib/version-check'
 import {
@@ -199,6 +205,10 @@ const btnDiagnosticView = $<HTMLButtonElement>('#btn-diagnostic-view')
 const btnDiagnosticCopyFailure = $<HTMLButtonElement>('#btn-diagnostic-copy-failure')
 const btnDiagnosticDownload = $<HTMLButtonElement>('#btn-diagnostic-download')
 const btnDiagnosticClear = $<HTMLButtonElement>('#btn-diagnostic-clear')
+const btnHealthCheckRun = $<HTMLButtonElement>('#btn-health-check-run')
+const btnHealthCheckFixAll = $<HTMLButtonElement>('#btn-health-check-fix-all')
+const healthCheckList = $<HTMLDivElement>('#health-check-list')
+const healthCheckEmpty = $<HTMLParagraphElement>('#health-check-empty')
 const btnResetPromptTemplate = $<HTMLButtonElement>('#btn-reset-prompt-template')
 const historyOverlay = $<HTMLDivElement>('#history-overlay')
 const btnHistoryClose = $<HTMLButtonElement>('#btn-history-close')
@@ -381,6 +391,7 @@ function applyStaticUiLanguage(language: UserLanguage) {
   setElementText('[data-settings-tab="sites"]', t(language, 'settings.sitesTab'))
   setElementText('[data-settings-tab="prompts"]', t(language, 'settings.promptsTab'))
   setElementText('[data-settings-tab="diagnostics"]', t(language, 'settings.diagnosticsTab'))
+  setElementText('[data-settings-tab="health-check"]', t(language, 'settings.healthCheckTab'))
   setElementText('.settings-nav-item:disabled', t(language, 'settings.shortcutsTab'))
   setElementText('[data-settings-tab="help"]', t(language, 'settings.helpTab'))
   setElementText('[data-settings-panel="sites"] .settings-lead', t(language, 'settings.sitesLead'))
@@ -399,6 +410,11 @@ function applyStaticUiLanguage(language: UserLanguage) {
   setElementText('#diagnostic-preview-title', t(language, 'diagnostic.preview'))
   setElementText('#diagnostics-capture-title', t(language, 'settings.captureDebugTitle'))
   setElementText('#diagnostics-capture-help', t(language, 'settings.captureDebugHelp'))
+  setElementText('#health-check-lead', t(language, 'settings.healthCheckLead'))
+  setElementText('#btn-health-check-run', t(language, 'settings.healthCheckRun'))
+  setElementText('#btn-health-check-fix-all', t(language, 'settings.healthCheckFixAll'))
+  setElementText('#health-check-empty', t(language, 'settings.healthCheckEmpty'))
+  renderHealthCheckResults(lastHealthCheckResults)
   setElementText('.settings-field span', t(language, 'settings.language'))
   setElementText('#btn-refresh', t(language, 'settings.refreshStatus'))
   setElementTitle('#btn-refresh', t(language, 'settings.refreshStatusTitle'))
@@ -489,7 +505,7 @@ function syncSummaryModeOptions(language: UserLanguage = userSettings.language) 
   }
 }
 
-const HELP_KEYS = ['send', 'queue', 'attach', 'forward', 'panels', 'summary', 'records', 'officialChats', 'shortcuts', 'settings']
+const HELP_KEYS = ['send', 'queue', 'attach', 'forward', 'panels', 'summary', 'records', 'officialChats', 'shortcuts', 'settings', 'healthCheck']
 
 function renderHelpContent(language: UserLanguage) {
   setElementText('[data-settings-panel="help"] .settings-lead', t(language, 'help.lead'))
@@ -1216,6 +1232,145 @@ async function clearDiagnostics() {
 function reportDiagnosticUiFailure(error: unknown) {
   console.error('[AIChatRoom chat] diagnostic action failed', error)
   showToast(t(userSettings.language, 'diagnostic.actionFailed'), 'err')
+}
+
+// ---------- 平台体检（issue #13）----------
+let lastHealthCheckResults: PlatformHealthCheckResult[] = []
+let healthCheckRunning = false
+let healthCheckFixing = false
+
+function healthCheckDetailMessage(result: PlatformHealthCheckResult): string | null {
+  if (result.frame.status === 'fail') return t(userSettings.language, 'healthCheck.frame.fail')
+  if (result.ping.status === 'fail') return t(userSettings.language, 'healthCheck.ping.fail')
+  if (result.login.status === 'fail') return result.login.errorMessage || t(userSettings.language, 'healthCheck.login.fail')
+  if (result.login.status === 'unknown') return t(userSettings.language, 'healthCheck.login.unknown')
+  return null
+}
+
+function buildHealthCheckDot(check: 'frame' | 'ping' | 'login', status: HealthCheckStatus): HTMLElement {
+  const dot = document.createElement('span')
+  dot.className = 'health-check-dot'
+  dot.dataset.status = status
+  dot.title = `${t(userSettings.language, `healthCheck.check.${check}`)}：${t(userSettings.language, `healthCheck.status.${status}`)}`
+  return dot
+}
+
+function buildHealthCheckRow(result: PlatformHealthCheckResult): HTMLElement {
+  const meta = getPlatformMeta(result.platform)
+  const row = document.createElement('div')
+  row.className = 'health-check-row'
+  row.dataset.platform = result.platform
+
+  const head = document.createElement('div')
+  head.className = 'health-check-row-head'
+  const icon = document.createElement('span')
+  icon.className = 'site-icon'
+  icon.textContent = meta?.icon ?? ''
+  const name = document.createElement('span')
+  name.className = 'site-name'
+  name.textContent = meta?.label ?? result.platform
+  head.append(icon, name)
+  row.appendChild(head)
+
+  const checks = document.createElement('div')
+  checks.className = 'health-check-checks'
+  checks.append(
+    buildHealthCheckDot('frame', result.frame.status),
+    buildHealthCheckDot('ping', result.ping.status),
+    buildHealthCheckDot('login', result.login.status),
+  )
+  row.appendChild(checks)
+
+  const detail = healthCheckDetailMessage(result)
+  if (detail) {
+    const detailEl = document.createElement('p')
+    detailEl.className = 'health-check-detail'
+    detailEl.textContent = detail
+    row.appendChild(detailEl)
+  }
+
+  const actions = document.createElement('div')
+  actions.className = 'health-check-row-actions'
+  if (isAutoFixable(result)) {
+    const reloadBtn = document.createElement('button')
+    reloadBtn.type = 'button'
+    reloadBtn.className = 'settings-secondary'
+    reloadBtn.textContent = t(userSettings.language, 'healthCheck.action.reload')
+    reloadBtn.addEventListener('click', () => void fixPlatformFrame(result.platform))
+    actions.appendChild(reloadBtn)
+  }
+  if (result.login.status === 'fail') {
+    const loginBtn = document.createElement('button')
+    loginBtn.type = 'button'
+    loginBtn.className = 'settings-secondary'
+    loginBtn.textContent = t(userSettings.language, 'healthCheck.action.login')
+    loginBtn.addEventListener('click', () => window.open(platformUrl(result.platform), '_blank', 'noopener'))
+    actions.appendChild(loginBtn)
+  }
+  if (actions.childElementCount > 0) row.appendChild(actions)
+
+  return row
+}
+
+function renderHealthCheckResults(results: PlatformHealthCheckResult[]) {
+  healthCheckList.replaceChildren()
+  for (const result of results) healthCheckList.appendChild(buildHealthCheckRow(result))
+  healthCheckEmpty.hidden = results.length > 0 || activePlatforms().length > 0
+  btnHealthCheckFixAll.hidden = !results.some(isAutoFixable)
+}
+
+async function fixPlatformFrame(platform: AIPlatform) {
+  platformCommunication.reloadFrame(platform)
+  await platformCommunication.prepare(platform)
+  await runHealthCheck()
+}
+
+async function runHealthCheck() {
+  if (healthCheckRunning) return
+  const platforms = activePlatforms()
+  if (platforms.length === 0) {
+    lastHealthCheckResults = []
+    renderHealthCheckResults(lastHealthCheckResults)
+    return
+  }
+  healthCheckRunning = true
+  btnHealthCheckRun.disabled = true
+  btnHealthCheckRun.textContent = t(userSettings.language, 'settings.healthCheckRunning')
+  try {
+    lastHealthCheckResults = await checkAllPlatformsHealth(platforms, { communication: platformCommunication })
+    renderHealthCheckResults(lastHealthCheckResults)
+  } finally {
+    healthCheckRunning = false
+    btnHealthCheckRun.disabled = false
+    btnHealthCheckRun.textContent = t(userSettings.language, 'settings.healthCheckRun')
+  }
+}
+
+async function fixAllAutoFixable() {
+  if (healthCheckFixing) return
+  const fixable = lastHealthCheckResults.filter(isAutoFixable)
+  if (fixable.length === 0) {
+    showToast(t(userSettings.language, 'healthCheck.noneFixable'), 'info')
+    return
+  }
+  healthCheckFixing = true
+  btnHealthCheckFixAll.disabled = true
+  btnHealthCheckFixAll.textContent = t(userSettings.language, 'settings.healthCheckFixing')
+  try {
+    for (const result of fixable) platformCommunication.reloadFrame(result.platform)
+    await Promise.all(fixable.map((result) => platformCommunication.prepare(result.platform)))
+    showToast(uiText('healthCheck.fixedCount', { count: fixable.length }), 'success', 2400)
+    await runHealthCheck()
+  } finally {
+    healthCheckFixing = false
+    btnHealthCheckFixAll.disabled = false
+    btnHealthCheckFixAll.textContent = t(userSettings.language, 'settings.healthCheckFixAll')
+  }
+}
+
+function reportHealthCheckFailure(error: unknown) {
+  console.error('[AIChatRoom chat] health check action failed', error)
+  showToast(t(userSettings.language, 'healthCheck.actionFailed'), 'err')
 }
 
 function openSettings() {
@@ -3646,6 +3801,8 @@ function bindEvents() {
   btnDiagnosticCopyFailure.addEventListener('click', () => void copyLatestFailedDiagnostics().catch(reportDiagnosticUiFailure))
   btnDiagnosticDownload.addEventListener('click', () => void downloadDiagnostics().catch(reportDiagnosticUiFailure))
   btnDiagnosticClear.addEventListener('click', () => void clearDiagnostics().catch(reportDiagnosticUiFailure))
+  btnHealthCheckRun.addEventListener('click', () => void runHealthCheck().catch(reportHealthCheckFailure))
+  btnHealthCheckFixAll.addEventListener('click', () => void fixAllAutoFixable().catch(reportHealthCheckFailure))
   document.querySelectorAll<HTMLButtonElement>('.settings-nav-item[data-settings-tab]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const tab = btn.dataset.settingsTab

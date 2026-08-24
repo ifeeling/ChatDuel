@@ -1,5 +1,6 @@
 import { CLAUDE_SELECTOR_VERSION, createClaudeAdapter } from '../adapters/claude/adapter'
 import { bootContentScript } from '../adapters/shared/content-script-bootstrap'
+import { createLoginProbeExtensionHandler } from '../adapters/shared/login-probe'
 import selectorsJson from '../adapters/claude/selectors.json'
 
 // selectors.json 是「最佳猜测」，以下诊断用于在实页确认每个选择器是否命中。
@@ -403,6 +404,11 @@ async function boot(): Promise<void> {
     platform: 'claude',
     selectorVersion: CLAUDE_SELECTOR_VERSION,
     createAdapter: createClaudeAdapter,
+    createExtensionHandler: createLoginProbeExtensionHandler({
+      platformName: 'Claude',
+      loginUrlKeywords: ['/login', '/login-conflict'],
+      loginBodyPattern: /log in|sign in|welcome back/i,
+    }),
   })
 
   // 延迟 ~3s 等 Claude 页面渲染完，再诊断 selectors.json 命中情况

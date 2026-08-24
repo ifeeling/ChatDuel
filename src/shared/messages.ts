@@ -19,6 +19,7 @@ export interface PlatformCommandPayloadMap {
   'get-state': Record<string, never>
   'get-last-response': Record<string, never>
   'get-conversation-url': Record<string, never>
+  'ping': Record<string, never>
 }
 
 export type PlatformCommand = keyof PlatformCommandPayloadMap

@@ -144,6 +144,11 @@ async function executeCommand(
     if (command === 'get-conversation-url') {
       return successResult(options.platform, command, environment.location.href)
     }
+    if (command === 'ping') {
+      // 只证明命令桥（content-script + 消息通道）本身活着，不碰 adapter，
+      // 所以哪怕 adapter 的异步操作卡住，ping 仍然能立刻应答。
+      return successResult(options.platform, command, { alive: true })
+    }
     return null
   } catch (error) {
     return {
