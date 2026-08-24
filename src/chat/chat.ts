@@ -3431,7 +3431,7 @@ function onPaste(e: ClipboardEvent) {
   if (!items) return
   for (let i = 0; i < items.length; i++) {
     const item = items[i]
-    if (item.kind === 'file' && item.type.startsWith('image/')) {
+    if (item.kind === 'file') {
       const file = item.getAsFile()
       if (file) {
         e.preventDefault()
@@ -3445,14 +3445,8 @@ function onPaste(e: ClipboardEvent) {
 function onDrop(e: DragEvent) {
   const files = e.dataTransfer?.files
   if (!files || files.length === 0) return
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i]
-    if (file.type.startsWith('image/')) {
-      e.preventDefault()
-      void acceptFile(file)
-      return
-    }
-  }
+  e.preventDefault()
+  void acceptFile(files[0])
 }
 
 // ---------- 分隔条拖拽 ----------
