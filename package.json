@@ -23,6 +23,7 @@
     "@types/diff-match-patch": "^1.0.36",
     "@types/node": "^20.0.0",
     "jsdom": "^24.0.0",
+    "patchright": "^1.62.1",
     "typescript": "^5.4.0",
     "vite": "^5.2.0",
     "vitest": "^1.4.0"
