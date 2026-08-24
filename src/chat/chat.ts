@@ -1640,8 +1640,11 @@ async function bootstrap() {
   await refreshAllStatuses()
 }
 
-async function refreshAllStatuses() {
+async function refreshAllStatuses(): Promise<{ ok: number; total: number }> {
+  let ok = 0
+  let total = 0
   for (const p of activePlatforms()) {
+    total++
     if (!getPlatformCapabilities(p).supportsEmbed) {
       platformCommunication.markNotReady(p)
       setStatus(p, 'warn', t(userSettings.language, 'panel.status.pending'))
@@ -1654,30 +1657,66 @@ async function refreshAllStatuses() {
     if (iframe.src === 'about:blank' || !iframe.src) {
       iframe.src = platformUrl(p)
     }
-    let ok = false
+    let prepared = false
     try {
-      ok = await platformCommunication.prepare(p)
+      prepared = await platformCommunication.prepare(p)
     } catch (e) {
       console.error(`[AIChatRoom chat] failed to recover ${p} iframe`, e)
     }
-    if (ok) {
+    if (prepared) {
       const capabilities = getPlatformCapabilities(p)
       if (capabilities.supportsText) {
         setStatus(p, 'ok', t(userSettings.language, 'panel.status.opened'))
+        ok++
       } else {
         const state = await platformCommunication.readConversationState(p, 1000)
-        if (state.status === 'error') setStatus(p, 'warn', state.errorMessage ?? t(userSettings.language, 'panel.status.needCheck'))
-        else setStatus(p, 'ok', t(userSettings.language, 'panel.status.opened'))
+        if (state.status === 'error') {
+          setStatus(p, 'warn', state.errorMessage ?? t(userSettings.language, 'panel.status.needCheck'))
+        } else {
+          setStatus(p, 'ok', t(userSettings.language, 'panel.status.opened'))
+          ok++
+        }
       }
     } else {
       if (platformCommunication.routeFor(p) === 'official-tab') {
         const state = await platformCommunication.readConversationState(p, 1200)
-        if (state.status === 'error') setStatus(p, 'warn', state.errorMessage ?? t(userSettings.language, 'panel.status.needCheck'))
-        else setStatus(p, 'ok', t(userSettings.language, 'panel.status.opened'))
+        if (state.status === 'error') {
+          setStatus(p, 'warn', state.errorMessage ?? t(userSettings.language, 'panel.status.needCheck'))
+        } else {
+          setStatus(p, 'ok', t(userSettings.language, 'panel.status.opened'))
+          ok++
+        }
       } else {
         setStatus(p, 'err', t(userSettings.language, 'panel.status.timeout'))
       }
     }
+  }
+  return { ok, total }
+}
+
+let reconnectingAllStatuses = false
+
+/**
+ * "重新连接"按钮的入口：refreshAllStatuses 本身只更新面板头部的状态点，
+ * 但那块区域这时被设置弹窗挡住看不见——点了按钮却像没反应。
+ * 这里补一层禁用态 + toast，给用户一个看得见的结果。
+ */
+async function runReconnectAllStatuses() {
+  if (reconnectingAllStatuses) return
+  reconnectingAllStatuses = true
+  btnRefresh.disabled = true
+  try {
+    const { ok, total } = await refreshAllStatuses()
+    if (total === 0) {
+      showToast(t(userSettings.language, 'settings.reconnectNone'), 'info')
+    } else if (ok === total) {
+      showToast(uiText('settings.reconnectDone', { total }), 'success', 2400)
+    } else {
+      showToast(uiText('settings.reconnectPartial', { ok, total }), 'warn', 3200)
+    }
+  } finally {
+    reconnectingAllStatuses = false
+    btnRefresh.disabled = false
   }
 }
 
@@ -3840,7 +3879,7 @@ function bindEvents() {
   btnImageRemove.addEventListener('click', clearAttachment)
   fileInput.addEventListener('change', onFileInputChange)
 
-  btnRefresh.addEventListener('click', () => void refreshAllStatuses())
+  btnRefresh.addEventListener('click', () => void runReconnectAllStatuses())
 }
 
 // ---------- 启动 ----------
