@@ -82,6 +82,7 @@ import {
 import { buildSessionHtmlExport, buildSessionMarkdownExport, formatBytes, formatCapturedMarkdownText, formatSessionMarkdown } from '../lib/history-format'
 import { buildSummaryPrompt } from '../lib/summary-builder'
 import { buildTransferContent, buildTransferSourceOptions, type TransferSourceOption } from '../lib/transfer-source'
+import { isSourceBusy, isTargetBusy, truncateTransferContent } from '../lib/transfer-plan'
 import { bindComposerFocusRestorer } from '../lib/focus-restore'
 import { filterSessionsByTitle } from '../lib/history-search'
 import { deleteConversation, loadConversations, renameConversation, upsertConversation } from '../lib/conversation-store'
@@ -2301,7 +2302,7 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform, sel
       if (!srcWin) throw new Error(t(userSettings.language, 'transfer.sourceFrameUnavailable'))
       const srcState = await platformCommunication.readConversationState(sourceKey, 2000)
 
-      if (srcState.requestTimedOut || !['idle', 'finished', 'error'].includes(srcState.status)) {
+      if (isSourceBusy(srcState)) {
         showToast(uiText('transfer.sourceBusy', {
           status: srcState.requestTimedOut ? 'unknown' : srcState.status,
         }), 'warn', 4000)
@@ -2322,7 +2323,7 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform, sel
     if (tgtWin) {
       try {
         const tgtState = await platformCommunication.readConversationState(targetKey, 50)
-        if (tgtState && !['idle', 'finished', 'error'].includes(tgtState.status)) {
+        if (isTargetBusy(tgtState)) {
           showToast(uiText('transfer.targetBusy', { status: tgtState.status }), 'warn', 4000)
           return
         }
@@ -2330,10 +2331,10 @@ async function executeTransfer(sourceKey: AIPlatform, targetKey: AIPlatform, sel
     }
 
     // 4. 长文本保护
-    let finalContent = content
-    if (content.length > MAX_TRANSFER_LENGTH) {
-      finalContent = content.slice(0, MAX_TRANSFER_LENGTH) +
-        `\n\n${uiText('transfer.truncatedSuffix', { length: content.length })}`
+    const truncateResult = truncateTransferContent(content, MAX_TRANSFER_LENGTH)
+    let finalContent = truncateResult.content
+    if (truncateResult.truncated) {
+      finalContent = `${truncateResult.content}\n\n${uiText('transfer.truncatedSuffix', { length: truncateResult.originalLength })}`
       showToast(uiText('transfer.truncated', { max: MAX_TRANSFER_LENGTH }), 'warn', 4000)
     }
 
