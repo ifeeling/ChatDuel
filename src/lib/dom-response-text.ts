@@ -93,19 +93,28 @@ function inlineText(node: Node): string {
   return inlineChildren(node)
 }
 
-// 参与"这个容器要不要按块级递归"判定的标签集合：除了 BLOCK_TAGS 里那些纯容器型
-// 标签，代码块/表格/分隔线也算块级——它们各自有专门的 markdown 重建规则，
-// 不能被父容器当成内联内容直接拍平。
-function isStructuralBlock(el: HTMLElement): boolean {
-  if (BLOCK_TAGS.has(el.tagName) || el.tagName === 'PRE' || el.tagName === 'TABLE' || el.tagName === 'HR') {
-    return true
-  }
-  const role = el.getAttribute('role')
-  return role === 'table' || role === 'grid'
-}
+// 参与"这个容器要不要按块级递归"判定的标签/选择器集合：除了 BLOCK_TAGS 里那些纯
+// 容器型标签，代码块/表格/分隔线也算块级——它们各自有专门的 markdown 重建规则，
+// 不能被父容器当成内联内容直接拍平。配合 querySelector 做深度查找（见 hasBlockChildren）。
+const STRUCTURAL_BLOCK_SELECTOR = [...BLOCK_TAGS, 'PRE', 'TABLE', 'HR']
+  .map((tag) => tag.toLowerCase())
+  .concat(['[role="table"]', '[role="grid"]'])
+  .join(', ')
 
+// 只查直接子节点曾经漏判过真机场景：Gemini 真机验证到的实际结构（2026-08-25，
+// CAP-19/issue #37）里，代码块和表格都被包在自定义标签套自定义标签的壳里——
+// `<response-element><code-block><div class="code-block">...<pre>...`、
+// `<response-element><table-block>...<table>...`——`response-element`/`code-block`/
+// `table-block` 都不是语义化标签，不在 BLOCK_TAGS 里，只查直接子节点会判定"没有块级
+// 子节点"，导致整棵子树被 inlineText 拍平：多行代码被压成单行反引号内联代码，表格单元格
+// 之间完全没有分隔符地粘在一起。改成 querySelector 做深度查找，只要子树里任何深度存在
+// 一个真正的结构化块（标题/列表/代码块/表格/引用/分隔线），就不能把这个容器当内联内容
+// 拍平——不管中间隔了多少层不认识的包装标签。
+// 刻意的取舍：这是一次全子树扫描，递归到子节点时会对更小的子树重复扫描，
+// 比原来只看直接子节点更慢。AI 回答的 DOM 树规模有限（几百到几千节点封顶），
+// 这里选择"宁可稍慢也不能漏读"，跟本文件一贯的"内容不能丢"优先级一致。
 function hasBlockChildren(el: HTMLElement): boolean {
-  return [...el.children].some((child) => child instanceof HTMLElement && isStructuralBlock(child))
+  return el.querySelector(STRUCTURAL_BLOCK_SELECTOR) !== null
 }
 
 function headingMarkdown(el: HTMLElement): string {
@@ -242,7 +251,11 @@ function blocksFromElement(el: HTMLElement): string[] {
     return text ? [text] : []
   }
 
-  if (el.tagName === 'P' || el.tagName === 'LI' || !hasBlockChildren(el)) {
+  // 以前这里对 P/LI 直接拍平、不看 hasBlockChildren——多数情况下 <p>/<li> 确实只有
+  // 内联子节点，结果一样，但真机验证到的 Gemini 结构说明"标签名"本身不能作为判定
+  // 依据：改成统一交给 hasBlockChildren（深度查找）判断，能正确处理罕见的"标签名
+  // 是 P/LI 但深层确实包着块级内容"的情况，常见的纯内联 P/LI 行为不变。
+  if (!hasBlockChildren(el)) {
     const text = normalizeText(inlineText(el))
     return text ? [text] : []
   }
