@@ -19,16 +19,21 @@ const BLOCK_TAGS = new Set([
   'UL',
 ])
 
-// 代码块头部工具栏（语言标签 + 复制/下载/运行按钮）：DeepSeek/豆包都把它做成普通
+// 各类"内容前面的小工具栏/标签"噪音：代码块头部工具栏（语言标签 + 复制/下载/运行按钮）、
+// 表格头部工具栏（"表格"标签 + 导出按钮）等。DeepSeek/豆包都把这类工具栏做成普通
 // div/span（不是语义化的 <button>），绕过上面的 IGNORED_TAGS，工具栏文案会泄漏进抓取
 // 结果——CAP-09（issue #21）真机确认。跟 THINKING_NODE_SELECTOR 一样用通配选择器而不是
 // 具体 class 名，因为那类 class 会随官网改版变化：
-//   - DeepSeek 真机验证：class 里带 "code-block-banner" 这个语义片段（`md-code-block-banner-wrap`）。
-//   - 豆包真机验证：包装节点自带 `data-copy-ignore="true"`，是豆包自己标记的"复制时忽略"。
-const CODE_BLOCK_BANNER_SELECTOR = '[class*="code-block-banner" i], [data-copy-ignore]'
+//   - DeepSeek 代码块工具栏真机验证：class 里带 "code-block-banner" 这个语义片段（`md-code-block-banner-wrap`）。
+//   - 豆包代码块工具栏真机验证：包装节点自带 `data-copy-ignore="true"`，是豆包自己标记的"复制时忽略"。
+//   - 豆包表格工具栏真机验证（2026-08-25，CAP-14/issue #26）：真实对话里表格前会插入
+//     `<div class="table-header-qH9Ajf"><div class="title-JhOBP1">表格</div>...导出按钮...</div>`，
+//     容器 class 带 "table-header" 语义片段，没有 data-copy-ignore，"表格"两个字会当成
+//     独立一行泄漏到真正的表格内容前面。
+const BANNER_NODE_SELECTOR = '[class*="code-block-banner" i], [data-copy-ignore], [class*="table-header" i]'
 
-function isCodeBlockBannerNode(el: HTMLElement): boolean {
-  return el.matches(CODE_BLOCK_BANNER_SELECTOR)
+function isBannerNode(el: HTMLElement): boolean {
+  return el.matches(BANNER_NODE_SELECTOR)
 }
 
 function normalizeText(text: string): string {
@@ -68,7 +73,7 @@ function inlineText(node: Node): string {
   const copyText = node.getAttribute('copy-text')
   if (copyText) return normalizeMathCopyText(copyText)
   if (IGNORED_TAGS.has(node.tagName) || node.hidden || node.getAttribute('aria-hidden') === 'true') return ''
-  if (isCodeBlockBannerNode(node)) return ''
+  if (isBannerNode(node)) return ''
   if (node.tagName === 'BR') return '\n'
 
   if (node.tagName === 'STRONG' || node.tagName === 'B') return wrapInline(node, '**')
@@ -202,7 +207,7 @@ function blockquoteMarkdown(el: HTMLElement): string {
 
 function blocksFromElement(el: HTMLElement): string[] {
   if (IGNORED_TAGS.has(el.tagName) || el.hidden || el.getAttribute('aria-hidden') === 'true') return []
-  if (isCodeBlockBannerNode(el)) return []
+  if (isBannerNode(el)) return []
 
   if (/^H[1-6]$/.test(el.tagName)) {
     const text = headingMarkdown(el)
