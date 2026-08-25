@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.21 (2026-08-25)
+
+- Added a pre-send risk scan: checks your message locally for common structured sensitive data (API keys, ID numbers, bank card numbers, phone numbers) before sending and shows a warning. The scan is local-only, never blocks sending, and nothing is sent over the network.
+- Added a platform readiness check in Settings: one-click health check across all 5 AI platforms (page reachable, communication alive, logged in), with per-platform quick fixes.
+- Non-image files (PDF, Word, Excel, Markdown, HTML, and more) can now be attached and auto-uploaded on all 5 platforms, not just images, with automatic fallback between direct upload and paste.
+- Added a self-contained HTML share card export alongside the existing Markdown export, rendering real markdown (headings, tables, code blocks) instead of raw syntax.
+- Redesigned the history detail view: per-platform responses now lay out side by side instead of stacked, with a narrower list panel and clearer action buttons.
+- Fixed response-capture bugs across platforms: thinking/reasoning content no longer leaks into saved answers (Claude, DeepSeek, Doubao, Gemini, ChatGPT); DeepSeek and Doubao completion detection is faster and more reliable; Claude and ChatGPT answers now preserve markdown formatting (tables, code blocks, links) instead of flattening to plain text; fixed several Doubao/Gemini rendering glitches (math formulas, code-block language labels, table headers).
+- Fixed history status handling: sessions stopped by the user or that time out repeatedly are now correctly saved as failed instead of staying stuck at "pending"; genuinely uncertain captures get their own status instead of showing as a failure.
+- Internal refactors to the background service worker's message handling and the chat-forwarding logic, now covered by tests; no behavior change.
+
 ## v0.4.20 (2026-08-20)
 
 - Reworked the composer input UI: split the toolbar into left/right icon groups, added a raised overlay layer for expanded input so panels no longer get squeezed, capped composer width at 60vw, and switched button hints from native `title` tooltips to `aria-label`-driven quick-tip pills.
