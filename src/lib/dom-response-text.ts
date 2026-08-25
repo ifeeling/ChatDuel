@@ -20,7 +20,7 @@ const BLOCK_TAGS = new Set([
 ])
 
 // 各类"内容前面的小工具栏/标签"噪音：代码块头部工具栏（语言标签 + 复制/下载/运行按钮）、
-// 表格头部工具栏（"表格"标签 + 导出按钮）等。DeepSeek/豆包都把这类工具栏做成普通
+// 表格头部工具栏（"表格"标签 + 导出按钮）等。DeepSeek/豆包/Gemini 都把这类工具栏做成普通
 // div/span（不是语义化的 <button>），绕过上面的 IGNORED_TAGS，工具栏文案会泄漏进抓取
 // 结果——CAP-09（issue #21）真机确认。跟 THINKING_NODE_SELECTOR 一样用通配选择器而不是
 // 具体 class 名，因为那类 class 会随官网改版变化：
@@ -30,7 +30,15 @@ const BLOCK_TAGS = new Set([
 //     `<div class="table-header-qH9Ajf"><div class="title-JhOBP1">表格</div>...导出按钮...</div>`，
 //     容器 class 带 "table-header" 语义片段，没有 data-copy-ignore，"表格"两个字会当成
 //     独立一行泄漏到真正的表格内容前面。
-const BANNER_NODE_SELECTOR = '[class*="code-block-banner" i], [data-copy-ignore], [class*="table-header" i]'
+//   - Gemini 代码块工具栏真机验证（2026-08-25，CAP-20/issue #38）：语言标签 + 下载/复制
+//     按钮包在 `<div class="code-block-decoration header-formatted ...">` 里，跟 <pre>
+//     是同一父节点下的兄弟节点（不是 <pre> 的子孙），class 带 "code-block-decoration"
+//     语义片段。这里过滤后，语言名文本改由 codeBlockMarkdown() 专门去这个兄弟节点里读，
+//     不能让它跟 DeepSeek/豆包那两种banner一样被直接丢弃——语言名要保留进围栏代码块的
+//     ```<lang> 标记，不是纯噪音。选择器字符串抽成常量给 codeBlockMarkdown() 复用，
+//     避免两处各写一份、以后改一处漏改另一处。
+const CODE_BLOCK_DECORATION_SELECTOR = '[class*="code-block-decoration" i]'
+const BANNER_NODE_SELECTOR = `[class*="code-block-banner" i], [data-copy-ignore], [class*="table-header" i], ${CODE_BLOCK_DECORATION_SELECTOR}`
 
 function isBannerNode(el: HTMLElement): boolean {
   return el.matches(BANNER_NODE_SELECTOR)
@@ -52,11 +60,18 @@ function wrapInline(node: HTMLElement, marker: string): string {
   return inner ? `${marker}${inner}${marker}` : ''
 }
 
-// 豆包会把分步计算里的算式用 KaTeX 渲染：真正的数字全在
+// 豆包/Gemini 都会把行内算式用 KaTeX 渲染：真正的数字/公式全在
 // <span class="katex"><span aria-hidden="true" class="katex-html">...</span></span> 里，
-// 下面 aria-hidden 判定会把这整棵子树当"不该读"跳过，数字随之消失（issue #17/CAP-06 真机
-// 确认的根因）。KaTeX 外层包装节点上的 `copy-text` 属性携带豆包"复制"功能自用的纯 LaTeX
-// 文本（如 `\(20 + 12 + 4 = 36\)`），是唯一可靠的纯文本来源，优先读取、不再往下递归。
+// 下面 aria-hidden 判定会把这整棵子树当"不该读"跳过，公式内容随之消失（豆包见 issue
+// #17/CAP-06；Gemini 同一根因，真机确认于 2026-08-25，issue #38/CAP-20，样本
+// "O(1) 时间复杂度"丢成"时间复杂度"）。两家官网都在 KaTeX 外层包装节点上放了一份
+// 供各自"复制"功能自用的纯 LaTeX 文本，只是属性名不同——豆包用 `copy-text`（带
+// `\(...\)` 包裹，如 `\(20 + 12 + 4 = 36\)`），Gemini 用 `data-math`（不带包裹，
+// 如 `O(\log n)`）——是唯一可靠的纯文本来源，优先读取、不再往下递归。
+// 只翻译真机样本里实测出现过的 LaTeX 命令（\times/\div 是豆包样本，\log 是这次 Gemini
+// 样本新增的），不写通用的"剥掉任意反斜杠命令"兜底——本文件一贯的做法是没有真机证据
+// 就不处理（见 issue #17/CAP-06 那次对 \frac 的取舍），未验证过的命令（如 \sqrt、\alpha）
+// 贸然转换成裸词反而可能比保留原始 LaTeX 更难辨认，等真的在真机上遇到再加。
 function normalizeMathCopyText(raw: string): string {
   return raw
     .trim()
@@ -64,13 +79,14 @@ function normalizeMathCopyText(raw: string): string {
     .replace(/\\[)\]]$/, '')
     .replace(/\\times/g, '×')
     .replace(/\\div/g, '÷')
+    .replace(/\\log/g, 'log')
     .trim()
 }
 
 function inlineText(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? ''
   if (!(node instanceof HTMLElement)) return ''
-  const copyText = node.getAttribute('copy-text')
+  const copyText = node.getAttribute('copy-text') ?? node.getAttribute('data-math')
   if (copyText) return normalizeMathCopyText(copyText)
   if (IGNORED_TAGS.has(node.tagName) || node.hidden || node.getAttribute('aria-hidden') === 'true') return ''
   if (isBannerNode(node)) return ''
@@ -146,8 +162,25 @@ function listMarkdown(el: HTMLElement): string {
     .join('\n')
 }
 
+// Gemini 不把语言名放进 class（真机验证于 2026-08-25，CAP-20/issue #38），而是渲染成
+// <pre> 兄弟节点里工具栏上的一段纯文本（如 "Python"），跟下载/复制按钮挤在同一个
+// `.code-block-decoration` 容器里。这里不走 inlineText()（那条路径专门处理"整棵响应树
+// 拍平成 markdown"，不适合用来单独抠一个工具栏节点的文本），所以不能只指望 IGNORED_TAGS
+// 生效——克隆后同时按标签名（真正的 <button>/<svg> 等）和 class 语义片段（豆包/Gemini
+// 常把按钮包装成不带原生 <button> 标签的自定义元素，如 gem-icon-button）两种方式删除
+// 按钮子树，只留语言名本身；统一转小写跟 class 来源的 `language-ts`/`language-python` 保持一致。
+function decorationLanguageLabel(decoration: HTMLElement): string {
+  const clone = decoration.cloneNode(true) as HTMLElement
+  clone.querySelectorAll('button, svg, img, style, script, [class*="button" i]').forEach((n) => n.remove())
+  return normalizeText(clone.textContent ?? '').toLowerCase()
+}
+
 // `<pre><code class="language-xxx">...</code></pre>` → ```xxx\n...\n``` 围栏。
-// 语言从 <code> 或 <pre> 的 class 里找 `language-`/`lang-` 前缀，两处都没有就留空围栏。
+// 语言优先从 <code>/<pre> 的 class 里找 `language-`/`lang-` 前缀；两处都没有时，
+// 退而查找 <pre> 的直接兄弟节点里是否有 `.code-block-decoration`（Gemini 的语言标签
+// 就放在那里，见上面 decorationLanguageLabel 的说明）——只看直接兄弟节点，不用
+// querySelector 做深度查找，避免共享同一个更外层容器的多个代码块（例如列表里连续
+// 几个代码片段）互相抢错兄弟节点的语言标签；都找不到就留空围栏。
 // 用 textContent 而不是 normalizeText，代码块的换行/缩进是内容的一部分，不能被拍平。
 function codeBlockMarkdown(pre: HTMLElement): string {
   const codeEl = pre.querySelector('code') ?? pre
@@ -156,7 +189,13 @@ function codeBlockMarkdown(pre: HTMLElement): string {
   const text = raw.replace(/\n+$/, '')
   const classSource = `${codeEl.className ?? ''} ${pre.className ?? ''}`
   const match = classSource.match(/(?:language|lang)-([\w+#-]+)/i)
-  const lang = match ? match[1] : ''
+  let lang = match ? match[1] : ''
+  if (!lang) {
+    const decoration = [...(pre.parentElement?.children ?? [])].find(
+      (sibling): sibling is HTMLElement => sibling instanceof HTMLElement && sibling.matches(CODE_BLOCK_DECORATION_SELECTOR),
+    )
+    if (decoration) lang = decorationLanguageLabel(decoration)
+  }
   return `\`\`\`${lang}\n${text}\n\`\`\``
 }
 
