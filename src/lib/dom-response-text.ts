@@ -328,6 +328,57 @@ function joinBlocks(el: HTMLElement): string {
 // 噪音文本触发误判。
 const STRUCTURED_MIN_RATIO = 0.7
 
+// 豆包多代码块回答里，围栏代码块标记有时会跟前后文字粘连、没有独立成行
+// （CAP-14，issue #26）。真机确认过两次（issue 正文样本 + 2026-08-25 评论区样本），
+// 症状是豆包自己的 markdown 渲染器没能把这段文本解析成真正的 <pre> 代码块，而是把
+// 整段（含裸露的 \`\`\` 标记）当成一整块普通文字渲染成了单个 <p>——这不是本文件其它
+// 分支能处理的"块级结构没识别出来"（那种情况走 hasBlockChildren 深度查找就够了），
+// 是源头页面自己都没能正确解析成块级元素，DOM 里压根没有 <pre>/<h2> 可供识别，
+// 我们能拿到的就是这坨裸文字本身。本次会话尝试用 patchright 对着真实 doubao.com
+// 复现这个"未解析中间态"三次（含在生成过程中每 0.6 秒高频轮询），均未能重新抓到
+// 发生瞬间的原始 DOM——细节见排查记录，跟 issue 里此前两次会话的复现历史一致，
+// 触发条件目前看不受前端可控输入直接支配。这里改成对最终文本做后处理：不去猜测
+// 也不依赖 DOM 结构，只保证每个 \`\`\` 标记（不管它是不是配对良好）都独立成行，
+// 跟豆包分享卡导出渲染器"\`\`\` 必须在行首"这条硬性要求对齐。
+//
+// 只处理"粘连"的 \`\`\` （前面或后面紧跟非换行字符），已经独立成行的 \`\`\` 原样跳过——
+// 保证格式良好的正常输出（例如本文件其它测试用例覆盖的场景）不受影响。"是否已在行首"
+// 允许前面只有空格/制表符（不要求紧邻 \n）——嵌套在列表项里的代码块会用空格续行缩进
+// ```（见 listItemMarkdown），这种缩进后的 \`\`\` 本来就是合法的行首，不能误判成粘连、
+// 插入多余空行破坏列表续行格式（跑现有回归测试时发现这个坑，已修正）。语言标签
+// 识别只认纯 ASCII 字母数字（跟 codeBlockMarkdown 从 class 提取语言名不同，那边允许
+// +/#/- 是因为来源是可控的 CSS class 名；这里直接扫读紧跟在 \`\`\` 后面的裸文字，
+// 必须收紧字符集——含 # 的话会把"\`\`\`## 标题"这种真实样本里的 Markdown 标题符号
+// 误吞成"语言标签"，把标题跟围栏粘得更死，测试用真实样本验证过这个坑）。
+const STICKY_FENCE = '```'
+// "已在行首"允许 \`\`\` 前面只有空格/制表符（兼容 listItemMarkdown 的列表续行缩进），
+// 不要求紧邻 \n 本身。
+const FENCE_NOT_AT_LINE_START_RE = /(?<!\n[ \t]*)```/g
+const FENCE_WITH_LANGUAGE_TAG_RE = /```([A-Za-z0-9]*)/g
+
+// 把粘在前面文字后面的 \`\`\` 拆到独立一行（"1（基础版 v1）\`\`\`python" → 换行后独立成行）；
+// 已经在行首（含缩进）的 \`\`\` 原样跳过。
+function isolateFenceFromPrecedingText(text: string): string {
+  // 前面垫一个 \n，让"字符串开头就是 \`\`\`"也能命中"已在行首"，不用再给正则叠一条
+  // (?<!^[ \t]*) 分支；末尾 trim() 前统一收口，见调用方。
+  return `\n${text}`.replace(FENCE_NOT_AT_LINE_START_RE, `\n\n${STICKY_FENCE}`)
+}
+
+// 把粘在 \`\`\` 后面的文字拆到独立一行（"\`\`\`## 版本" → \`\`\` 单独一行，"## 版本"另起一行）；
+// 跳过可能存在的语言标签（"\`\`\`python"）——语言标签紧跟围栏是标准写法，不能拆开。
+function isolateFenceFromFollowingText(text: string): string {
+  return text.replace(FENCE_WITH_LANGUAGE_TAG_RE, (match, _lang: string, offset: number, full: string) => {
+    const charAfterLanguageTag = full[offset + match.length]
+    if (charAfterLanguageTag === undefined || charAfterLanguageTag === '\n') return match
+    return `${match}\n\n`
+  })
+}
+
+function normalizeStickyFenceMarkers(text: string): string {
+  if (!text.includes(STICKY_FENCE)) return text
+  return isolateFenceFromFollowingText(isolateFenceFromPrecedingText(text)).trim()
+}
+
 // 注意：elementToMarkdownText 的输出会被 deepseek adapter 的 rawResponseText
 // 直接复用做候选打分（responseCandidateScore 里 score += text.length/100，
 // 见 docs/RESPONSE_CAPTURE_MAINTENANCE.md）。这次改动普遍拉长了输出（多了
@@ -336,8 +387,8 @@ const STRUCTURED_MIN_RATIO = 0.7
 export function elementToMarkdownText(el: HTMLElement): string {
   const structured = joinBlocks(el)
   const plain = normalizeText(inlineText(el))
-  if (plain && structured.length < plain.length * STRUCTURED_MIN_RATIO) return plain
-  return structured
+  const result = plain && structured.length < plain.length * STRUCTURED_MIN_RATIO ? plain : structured
+  return normalizeStickyFenceMarkers(result)
 }
 
 // 各家官网把"思考过程"渲染成可折叠区块，用的 class/aria 标记不同但风格类似
