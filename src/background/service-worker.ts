@@ -14,6 +14,7 @@ import { enableEmbedRules, disableEmbedRules, getEmbedRuleCleanupIds } from './d
 import { removeTrackedChatTab } from './embed-rule-lifecycle'
 import { createDiagnosticWriter, handleDiagnosticWriterMessage } from './diagnostic-writer'
 import { routeOfficialTabCommand } from './official-tab-router'
+import { handleRuntimeMessage } from './runtime-message-router'
 import { SUPPORTED_PLATFORMS } from '../lib/ai-platforms'
 import { recordExtensionUpdate } from '../lib/extension-update-notice'
 import {
@@ -190,35 +191,6 @@ chrome.runtime.onMessage.addListener((msg: { type: string; [k: string]: unknown 
       .catch(() => sendResponse({ ok: false }))
     return true
   }
-  if (msg.type === 'enable-embed-rules') {
-    const tabId = sender.tab?.id
-    Promise.resolve()
-      .then(async () => {
-        if (tabId !== undefined) await addChatTabId(tabId)
-        await enableEmbedRules()
-      })
-      .then(() => sendResponse({ ok: true }))
-      .catch((e) => sendResponse({ ok: false, error: String(e) }))
-    return true
-  }
-  if (msg.type === 'disable-embed-rules') {
-    const tabId = sender.tab?.id
-    Promise.resolve()
-      .then(async () => {
-        if (tabId === undefined) return
-        const result = await removeChatTabId(tabId)
-        if (result.shouldDisableRules) await disableEmbedRules()
-      })
-      .then(() => sendResponse({ ok: true }))
-      .catch((e) => sendResponse({ ok: false, error: String(e) }))
-    return true
-  }
-  if (msg.type === 'check-tab-exists') {
-    findOfficialTab(msg.platform as AIPlatform)
-      .then((tab) => sendResponse({ ok: true, exists: !!tab }))
-      .catch((e) => sendResponse({ ok: false, error: String(e) }))
-    return true
-  }
   if (msg.type === 'official-tab-command') {
     routeOfficialTabCommand(msg, {
       findOfficialTab,
@@ -228,22 +200,20 @@ chrome.runtime.onMessage.addListener((msg: { type: string; [k: string]: unknown 
       .catch((e) => sendResponse({ ok: false, error: String(e) }))
     return true
   }
-  if (msg.type === 'selector-config:get') {
-    getStoredSelectorConfig(msg.platform as AIPlatform)
-      .then((config) => sendResponse({ ok: true, ...config }))
+  const runtimeResponse = handleRuntimeMessage(msg, sender, {
+    addChatTabId,
+    removeChatTabId,
+    enableEmbedRules,
+    disableEmbedRules,
+    findOfficialTab,
+    getStoredSelectorConfig,
+    refreshRemoteSelectorConfig,
+  })
+  if (runtimeResponse) {
+    runtimeResponse
+      .then((response) => sendResponse(response))
       .catch((e) => sendResponse({ ok: false, error: String(e) }))
     return true
-  }
-  if (msg.type === 'selector-config:refresh') {
-    refreshRemoteSelectorConfig()
-      .then((ok) => sendResponse({ ok }))
-      .catch((e) => sendResponse({ ok: false, error: String(e) }))
-    return true
-  }
-  if (msg.type === 'get-history') {
-    // v1 暂未实现,先返回空数组
-    sendResponse({ ok: true, sessions: [] })
-    return false
   }
   return false
 })
