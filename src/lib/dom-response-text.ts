@@ -190,6 +190,16 @@ function decorationLanguageLabel(decoration: HTMLElement): string {
   return normalizeText(clone.textContent ?? '').toLowerCase()
 }
 
+// <code>/<pre> 的 class 里找 `language-`/`lang-` 前缀（`language-python`/`lang-ts`
+// 这类）。codeBlockMarkdown 用它标注围栏语言，stripRedundantCodeBlockLanguageLabels
+// 用它跟 Claude 泄漏的语言 label 文字做比对——两处共用同一份提取逻辑，避免各写一份
+// 以后改一处漏改另一处。
+function languageFromClass(codeEl: Element, pre: HTMLElement): string {
+  const classSource = `${codeEl.className ?? ''} ${pre.className ?? ''}`
+  const match = classSource.match(/(?:language|lang)-([\w+#-]+)/i)
+  return match ? match[1] : ''
+}
+
 // `<pre><code class="language-xxx">...</code></pre>` → ```xxx\n...\n``` 围栏。
 // 语言优先从 <code>/<pre> 的 class 里找 `language-`/`lang-` 前缀；两处都没有时，
 // 退而查找 <pre> 的直接兄弟节点里是否有 `.code-block-decoration`（Gemini 的语言标签
@@ -202,9 +212,7 @@ function codeBlockMarkdown(pre: HTMLElement): string {
   const raw = codeEl.textContent ?? ''
   if (!raw.trim()) return ''
   const text = raw.replace(/\n+$/, '')
-  const classSource = `${codeEl.className ?? ''} ${pre.className ?? ''}`
-  const match = classSource.match(/(?:language|lang)-([\w+#-]+)/i)
-  let lang = match ? match[1] : ''
+  let lang = languageFromClass(codeEl, pre)
   if (!lang) {
     const decoration = [...(pre.parentElement?.children ?? [])].find(
       (sibling): sibling is HTMLElement => sibling instanceof HTMLElement && sibling.matches(CODE_BLOCK_DECORATION_SELECTOR),
@@ -212,6 +220,36 @@ function codeBlockMarkdown(pre: HTMLElement): string {
     if (decoration) lang = decorationLanguageLabel(decoration)
   }
   return `\`\`\`${lang}\n${text}\n\`\`\``
+}
+
+// Claude 真机验证（2026-08-25，CAP-21/issue #39）：语言名会同时出现在两个地方——
+// 一次在 <code class="language-xxx"> 的 class 里（languageFromClass 已经正确读取，
+// 围栏标签本身是对的），一次单独渲染成 <pre> 外层、紧挨着代码块前面的一段纯文字
+// label（真机结构：<pre> 父节点的前一个兄弟节点，中间隔着一层 overflow-x-auto 包装，
+// 例如 `<div class="text-text-500 font-small p-3.5 pb-0">python</div>`）。通用的
+// 逐块拼文字逻辑会把这个 label 当成独立的一段文字读出来，围栏代码块前面因此多出
+// 一行冗余的语言名——不是内容丢失，是格式上的重复噪音。
+//
+// 不能靠 class 选择器识别它——它用的是页面通用的 Tailwind 工具类，跟其它无关的
+// 小字文案共享，贸然按 class 过滤有误伤真实内容的风险（这条选择器思路已经在
+// RESPONSE_CAPTURE_MAINTENANCE.md 第 20 节权衡过一次，判断风险太高不做）。改成
+// "位置 + 内容双重匹配"：只有当 <pre> 父节点的前一个兄弟节点，其纯文字内容（大小写
+// 不敏感）跟这个代码块已经从 class 解析出来的语言名完全一致时才删除——两个条件
+// 叠加，误删概率极低：要误伤，网页上得刚好有一段独立文字，内容恰好等于紧挨着的
+// 代码块语言名本身。没有 class 语言名时（比如 ChatGPT 那种语言名只在 <pre> 内部
+// 工具栏文本里、不在 class 上的结构）没有比对基准，跳过不处理。
+//
+// 就地修改传入的元素，调用方需自行 cloneNode，不要传活的页面 DOM（跟 stripThinkingNodes
+// 同一个约定）——elementToMarkdownText 的入口调用它时传的都已经是克隆体。
+function stripRedundantCodeBlockLanguageLabels(root: HTMLElement): void {
+  root.querySelectorAll<HTMLElement>('pre').forEach((pre) => {
+    const codeEl = pre.querySelector('code') ?? pre
+    const lang = languageFromClass(codeEl, pre)
+    if (!lang) return
+    const label = pre.parentElement?.previousElementSibling
+    if (!(label instanceof HTMLElement)) return
+    if (normalizeText(label.textContent ?? '').toLowerCase() === lang.toLowerCase()) label.remove()
+  })
 }
 
 function tableCellsFromRows(rows: HTMLElement[], cellSelector: string): string[][] {
@@ -399,7 +437,11 @@ function normalizeStickyFenceMarkers(text: string): string {
 // 见 docs/RESPONSE_CAPTURE_MAINTENANCE.md）。这次改动普遍拉长了输出（多了
 // **/~~/``` /表格分隔线等标记字符），已跑过 deepseek-adapter.test.ts 全部
 // 打分相关回归用例并确认仍然通过，未观察到候选排序被改变。
+//
+// 就地修改传入的元素（见 stripRedundantCodeBlockLanguageLabels 的说明）——调用方
+// 需自行 cloneNode，不要传活的页面 DOM；本文件所有现有调用点传的都已经是克隆体。
 export function elementToMarkdownText(el: HTMLElement): string {
+  stripRedundantCodeBlockLanguageLabels(el)
   const structured = joinBlocks(el)
   const plain = normalizeText(inlineText(el))
   const result = plain && structured.length < plain.length * STRUCTURED_MIN_RATIO ? plain : structured
