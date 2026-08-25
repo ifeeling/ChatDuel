@@ -6,7 +6,7 @@ import { writeEditableValue } from '../shared/dom-write'
 import { hasStopGeneratingButton, isVisibleElement } from '../shared/ds-doubao-shared'
 import type { ConversationState } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
-import { cloneWithoutThinking, stripThinkingNodes } from '../../lib/dom-response-text'
+import { cloneWithoutThinking, elementToMarkdownText, stripThinkingNodes } from '../../lib/dom-response-text'
 import selectorsJson from './selectors.json'
 
 type ClaudeSelectors = typeof selectorsJson.selectors
@@ -101,15 +101,32 @@ async function pressEnterToSend(): Promise<void> {
   box.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true, cancelable: true }))
 }
 
+// "纯图标/符号行"过滤的合法豁免：CAP-21（issue #39）接入 elementToMarkdownText 后，
+// 表格分隔行（"| --- | --- |"）、<hr> 生成的 "---"、以及不带语言标签的纯围栏收尾行
+// （"```"）全是标点/符号字符（反引号的 Unicode 分类是 Sk，落在下面 \p{S} 里），会被
+// 下面这条按行过滤误判成图标残留整行删掉——这三种都是正当的 markdown 结构，不是
+// 噪音，必须放行（带语言标签的开头围栏行如"```python"因为带字母不受影响，不需要
+// 单独豁免）。
+const MARKDOWN_STRUCTURAL_LINE_RE = /^(\|[\s:|-]*\||[-*_]{3,}|`{3,})$/
+
 // 回答区降噪：去掉工具进度文案、纯图标行以及行尾的图标字体残留。
+//
+// CAP-21（issue #39）之前，这里处理的 raw 是裸 .textContent 拼接，从来不会有空行；
+// 空行统一丢弃对当时的输入无损。接入 elementToMarkdownText 之后，raw 会带着真正的
+// markdown 块级分隔符（段落/代码围栏/表格之间用 "\n\n" 分隔），如果继续无条件丢弃
+// 空行，会把这些块级分隔全部压扁成单个 "\n"——不是内容丢失，但会破坏 markdown 的
+// 块级结构（代码围栏、表格前后本该有的空行分隔消失）。改成保留空行、只在过滤完噪音行
+// 之后把因为删除噪音行残留的连续 3+ 个换行折叠回标准的单个空行（"\n\n"），跟
+// dom-response-text.ts 里 joinBlocks／blockquoteMarkdown 的 `\n{3,}` 折叠是同一个思路。
 function cleanClaudeText(raw: string): string {
   const lines = raw.split('\n')
   const cleaned = lines
     .filter((line) => {
       const t = line.trim()
-      if (!t) return false
+      if (!t) return true
       if (/^Fetching\s+[\w\s-]*\s+data$/i.test(t)) return false
       if (/^Searched the web(, used a tool)?$/i.test(t)) return false
+      if (MARKDOWN_STRUCTURAL_LINE_RE.test(t)) return true
       // 纯图标/符号行：没有任何字母数字
       if (/^[\s\p{So}\p{P}\p{S}]+$/u.test(t)) return false
       return true
@@ -120,12 +137,14 @@ function cleanClaudeText(raw: string): string {
       // 因为正则只匹配从行尾开始连续都是特殊符号/空白的部分。
       return line.replace(/[\s\[\]\uE000-\uF8FF\u{F0000}-\u{FFFFD}\u{100000}-\u{10FFFD}]+$/gu, '')
     })
-  return cleaned.join('\n').trim()
+  return cleaned.join('\n').replace(/\n{3,}/g, '\n\n').trim()
 }
 
-// 在 DOM 层面剥离思考折叠区之后，再把元素拍平成文字。
+// 在 DOM 层面剥离思考折叠区之后，重建成 markdown 文字（保留加粗/链接/围栏代码块/
+// 表格等结构，跟 Gemini/DeepSeek/豆包用的是同一条管线——CAP-21/issue #39：Claude
+// 适配器此前一直直接读 .textContent，加粗/代码块/表格结构全部丢失）。
 function textFromElement(el: HTMLElement): string {
-  return cloneWithoutThinking(el).textContent ?? ''
+  return elementToMarkdownText(cloneWithoutThinking(el))
 }
 
 // Claude 有时把回答标成 "Claude responded:"，后面紧跟回答块。
@@ -275,13 +294,16 @@ function findLatestAiResponseArticle(): HTMLElement | null {
 }
 
 // 返回最新 Claude 回复去除 accessibility 前缀后的干净文本。
+// DOM 层清理（工具栏节点、思考折叠区）必须在 elementToMarkdownText 重建成文字之前做——
+// 之后 DOM 边界就丢失了，没法再从文本里干净地切开（同样的道理见 stripThinkingNodes
+// 的注释）；stripMessagePrefix/cleanClaudeText 这类文本层清理则在重建之后做。
 function findLatestAiResponse(): string | null {
   const article = findLatestAiResponseArticle()
   if (!article) return null
   const content = article.cloneNode(true) as HTMLElement
   content.querySelectorAll("[role='toolbar'], [data-testid^='action-bar-']").forEach((node) => node.remove())
   stripThinkingNodes(content)
-  const cleaned = cleanClaudeText(stripMessagePrefix(content.textContent ?? ''))
+  const cleaned = cleanClaudeText(stripMessagePrefix(elementToMarkdownText(content)))
   return cleaned.length > 0 ? cleaned : null
 }
 

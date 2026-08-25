@@ -51,12 +51,27 @@ function normalizeText(text: string): string {
     .trim()
 }
 
-function inlineChildren(node: Node): string {
-  return [...node.childNodes].map(inlineText).join('')
+// 记录"当前是否已经在某种行内标记内部"，用来处理模型偶发吐出的嵌套同类标记
+// （见 wrapInline 的说明）。只在 inlineText/inlineChildren/wrapInline 内部传递，
+// 不影响其它调用方——它们都用默认参数 {}，行为不变。
+type InlineMarkerContext = { bold?: boolean; italic?: boolean; strike?: boolean }
+
+function inlineChildren(node: Node, ctx: InlineMarkerContext = {}): string {
+  return [...node.childNodes].map((child) => inlineText(child, ctx)).join('')
 }
 
-function wrapInline(node: HTMLElement, marker: string): string {
-  const inner = inlineChildren(node).trim()
+// Claude/ChatGPT 真机都独立复现过同一种模型输出瑕疵（CAP-21/issue #39 两次真机
+// 验证都采到了同一个样本形状）：整句话被 <strong> 包住，句子中间的连接词部分又被
+// 一层嵌套的 <strong> 单独包了一次——DOM 上是"外层 strong 包住全部文字，内部再嵌一层
+// strong 包住中间一段"，视觉上整句从头到尾都是加粗的。如果不做处理，naive 递归会给
+// 内层再包一次 **，产出"**A**B**C**"这种交替加粗/不加粗的 markdown，跟原文"整句都
+// 加粗"的视觉效果不符（不是内容丢失，是加粗范围理解错了）。用 ctx 记录"是否已经在
+// 同类型标记内部"：已经在同类型标记内部时，嵌套的同类型标记不再重复包一层，只透传
+// 内容，这样整句最终只在最外层包一次 marker，跟视觉效果一致。不同类型嵌套（粗体套
+// 斜体）不受影响，仍按各自类型正常包裹。
+function wrapInline(node: HTMLElement, marker: string, ctx: InlineMarkerContext, flag: keyof InlineMarkerContext): string {
+  if (ctx[flag]) return inlineChildren(node, ctx)
+  const inner = inlineChildren(node, { ...ctx, [flag]: true }).trim()
   return inner ? `${marker}${inner}${marker}` : ''
 }
 
@@ -83,7 +98,7 @@ function normalizeMathCopyText(raw: string): string {
     .trim()
 }
 
-function inlineText(node: Node): string {
+function inlineText(node: Node, ctx: InlineMarkerContext = {}): string {
   if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? ''
   if (!(node instanceof HTMLElement)) return ''
   const copyText = node.getAttribute('copy-text') ?? node.getAttribute('data-math')
@@ -92,21 +107,21 @@ function inlineText(node: Node): string {
   if (isBannerNode(node)) return ''
   if (node.tagName === 'BR') return '\n'
 
-  if (node.tagName === 'STRONG' || node.tagName === 'B') return wrapInline(node, '**')
-  if (node.tagName === 'EM' || node.tagName === 'I') return wrapInline(node, '*')
-  if (node.tagName === 'DEL' || node.tagName === 'S' || node.tagName === 'STRIKE') return wrapInline(node, '~~')
+  if (node.tagName === 'STRONG' || node.tagName === 'B') return wrapInline(node, '**', ctx, 'bold')
+  if (node.tagName === 'EM' || node.tagName === 'I') return wrapInline(node, '*', ctx, 'italic')
+  if (node.tagName === 'DEL' || node.tagName === 'S' || node.tagName === 'STRIKE') return wrapInline(node, '~~', ctx, 'strike')
   if (node.tagName === 'CODE') {
     const inner = (node.textContent ?? '').trim()
     return inner ? `\`${inner}\`` : ''
   }
   if (node.tagName === 'A') {
     const href = node.getAttribute('href') ?? ''
-    const inner = inlineChildren(node).trim()
+    const inner = inlineChildren(node, ctx).trim()
     if (!href || !inner || href.startsWith('javascript:') || href.startsWith('#')) return inner
     return `[${inner}](${href})`
   }
 
-  return inlineChildren(node)
+  return inlineChildren(node, ctx)
 }
 
 // 参与"这个容器要不要按块级递归"判定的标签/选择器集合：除了 BLOCK_TAGS 里那些纯

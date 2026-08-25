@@ -6,7 +6,7 @@ import { writeEditableValue, waitForSendAccepted } from '../shared/dom-write'
 import { hasStopGeneratingButton } from '../shared/ds-doubao-shared'
 import type { ConversationState } from '../../types'
 import { mergeSelectorOverrides, type SelectorOverrideMap } from '../../lib/remote-selector-config'
-import { cloneWithoutThinking } from '../../lib/dom-response-text'
+import { cloneWithoutThinking, elementToMarkdownText } from '../../lib/dom-response-text'
 import selectorsJson from './selectors.json'
 
 type ChatGPTSelectors = typeof selectorsJson.selectors
@@ -228,12 +228,12 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
 
     getLastResponse() {
       const el = last<HTMLElement>(S.lastResponse)
-      return Promise.resolve(el ? cloneWithoutThinking(el).textContent ?? '' : '')
+      return Promise.resolve(el ? elementToMarkdownText(cloneWithoutThinking(el)) : '')
     },
 
     getConversationState(): Promise<ConversationState> {
       const el = last<HTMLElement>(S.lastResponse)
-      const lastText = el ? cloneWithoutThinking(el).textContent ?? '' : ''
+      const lastText = el ? elementToMarkdownText(cloneWithoutThinking(el)) : ''
       if (hasStopGeneratingButton(S, { requireVisible: false, textFallback: false })) return Promise.resolve({ status: 'streaming', lastResponse: lastText, stopButtonDetected: true })
       if (q(S.continueButton)) return Promise.resolve({ status: 'paused', lastResponse: lastText, stopButtonDetected: false })
       if (!lastText) return Promise.resolve({ status: 'idle', stopButtonDetected: false })
