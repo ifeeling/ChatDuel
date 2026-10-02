@@ -1,15 +1,15 @@
 {
-  "version": "2026.06",
-  "lastVerified": "2026-06-10",
+  "version": "2026.10",
+  "lastVerified": "2026-10-02",
   "selectors": {
-    "inputBox": "#prompt-textarea",
-    "sendButton": "button[data-testid='send-button']",
-    "messageContainer": "[data-testid='conversation-turn']",
-    "lastResponse": "[data-message-author-role='assistant']",
-    "userMessage": "[data-testid='conversation-turn'][data-turn='user']",
+    "inputBox": "#prompt-textarea, div.ProseMirror[contenteditable='true'][role='textbox']",
+    "sendButton": "button[data-testid='send-button'], form button[type='submit'][aria-label*='发送'], form button[type='submit'][aria-label*='send' i]",
+    "messageContainer": "[data-testid='conversation-turn'], [data-content-search-unit-key]",
+    "lastResponse": "[data-message-author-role='assistant'], [data-markdown-text-style='assistant-message']",
+    "userMessage": "[data-testid='conversation-turn'][data-turn='user'], [data-user-message-bubble='true']",
     "rateLimitToast": "[role='alert']",
     "continueButton": "button[data-testid='continue-generation-button']",
     "stopButton": "button[data-testid='stop-button'], button[aria-label*='stop' i], button[aria-label*='停止' i]",
-    "loggedIn": "[data-testid='user-menu-button']"
+    "loggedIn": "[data-testid='user-menu-button'], button[aria-label*='个人资料菜单'], button[aria-label*='profile menu' i]"
   }
 }

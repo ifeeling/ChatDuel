@@ -27,13 +27,13 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // 等 ChatGPT 上传流水线跑完(没图时不做事)。
 // 标志: send 按钮变 enabled + input 旁边出现缩略图(图片 input dataURL)
-async function waitForUploadReady(maxMs = 3000): Promise<void> {
+async function waitForUploadReady(selectors: ChatGPTSelectors, maxMs = 3000): Promise<void> {
   if (!document.querySelector("input[type='file']")) return
   const start = Date.now()
   while (Date.now() - start < maxMs) {
     // 缩略图出现就视为就绪
     const hasThumb = document.querySelector('img[src^="data:"]')
-    const sendBtn = document.querySelector<HTMLButtonElement>("button[data-testid='send-button']")
+    const sendBtn = document.querySelector<HTMLButtonElement>(selectors.sendButton)
     if (hasThumb && sendBtn && !sendBtn.disabled) return
     await sleep(100)
   }
@@ -144,7 +144,7 @@ export function createChatGPTAdapter(selectorOverrides?: SelectorOverrideMap): A
         try {
           await this.attachImage(image)
           // 等上传组件把缩略图渲染进 input,并等 AI 网站自己的图片处理流水线跑完
-          await waitForUploadReady()
+          await waitForUploadReady(S)
           emitDiagnostic(diagnostics, {
             component: 'platform-adapter', operation: 'attachment-prepare', stage: 'prepared', eventStatus: 'succeeded', hasAttachment: true,
           })
