@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.22 (2026-10-02)
+
+- Fixed ChatGPT no longer receiving messages sent from ChatDuel. ChatGPT redesigned its page and removed the element hooks (`#prompt-textarea`, and nearly all `data-testid` attributes) the extension relied on to find the input box, the send button and the latest answer. The extension now locates them by the new page's semantic attributes (`role="textbox"`, the send button's accessible label, `data-markdown-text-style`), while still accepting the old ones.
+- Extensions already installed are repaired earlier by the hosted selector config (updated the same day); this release makes the fix part of the extension itself.
+
 ## v0.4.21 (2026-08-25)
 
 - Added a pre-send risk scan: checks your message locally for common structured sensitive data (API keys, ID numbers, bank card numbers, phone numbers) before sending and shows a warning. The scan is local-only, never blocks sending, and nothing is sent over the network.
